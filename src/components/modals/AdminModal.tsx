@@ -90,10 +90,11 @@ import {
   saveRoulettePrizesToSupabase,
   syncRoulettePrizesFromSupabase
 } from '../../utils/rouletteConfig';
+import { CrystalOrdersMailbox } from './CrystalOrdersMailbox';
 
 interface AdminModalProps {
   onClose: () => void;
-  initialTab?: 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank';
+  initialTab?: 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders';
   hero: HeroState;
   setHero: React.Dispatch<React.SetStateAction<HeroState>>;
   equipped?: EquippedGear;
@@ -144,7 +145,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onShopAndFeaturesUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank'
+    'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders'
   >(initialTab);
   const [adminClans, setAdminClans] = useState<Clan[]>(() => getAllClans());
   const [selectedAdminClan, setSelectedAdminClan] = useState<Clan | null>(null);
@@ -2225,6 +2226,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             🏦 10. Банк ({getBankPackages(featureFlags).length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('orders')}
+            className={`rounded-lg py-1.5 px-2 transition-all ${
+              activeTab === 'orders'
+                ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 font-black shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+                : 'bg-slate-900 text-amber-300 border border-amber-500/40 hover:bg-slate-800'
+            }`}
+          >
+            📦 11. Почта заказов
           </button>
         </div>
 
@@ -9574,6 +9586,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ==================== TAB 11: ORDERS MAILBOX ==================== */}
+          {activeTab === 'orders' && (
+            <CrystalOrdersMailbox adminNick={hero.nick || 'Администратор'} showToast={showToast} />
           )}
         </div>
       </div>

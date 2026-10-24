@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { HeroState, GameItem, EquippedGear, GameFeatureFlags, BankPackageConfig } from '../../types/game';
+import { HeroState, GameItem, EquippedGear, GameFeatureFlags, BankPackageConfig, CrystalOrder } from '../../types/game';
 import { getPremiumConfig, getBankPackages } from '../../utils/shopConfig';
 import { GoldCoinIcon, CrystalIcon } from '../CurrencyIcon';
+import { createCrystalOrder, parseTelegramContact } from '../../utils/crystalOrders';
 
 interface BankAndForgeModalProps {
   hero: HeroState;
@@ -12,6 +13,7 @@ interface BankAndForgeModalProps {
   onExchangeGoldToCrystals: (goldAmount: number, crystalGain: number) => void;
   onForgeItem?: (newItem: GameItem, costGold: number, costCrystals: number) => void;
   onBuyPremium?: (currency?: 'crystals' | 'gold') => void;
+  onOpenMail?: () => void;
   showToast?: (msg: string) => void;
   exchangeDisabled?: boolean;
   premiumDisabled?: boolean;
@@ -24,6 +26,7 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
   onAddCrystals,
   onExchangeGoldToCrystals,
   onBuyPremium,
+  onOpenMail,
   showToast,
   exchangeDisabled = false,
   premiumDisabled = false,
@@ -35,6 +38,19 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
     ts: number;
   } | null>(null);
   const [selectedPack, setSelectedPack] = useState<BankPackageConfig | null>(null);
+
+  // Crystal Order Form states
+  const [telegramContact, setTelegramContact] = useState<string>(() => {
+    try {
+      return localStorage.getItem('pyramid_player_telegram') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+  const [orderQuantity, setOrderQuantity] = useState<number>(100);
+  const [orderPriceUsd, setOrderPriceUsd] = useState<number>(1);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState<boolean>(false);
+  const [submittedOrder, setSubmittedOrder] = useState<CrystalOrder | null>(null);
 
   const premCfg = getPremiumConfig(featureFlags);
   const isPremDisabled = premiumDisabled || !premCfg.enabled;
@@ -182,9 +198,9 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
                           onClick={(e) => {
                             e.stopPropagation();
                             setSelectedPack(pack);
-                            if (showToast) {
-                              showToast(`📝 Сформирован заказ на ${pack.crystals} 💎 за ${pack.priceUsd}$ для персонажа ${hero.nick || 'Игрок'}`);
-                            }
+                            setOrderQuantity(pack.crystals);
+                            setOrderPriceUsd(pack.priceUsd);
+                            setSubmittedOrder(null);
                           }}
                           className="rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-2.5 py-1 text-[9.5px] font-black text-slate-950 shadow hover:from-amber-400 hover:to-yellow-400 active:scale-95 cursor-pointer"
                         >
@@ -197,111 +213,268 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
               </div>
             )}
 
-            {/* Карточка заказа: показывает персонажа и данные для Администратора */}
+            {/* Карточка оформления заказа: Персонаж, Telegram, Количество кристаллов и Отправка заказа */}
             {selectedPack && (
               <div className="rounded-xl border-2 border-amber-400 bg-gradient-to-b from-amber-950/40 via-slate-900 to-slate-950 p-3.5 space-y-3 shadow-[0_0_25px_rgba(245,158,11,0.25)] animate-in fade-in">
                 {/* Header */}
                 <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
                   <div className="flex items-center gap-2 text-xs font-black text-amber-300 uppercase tracking-wide">
-                    <span>📜</span>
-                    <span>Карточка заказа кристаллов</span>
+                    <span>📦</span>
+                    <span>Оформление заказа кристаллов</span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setSelectedPack(null)}
-                    className="text-xs font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800/60"
+                    onClick={() => {
+                      setSelectedPack(null);
+                      setSubmittedOrder(null);
+                    }}
+                    className="text-xs font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800/60 cursor-pointer"
                   >
                     ✕ Закрыть
                   </button>
                 </div>
 
-                {/* Блок персонажа (по центру в полный рост с данными) */}
-                <div className="flex flex-col sm:flex-row items-center gap-3.5 rounded-xl border border-amber-500/40 bg-slate-950/90 p-3">
-                  {/* Персонаж в полный рост */}
-                  <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400/70 bg-gradient-to-b from-amber-900/30 to-black p-1.5 shadow-[0_0_15px_rgba(245,158,11,0.3)] overflow-hidden">
-                    {hero.avatar && (hero.avatar.startsWith('data:') || hero.avatar.startsWith('http') || hero.avatar.startsWith('/')) ? (
-                      <img
-                        src={hero.avatar}
-                        alt={hero.nick || 'Персонаж'}
-                        className="h-full w-full object-contain filter drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]"
-                      />
-                    ) : (
-                      <span className="text-4xl filter drop-shadow">{hero.avatar || '🧙‍♂️'}</span>
-                    )}
-                    <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 text-[7.5px] font-black text-amber-300">
-                      Ур.{hero.level}
-                    </span>
-                  </div>
+                {submittedOrder ? (
+                  /* Результат успешной отправки заказа */
+                  <div className="space-y-3 text-center py-2 animate-in fade-in">
+                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-950 border-2 border-emerald-400 text-2xl shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                      ✅
+                    </div>
+                    <div>
+                      <div className="text-sm font-black text-emerald-300">
+                        Заказ #{submittedOrder.id} успешно отправлен!
+                      </div>
+                      <div className="text-xs text-amber-300 font-bold mt-1">
+                        {submittedOrder.crystals.toLocaleString('ru-RU')} 💎 Кристаллов ({submittedOrder.priceUsd}$ USD)
+                      </div>
+                      <div className="text-[10px] text-slate-300 mt-1 max-w-sm mx-auto">
+                        Заявка поступила в <b>«Почту заказов» Администратора</b>. Администратор свяжется с вами в Telegram: <b className="text-white bg-slate-800 px-1.5 py-0.5 rounded border border-slate-700">{submittedOrder.telegramContact}</b> для подтверждения оплаты и зачислит кристаллы на вашего персонажа.
+                      </div>
+                    </div>
 
-                  {/* Данные персонажа */}
-                  <div className="flex-1 space-y-1 text-center sm:text-left min-w-0">
-                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
-                      <span className="text-sm font-black text-white">{hero.nick || 'Игрок'}</span>
-                      <span className="rounded bg-amber-500/20 border border-amber-400/60 px-1.5 py-0.2 text-[8.5px] font-black text-amber-300">
-                        Уровень {hero.level}
-                      </span>
-                      {hero.clanTag && (
-                        <span className="rounded bg-purple-950 border border-purple-500/50 px-1.5 py-0.2 text-[8.5px] font-black text-purple-300">
-                          [{hero.clanTag}] {hero.clanName}
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                      {onOpenMail && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onOpenMail();
+                          }}
+                          className="rounded-lg bg-gradient-to-r from-sky-500 to-blue-600 px-3.5 py-2 text-xs font-black text-white shadow hover:from-sky-400 hover:to-blue-500 active:scale-95 cursor-pointer"
+                        >
+                          📩 Перейти в мои сообщения
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const orderText = `Заказ кристаллов в игре «Пирамида: Войны»:\nНомер: #${submittedOrder.id}\nПерсонаж: ${hero.nick || 'Игрок'}\nУровень: ${hero.level}\nПакет: ${submittedOrder.crystals} 💎 кристаллов\nСумма: ${submittedOrder.priceUsd}$\nTelegram: ${submittedOrder.telegramContact}\nДата: ${new Date(submittedOrder.createdAt).toLocaleString('ru-RU')}`;
+                          navigator.clipboard.writeText(orderText).then(() => {
+                            if (showToast) showToast('📋 Данные заказа скопированы!');
+                          });
+                        }}
+                        className="rounded-lg border border-amber-500/50 bg-amber-500/20 hover:bg-amber-500/30 px-3 py-2 text-xs font-bold text-amber-300 cursor-pointer"
+                      >
+                        📋 Скопировать данные заказа
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSubmittedOrder(null);
+                        }}
+                        className="rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-bold text-slate-300 cursor-pointer"
+                      >
+                        Оформить ещё заказ
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  /* Форма оформления заказа */
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const cleanTg = telegramContact.trim();
+                      if (!cleanTg) {
+                        if (showToast) showToast('⚠️ Укажите ваш Telegram для связи!');
+                        return;
+                      }
+                      if (orderQuantity <= 0) {
+                        if (showToast) showToast('⚠️ Укажите количество кристаллов!');
+                        return;
+                      }
+
+                      setIsSubmittingOrder(true);
+                      try {
+                        localStorage.setItem('pyramid_player_telegram', cleanTg);
+                        const order = await createCrystalOrder({
+                          playerNick: hero.nick || 'Игрок',
+                          playerLevel: hero.level,
+                          playerClan: hero.clanTag ? `[${hero.clanTag}] ${hero.clanName || ''}` : undefined,
+                          playerAvatar: hero.avatar,
+                          telegramContact: cleanTg,
+                          crystals: orderQuantity,
+                          bonusCrystals: selectedPack.bonusCrystals || 0,
+                          priceUsd: orderPriceUsd
+                        });
+                        setSubmittedOrder(order);
+                        if (showToast) {
+                          showToast(`✅ Заказ на ${orderQuantity} 💎 отправлен в Почту заказов Администратора!`);
+                        }
+                      } catch (err: any) {
+                        if (showToast) showToast(`❌ Ошибка отправки заказа: ${err?.message || 'сбой сети'}`);
+                      } finally {
+                        setIsSubmittingOrder(false);
+                      }
+                    }}
+                    className="space-y-3"
+                  >
+                    {/* Поясняющая подсказка */}
+                    <div className="text-[10px] text-amber-200/90 bg-amber-950/30 border border-amber-500/30 rounded-lg p-2 leading-relaxed">
+                      Укажите свой <b>Telegram для связи</b> и <b>количество кристаллов</b>. После отправки заказ поступит в отдельную <b>«Почту заказов» Администратора</b>.
+                    </div>
+
+                    {/* Блок персонажа (по центру в полный рост с данными) */}
+                    <div className="flex flex-col sm:flex-row items-center gap-3.5 rounded-xl border border-amber-500/40 bg-slate-950/90 p-3">
+                      {/* Персонаж в полный рост */}
+                      <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400/70 bg-gradient-to-b from-amber-900/30 to-black p-1.5 shadow-[0_0_15px_rgba(245,158,11,0.3)] overflow-hidden">
+                        {hero.avatar && (hero.avatar.startsWith('data:') || hero.avatar.startsWith('http') || hero.avatar.startsWith('/')) ? (
+                          <img
+                            src={hero.avatar}
+                            alt={hero.nick || 'Персонаж'}
+                            className="h-full w-full object-contain filter drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]"
+                          />
+                        ) : (
+                          <span className="text-4xl filter drop-shadow">{hero.avatar || '🧙‍♂️'}</span>
+                        )}
+                        <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 text-[7.5px] font-black text-amber-300">
+                          Ур.{hero.level}
                         </span>
+                      </div>
+
+                      {/* Данные персонажа */}
+                      <div className="flex-1 space-y-1 text-center sm:text-left min-w-0">
+                        <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
+                          <span className="text-sm font-black text-white">{hero.nick || 'Игрок'}</span>
+                          <span className="rounded bg-amber-500/20 border border-amber-400/60 px-1.5 py-0.2 text-[8.5px] font-black text-amber-300">
+                            Уровень {hero.level}
+                          </span>
+                          {hero.clanTag && (
+                            <span className="rounded bg-purple-950 border border-purple-500/50 px-1.5 py-0.2 text-[8.5px] font-black text-purple-300">
+                              [{hero.clanTag}] {hero.clanName}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-slate-300">
+                          Текущий баланс: <span className="font-bold text-cyan-300">{hero.crystals.toLocaleString('ru-RU')} 💎</span> | <span className="font-bold text-amber-300">{hero.gold.toLocaleString('ru-RU')} 🪙</span>
+                        </div>
+                        <div className="text-[9.5px] text-emerald-300 font-semibold">
+                          К начислению: <b>{orderQuantity.toLocaleString('ru-RU')} 💎 Кристаллов</b> {Number(selectedPack.bonusCrystals || 0) > 0 ? `(+${selectedPack.bonusCrystals} бонус)` : ''}
+                        </div>
+                        <div className="text-[9.5px] text-slate-300">
+                          Сумма к оплате: <b className="text-emerald-400 text-xs font-black">{orderPriceUsd}$ USD</b>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Выбор пакета / количества кристаллов */}
+                    <div className="space-y-1.5">
+                      <label className="text-[10px] font-bold text-amber-300 flex items-center justify-between">
+                        <span>💎 Количество кристаллов:</span>
+                        <span className="text-emerald-400 font-black">{orderQuantity} 💎 = {orderPriceUsd}$</span>
+                      </label>
+                      <div className="flex flex-wrap gap-1">
+                        {bankPackages.map((p) => {
+                          const isSel = orderQuantity === p.crystals;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                setOrderQuantity(p.crystals);
+                                setOrderPriceUsd(p.priceUsd);
+                                setSelectedPack(p);
+                              }}
+                              className={`rounded-lg px-2 py-1 text-[9px] font-bold border transition-all cursor-pointer ${
+                                isSel
+                                  ? 'border-cyan-400 bg-cyan-950/80 text-cyan-200 shadow-[0_0_8px_rgba(34,211,238,0.4)]'
+                                  : 'border-slate-800 bg-slate-900/80 text-slate-300 hover:border-slate-700'
+                              }`}
+                            >
+                              {p.crystals.toLocaleString('ru-RU')} 💎 ({p.priceUsd}$)
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Поле: Укажите свой Telegram для связи */}
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-sky-300 flex items-center gap-1">
+                        <span>✈️</span>
+                        <span>Укажите свой Telegram для связи:</span>
+                        <span className="text-red-400">*</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          value={telegramContact}
+                          onChange={(e) => setTelegramContact(e.target.value)}
+                          placeholder="@username или номер телефона (+7/380...)"
+                          className="w-full rounded-lg border-2 border-sky-500/50 bg-slate-950 px-3 py-2 text-xs font-bold text-white placeholder-slate-500 outline-none focus:border-sky-400 focus:shadow-[0_0_12px_rgba(56,189,248,0.3)]"
+                        />
+                      </div>
+                      <div className="text-[8.5px] text-slate-400">
+                        Администратор напишет вам в этот Telegram для передачи реквизитов и зачисления кристаллов.
+                      </div>
+                    </div>
+
+                    {/* Описание покупки через Администратора */}
+                    <div className="rounded-lg border border-slate-800 bg-slate-900/90 p-2.5 space-y-1 text-[9.5px] text-slate-200">
+                      <div className="font-bold text-amber-300 flex items-center gap-1">
+                        <span>👑</span>
+                        <span>Покупка кристаллов через Администратора:</span>
+                      </div>
+                      <div>{bankInstructions}</div>
+                      {bankPaymentUrl && (
+                        <div className="pt-0.5 text-[9px] text-cyan-300 font-bold break-all">
+                          🔗 Реквизиты: <span className="text-white select-all">{bankPaymentUrl}</span>
+                        </div>
                       )}
                     </div>
-                    <div className="text-[10px] text-slate-300">
-                      Текущий баланс: <span className="font-bold text-cyan-300">{hero.crystals.toLocaleString('ru-RU')} 💎</span> | <span className="font-bold text-amber-300">{hero.gold.toLocaleString('ru-RU')} 🪙</span>
-                    </div>
-                    <div className="text-[9.5px] text-emerald-300 font-semibold">
-                      Пакет к начислению: <b>{selectedPack.crystals.toLocaleString('ru-RU')} 💎 Кристаллов</b> {Number(selectedPack.bonusCrystals || 0) > 0 ? `(+${selectedPack.bonusCrystals} бонус)` : ''}
-                    </div>
-                    <div className="text-[9.5px] text-slate-400">
-                      Сумма к оплате: <b className="text-emerald-400 text-xs">{selectedPack.priceUsd}$</b>
-                    </div>
-                  </div>
-                </div>
 
-                {/* Описание покупки через Администратора */}
-                <div className="rounded-lg border border-slate-800 bg-slate-900/90 p-2.5 space-y-1 text-[10px] text-slate-200">
-                  <div className="font-bold text-amber-300 flex items-center gap-1">
-                    <span>👑</span>
-                    <span>Инструкция по покупке через Администратора:</span>
-                  </div>
-                  <div>
-                    {bankInstructions}
-                  </div>
-                  {bankPaymentUrl && (
-                    <div className="pt-1 text-[9.5px] text-cyan-300 font-bold break-all">
-                      🔗 Реквизиты / Связь: <span className="text-white select-all">{bankPaymentUrl}</span>
+                    {/* Кнопка «Отправить заказ» */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="submit"
+                        disabled={isSubmittingOrder || !telegramContact.trim()}
+                        className="flex-1 rounded-lg bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-400 hover:from-amber-400 hover:to-yellow-300 py-2.5 px-4 text-xs font-black text-slate-950 shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer text-center flex items-center justify-center gap-2"
+                      >
+                        {isSubmittingOrder ? (
+                          <>
+                            <span className="animate-spin">⏳</span>
+                            <span>Отправка заказа...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>📨</span>
+                            <span>Отправить заказ</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPack(null)}
+                        className="rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-2.5 text-xs font-bold text-slate-300 cursor-pointer"
+                      >
+                        Отмена
+                      </button>
                     </div>
-                  )}
-                  <div className="text-[9px] text-amber-200/90 pt-1 border-t border-slate-800/80">
-                    Статус: <span className="text-amber-400 font-bold">⏳ Заказ сформирован — ожидает связи с Администратором</span>
-                  </div>
-                </div>
-
-                {/* Кнопки действий */}
-                <div className="flex flex-wrap items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const orderText = `Заказ кристаллов в игре «Пирамида: Войны»:\nПерсонаж: ${hero.nick || 'Игрок'}\nУровень: ${hero.level}\nПакет: ${selectedPack.crystals} 💎 кристаллов ${Number(selectedPack.bonusCrystals || 0) > 0 ? `(+${selectedPack.bonusCrystals} бонус)` : ''}\nСумма к оплате: ${selectedPack.priceUsd}$\nДата: ${new Date().toLocaleString('ru-RU')}`;
-                      navigator.clipboard.writeText(orderText).then(() => {
-                        if (showToast) showToast('📋 Данные заказа скопированы! Передайте их Администратору в чате.');
-                      }).catch(() => {
-                        if (showToast) showToast(`Персонаж: ${hero.nick}, Пакет: ${selectedPack.crystals} 💎 за ${selectedPack.priceUsd}$`);
-                      });
-                    }}
-                    className="flex-1 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-3 py-2 text-xs font-black text-slate-950 shadow hover:from-amber-400 hover:to-yellow-400 active:scale-95 cursor-pointer text-center"
-                  >
-                    📋 Скопировать данные заказа для Администратора
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setSelectedPack(null)}
-                    className="rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-bold text-slate-300 cursor-pointer"
-                  >
-                    Выбрать другой пакет
-                  </button>
-                </div>
+                  </form>
+                )}
               </div>
             )}
           </div>

@@ -460,6 +460,23 @@ export interface PrivateMessage {
   giftClaimedAt?: number;
 }
 
+export interface CrystalOrder {
+  id: string;
+  playerNick: string;
+  playerLevel: number;
+  playerClan?: string;
+  playerAvatar?: string;
+  telegramContact: string;
+  crystals: number;
+  bonusCrystals?: number;
+  priceUsd: number;
+  status: 'pending' | 'completed' | 'rejected';
+  createdAt: number;
+  completedAt?: number;
+  adminNote?: string;
+  completedBy?: string;
+}
+
 export interface CombatLogEntry {
   id: string;
   time: string;

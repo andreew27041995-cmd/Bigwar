@@ -10,7 +10,8 @@ import {
   TradeProtocolEntry,
   GameItem,
   PlayerBanInfo,
-  CharacterSkinTemplate
+  CharacterSkinTemplate,
+  CrystalOrder
 } from '../types/game';
 import { registerPlayerOwnedSkinsInMemory } from './shopConfig';
 import { getKillerAchievementInfo } from './egyptianEquipment';
@@ -47,6 +48,7 @@ export interface GlobalMailAndChatState {
   messages: PrivateMessage[];
   chatMessages: ChatMessage[];
   wheelWinners?: WheelWinnerEntry[];
+  crystalOrders?: CrystalOrder[];
   updatedAt: number;
 }
 
@@ -786,6 +788,11 @@ export function unpackSystemMailRow(rawRow: any): (GlobalMailAndChatState & { _i
   const messages: PrivateMessage[] = Array.isArray(parsed.messages) ? parsed.messages : [];
   const chatMessages: ChatMessage[] = Array.isArray(parsed.chatMessages) ? parsed.chatMessages : [];
   const wheelWinners: WheelWinnerEntry[] = Array.isArray(parsed.wheelWinners) ? parsed.wheelWinners : [];
+  const crystalOrders: CrystalOrder[] = Array.isArray(parsed.crystalOrders)
+    ? parsed.crystalOrders
+    : Array.isArray(parsed.crystal_orders)
+      ? parsed.crystal_orders
+      : [];
   const updatedAt = Number(parsed.updated_at ?? parsed.updatedAt ?? Date.now());
 
   const hasRecentLocalWrite =
@@ -799,6 +806,7 @@ export function unpackSystemMailRow(rawRow: any): (GlobalMailAndChatState & { _i
         messages,
         chatMessages,
         wheelWinners,
+        crystalOrders,
         updatedAt,
         _id: rawRow.id !== undefined ? Number(rawRow.id) : globalMailCache?._id,
         _localWriteAt: globalMailCache?._localWriteAt
@@ -2674,7 +2682,7 @@ export async function fetchGlobalMailAndChatFromSupabase(): Promise<GlobalMailAn
   };
 }
 
-async function saveGlobalMailAndChatToSupabase(
+export async function saveGlobalMailAndChatToSupabase(
   updater: (current: GlobalMailAndChatState) => GlobalMailAndChatState
 ): Promise<GlobalMailAndChatState> {
   const nextTask = mailUpdateQueue
@@ -2740,12 +2748,19 @@ async function saveGlobalMailAndChatToSupabase(
                 if (!winMap.has(w.id)) winMap.set(w.id, w);
               });
 
+              const ordMap = new Map<string, CrystalOrder>();
+              ((latest as any).crystalOrders || []).forEach((o: CrystalOrder) => ordMap.set(o.id, o));
+              ((current as any).crystalOrders || []).forEach((o: CrystalOrder) => {
+                if (!ordMap.has(o.id)) ordMap.set(o.id, o);
+              });
+
               current = {
                 messages: Array.from(msgMap.values()).slice(-200),
                 chatMessages: Array.from(chatMap.values()).slice(-80),
                 wheelWinners: Array.from(winMap.values())
                   .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
                   .slice(0, 35),
+                crystalOrders: Array.from(ordMap.values()).slice(0, 150),
                 updatedAt: Date.now()
               };
             }
@@ -2761,6 +2776,7 @@ async function saveGlobalMailAndChatToSupabase(
         messages: updated.messages.slice(-200),
         chatMessages: updated.chatMessages.slice(-80),
         wheelWinners: (updated.wheelWinners || []).slice(0, 35),
+        crystalOrders: (updated.crystalOrders || []).slice(0, 150),
         updatedAt: now,
         _id: rowId,
         _localWriteAt: now
@@ -2774,6 +2790,7 @@ async function saveGlobalMailAndChatToSupabase(
         messages: finalState.messages,
         chatMessages: finalState.chatMessages,
         wheelWinners: finalState.wheelWinners,
+        crystalOrders: finalState.crystalOrders,
         updated_at: now,
         is_online: false,
         location: 'city'

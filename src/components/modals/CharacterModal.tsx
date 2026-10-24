@@ -13,6 +13,7 @@ import {
 import { ActiveVipBonusesBlock } from '../ActiveVipBonusesBlock';
 import CharacterAvatar from '../CharacterAvatar';
 import { ItemIcon } from '../ItemIcon';
+import { CrystalOrdersMailbox } from './CrystalOrdersMailbox';
 
 interface CharacterModalProps {
   currentUser?: string | null;
@@ -43,6 +44,7 @@ interface CharacterModalProps {
   onUseKillerLicense?: () => void;
   onLevelUpReferral?: () => void;
   onLogout?: () => void;
+  showToast?: (msg: string) => void;
 }
 
 export const CharacterModal: React.FC<CharacterModalProps> = ({
@@ -72,9 +74,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   onClaimMailGift,
   onClaimReferralReward,
   onUseKillerLicense,
-  onLogout
+  onLogout,
+  showToast
 }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'mail' | 'collection'>(initialTab);
+  const [mailSubTab, setMailSubTab] = useState<'messages' | 'orders'>('messages');
   const [copiedLink, setCopiedLink] = useState(false);
   const [recipientNick, setRecipientNick] = useState('');
   const [mailText, setMailText] = useState('');
@@ -83,6 +87,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const [claimingGiftIds, setClaimingGiftIds] = useState<Record<string, boolean>>({});
   const [localClaimedGiftIds, setLocalClaimedGiftIds] = useState<Record<string, boolean>>({});
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  const isAdmin =
+    hero.role === 'admin' ||
+    Number((hero as any).is_admin) === 1 ||
+    String(hero.nick || '').toLowerCase() === 'admin';
 
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
@@ -237,11 +246,45 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
 
       {activeTab === 'mail' ? (
         <div className="flex-1 flex flex-col overflow-hidden pt-2 space-y-2.5">
-          {/* Compose / Send Mail Form */}
-          <form
-            onSubmit={handleSendNewMail}
-            className="rounded-lg border border-sky-500/40 bg-slate-900/90 p-2.5 space-y-2 shrink-0"
-          >
+          {/* Admin sub-tab switcher between personal messages and orders mailbox */}
+          {isAdmin && (
+            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950 border border-amber-500/40 shrink-0">
+              <button
+                type="button"
+                onClick={() => setMailSubTab('messages')}
+                className={`flex-1 rounded-lg py-1.5 px-2 text-[10px] font-black transition-all cursor-pointer ${
+                  mailSubTab === 'messages'
+                    ? 'bg-sky-600 text-white shadow'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                📩 Личные сообщения ({myMail.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setMailSubTab('orders')}
+                className={`flex-1 rounded-lg py-1.5 px-2 text-[10px] font-black transition-all cursor-pointer ${
+                  mailSubTab === 'orders'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 font-black shadow-[0_0_12px_rgba(245,158,11,0.5)]'
+                    : 'text-amber-300 hover:text-white'
+                }`}
+              >
+                📦 Почта заказов (Администратор)
+              </button>
+            </div>
+          )}
+
+          {isAdmin && mailSubTab === 'orders' ? (
+            <div className="flex-1 overflow-y-auto pr-1">
+              <CrystalOrdersMailbox adminNick={hero.nick || 'Администратор'} showToast={showToast} compact={true} />
+            </div>
+          ) : (
+            <>
+              {/* Compose / Send Mail Form */}
+              <form
+                onSubmit={handleSendNewMail}
+                className="rounded-lg border border-sky-500/40 bg-slate-900/90 p-2.5 space-y-2 shrink-0"
+              >
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-extrabold text-sky-300">
                 ✍️ Написать письмо игроку:
@@ -500,8 +543,10 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               })
             )}
           </div>
-        </div>
-      ) : activeTab === 'collection' ? (
+        </>
+      )}
+    </div>
+  ) : activeTab === 'collection' ? (
         <div className="flex-1 flex flex-col overflow-hidden pt-2 space-y-2.5">
           {/* Collection Info Banner */}
           <div className="rounded-xl border border-purple-500/50 bg-gradient-to-r from-purple-950/70 via-slate-900 to-purple-950/70 p-2.5 shrink-0 shadow">

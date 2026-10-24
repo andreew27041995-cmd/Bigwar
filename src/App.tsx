@@ -243,7 +243,7 @@ export default function App() {
     | 'clanPyramid'
   >(null);
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail'>('profile');
-  const [adminModalInitialTab, setAdminModalInitialTab] = useState<'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'bank'>('players');
+  const [adminModalInitialTab, setAdminModalInitialTab] = useState<'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'bank' | 'orders'>('players');
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
 
@@ -6444,7 +6444,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.0.63</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.0.64</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">24.10.2026</strong></span>
         </div>
@@ -6463,6 +6463,7 @@ export default function App() {
             mailMessages={mailMessages}
             unreadMailCount={unreadMailCount}
             shopSkins={shopSkins}
+            showToast={showToast}
             onEquipSkin={handleEquipSkin}
             onUseKillerLicense={handleUseKillerLicense}
             knownPlayers={Array.from(
@@ -6955,6 +6956,10 @@ export default function App() {
             onExchangeGoldToCrystals={handleBankExchange}
             onForgeItem={handleBankForgeItem}
             onBuyPremium={handleBuyPremium}
+            onOpenMail={() => {
+              setActiveModal('character');
+              setCharacterModalInitialTab('mail');
+            }}
             showToast={showToast}
             exchangeDisabled={!featureFlags.exchangeEnabled}
             premiumDisabled={!featureFlags.premiumEnabled}
