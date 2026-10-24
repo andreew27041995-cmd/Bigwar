@@ -93,7 +93,7 @@ import {
 
 interface AdminModalProps {
   onClose: () => void;
-  initialTab?: 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette';
+  initialTab?: 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank';
   hero: HeroState;
   setHero: React.Dispatch<React.SetStateAction<HeroState>>;
   equipped?: EquippedGear;
@@ -144,7 +144,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onShopAndFeaturesUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette'
+    'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank'
   >(initialTab);
   const [adminClans, setAdminClans] = useState<Clan[]>(() => getAllClans());
   const [selectedAdminClan, setSelectedAdminClan] = useState<Clan | null>(null);
@@ -372,6 +372,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [newRpSkinId, setNewRpSkinId] = useState(shopSkins[0]?.id || '');
   const [newRpSkinDuration, setNewRpSkinDuration] = useState('0'); // 0 = forever, >0 = days
   const [newRpWeight, setNewRpWeight] = useState('5');
+
+  // Bank Editor Tab State
+  const [newBankPackCrystals, setNewBankPackCrystals] = useState('100');
+  const [newBankPackPriceUsd, setNewBankPackPriceUsd] = useState('1');
+  const [newBankPackBonus, setNewBankPackBonus] = useState('0');
+  const [newBankPackLabel, setNewBankPackLabel] = useState('');
+  const [adminBankTargetNick, setAdminBankTargetNick] = useState(hero.nick || '');
+  const [adminBankGrantCrystals, setAdminBankGrantCrystals] = useState('100');
 
   // New shop item creation form
   const [newShopSlot, setNewShopSlot] = useState<ItemSlot>('weapon');
@@ -1718,13 +1726,13 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
     const processed = await processUploadedCharacterSkin(file);
     e.target.value = '';
-    if (!processed.ok) {
-      showToast(processed.error);
+    if (!processed.ok || !processed.dataUrl) {
+      showToast(processed.error || 'Ошибка загрузки скина');
       return;
     }
 
-    const newImgUrl = processed.dataUrl;
-    const nextShopSkins = shopSkins.map((s) =>
+    const newImgUrl: string = processed.dataUrl;
+    const nextShopSkins: CharacterSkinTemplate[] = shopSkins.map((s) =>
       s.id === skinId ? { ...s, icon: newImgUrl, avatarUrl: newImgUrl } : s
     );
     setShopSkins(nextShopSkins);
@@ -2206,6 +2214,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             🎡 9. Рулетка ({adminRoulettePrizes.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bank')}
+            className={`rounded-lg py-1.5 px-2 transition-all ${
+              activeTab === 'bank'
+                ? 'bg-gradient-to-r from-cyan-500 to-sky-500 text-slate-950 font-black shadow'
+                : 'bg-slate-900 text-cyan-300 border border-cyan-500/30 hover:bg-slate-800'
+            }`}
+          >
+            🏦 10. Банк ({getBankPackages(featureFlags).length})
           </button>
         </div>
 
@@ -9163,6 +9182,395 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       })}
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ==================== TAB 10: BANK & CRYSTAL PACKAGES EDITOR ==================== */}
+          {activeTab === 'bank' && (
+            <div className="space-y-4">
+              {/* Header */}
+              <div className="rounded-xl border border-cyan-500/40 bg-gradient-to-r from-cyan-950/40 via-slate-900 to-black p-4 shadow-lg flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="flex items-center gap-2 text-base font-black text-cyan-300">
+                    <span>🏦</span> Редактор Банка и Пакетов Кристаллов
+                  </h2>
+                  <p className="text-[10px] text-slate-300 mt-0.5">
+                    Настройка пакетов кристаллов, цен в $, инструкции для игроков и ручное зачисление кристаллов по заказам
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isSavingShop}
+                    onClick={handleSaveShopCatalog}
+                    className="rounded-lg bg-gradient-to-r from-cyan-500 to-sky-500 px-4 py-2 text-xs font-black text-slate-950 shadow hover:from-cyan-400 hover:to-sky-400 disabled:opacity-50 active:scale-95 cursor-pointer"
+                  >
+                    {isSavingShop ? '⏳ Сохранение...' : '💾 Сохранить настройки Банка'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFeatureFlags((prev) => ({
+                        ...prev,
+                        bankPackages: DEFAULT_BANK_PACKAGES.map((p) => ({ ...p }))
+                      }));
+                      showToast('↩️ Пакеты банка сброшены к стандартным!');
+                    }}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-700"
+                  >
+                    ↩️ Сброс
+                  </button>
+                </div>
+              </div>
+
+              {/* Быстрое ручное начисление кристаллов игроку при подтверждении оплаты заказа */}
+              <div className="rounded-xl border-2 border-emerald-500/50 bg-slate-900/90 p-3.5 space-y-2.5 shadow">
+                <div className="flex items-center justify-between border-b border-emerald-500/30 pb-1.5">
+                  <div className="font-black text-emerald-300 text-xs flex items-center gap-1.5">
+                    <span>⚡</span>
+                    <span>Ручное зачисление кристаллов игроку (Оплата заказа подтверждена)</span>
+                  </div>
+                  <span className="text-[9.5px] text-slate-400">
+                    Мгновенно пополняет баланс кристаллов персонажа в БД Supabase
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+                  <div>
+                    <label className="text-[9px] font-bold text-slate-300">Ник персонажа:</label>
+                    <input
+                      type="text"
+                      value={adminBankTargetNick}
+                      onChange={(e) => setAdminBankTargetNick(e.target.value)}
+                      placeholder="Ник персонажа..."
+                      className="mt-0.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-white outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-bold text-cyan-300">Количество кристаллов (💎):</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={adminBankGrantCrystals}
+                      onChange={(e) => setAdminBankGrantCrystals(e.target.value)}
+                      className="mt-0.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-cyan-300 outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isUpdatingDb}
+                    onClick={async () => {
+                      const nick = adminBankTargetNick.trim();
+                      const amount = parseInt(adminBankGrantCrystals, 10) || 0;
+                      if (!nick || amount <= 0) {
+                        showToast('Укажите ник игрока и количество кристаллов!');
+                        return;
+                      }
+                      setIsUpdatingDb(true);
+                      try {
+                        const res = await adminModifyPlayerBalanceInSupabase(nick, { crystalsDelta: amount });
+                        if (res.success) {
+                          if (res.rawPlayer) populateFieldsFromUnpacked(res.rawPlayer, nick);
+                          syncLocalSelfIfMatched(nick, res.updatedPlayer, res.rawPlayer);
+                          await refreshDbPlayersList();
+                          showToast(`⚡ Игроку ${nick} успешно зачислено +${amount} 💎 кристаллов!`);
+                          if (onBroadcastSystemMessage) {
+                            onBroadcastSystemMessage(`💳 [Банк] Игроку ${nick} успешно зачислено +${amount} 💎 кристаллов по заказу!`);
+                          }
+                        } else {
+                          showToast(`❌ Ошибка: ${res.error || 'не удалось зачислить'}`);
+                        }
+                      } finally {
+                        setIsUpdatingDb(false);
+                      }
+                    }}
+                    className="rounded-lg bg-emerald-600 hover:bg-emerald-500 py-1.5 px-3 text-xs font-black text-white shadow disabled:opacity-50 cursor-pointer"
+                  >
+                    {isUpdatingDb ? '⏳ Зачисление...' : `⚡ Зачислить +${adminBankGrantCrystals} 💎 игроку ${adminBankTargetNick}`}
+                  </button>
+                </div>
+              </div>
+
+              {/* Общие параметры Банка и Инструкция для игроков */}
+              <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 space-y-3">
+                <div className="font-bold text-cyan-300 text-xs flex items-center gap-1.5">
+                  <span>⚙️</span>
+                  <span>Настройки работы Банка и контакты Администратора:</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2.5 text-xs font-bold text-white cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={featureFlags.bankPurchaseEnabled !== false}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          bankPurchaseEnabled: e.target.checked
+                        }))
+                      }
+                      className="h-4 w-4 accent-cyan-500"
+                    />
+                    <span>Покупка кристаллов в Банке открыта для игроков</span>
+                  </label>
+
+                  <div>
+                    <label className="text-[10px] text-cyan-300 font-bold">
+                      Контакты / Ссылка / Реквизиты для связи (Telegram / Карта):
+                    </label>
+                    <input
+                      type="text"
+                      value={featureFlags.bankPaymentUrl || ''}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          bankPaymentUrl: e.target.value
+                        }))
+                      }
+                      placeholder="Напр. @admin_telegram или t.me/mygame_admin"
+                      className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs text-white outline-none focus:border-cyan-400"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-amber-300 font-bold">
+                    Текст инструкции в карточке заказа («Покупка кристаллов через Администратора»):
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={
+                      featureFlags.bankPaymentInstructions ||
+                      'Покупка кристаллов происходит только через Администратора игры. Выберите нужный пакет, нажмите «Заказать», сверьте ник своего персонажа и напишите Администратору для оплаты и зачисления.'
+                    }
+                    onChange={(e) =>
+                      setFeatureFlags((prev) => ({
+                        ...prev,
+                        bankPaymentInstructions: e.target.value
+                      }))
+                    }
+                    className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 p-2 text-xs text-slate-200 outline-none focus:border-amber-400"
+                  />
+                </div>
+              </div>
+
+              {/* Добавить новый пакет кристаллов */}
+              <div className="rounded-xl border border-cyan-500/40 bg-slate-900/90 p-3.5 space-y-2.5">
+                <div className="font-bold text-cyan-300 text-xs">
+                  ➕ Добавить новый пакет кристаллов в Банк
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[9px] text-cyan-300">Кристаллы (💎):</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={newBankPackCrystals}
+                      onChange={(e) => setNewBankPackCrystals(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-bold text-cyan-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-emerald-300">Цена в USD ($):</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step="0.5"
+                      value={newBankPackPriceUsd}
+                      onChange={(e) => setNewBankPackPriceUsd(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-bold text-emerald-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-fuchsia-300">Бонус (💎):</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={newBankPackBonus}
+                      onChange={(e) => setNewBankPackBonus(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-bold text-fuchsia-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[9px] text-slate-300">Название / Лейбл:</label>
+                    <input
+                      type="text"
+                      placeholder="Напр. Сундук Жреца"
+                      value={newBankPackLabel}
+                      onChange={(e) => setNewBankPackLabel(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-white"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const crystals = Math.max(1, parseInt(newBankPackCrystals, 10) || 100);
+                    const priceUsd = Math.max(1, parseFloat(newBankPackPriceUsd) || 1);
+                    const bonus = Math.max(0, parseInt(newBankPackBonus, 10) || 0);
+                    const created: BankPackageConfig = {
+                      id: `bank_pack_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+                      crystals,
+                      priceUsd,
+                      bonusCrystals: bonus,
+                      label: newBankPackLabel.trim() || `${crystals} кристаллов`,
+                      enabled: true
+                    };
+                    const curPacks = getBankPackages(featureFlags);
+                    setFeatureFlags((prev) => ({
+                      ...prev,
+                      bankPackages: [...curPacks, created]
+                    }));
+                    setNewBankPackLabel('');
+                    showToast(`✅ Пакет на ${crystals} 💎 за ${priceUsd}$ добавлен! Нажмите «Сохранить».`);
+                  }}
+                  className="w-full rounded-lg bg-cyan-600 hover:bg-cyan-500 py-1.5 text-xs font-black text-slate-950 shadow cursor-pointer"
+                >
+                  ➕ Добавить пакет в список Банка
+                </button>
+              </div>
+
+              {/* Текущие пакеты кристаллов в Банке */}
+              <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-3.5 space-y-2">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div className="font-bold text-white text-xs">
+                    📋 Список пакетов в Банке ({getBankPackages(featureFlags).length} шт.)
+                  </div>
+                  <span className="text-[9.5px] text-slate-400">
+                    Изменяйте количество кристаллов, цену в $ и статус активности пакета
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  {getBankPackages(featureFlags).map((pack) => (
+                    <div
+                      key={pack.id}
+                      className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border p-2.5 ${
+                        pack.enabled !== false
+                          ? 'border-cyan-500/40 bg-slate-950/90'
+                          : 'border-slate-800 bg-slate-950/40 opacity-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={pack.enabled !== false}
+                          onChange={(e) => {
+                            const cur = getBankPackages(featureFlags);
+                            setFeatureFlags((prev) => ({
+                              ...prev,
+                              bankPackages: cur.map((p) =>
+                                p.id === pack.id ? { ...p, enabled: e.target.checked } : p
+                              )
+                            }));
+                          }}
+                          className="h-4 w-4 accent-cyan-500 cursor-pointer"
+                          title="Включен / Выключен в банке"
+                        />
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-cyan-400/40 bg-cyan-950/60 text-lg">
+                          💎
+                        </div>
+                        <input
+                          type="text"
+                          value={pack.label || ''}
+                          onChange={(e) => {
+                            const cur = getBankPackages(featureFlags);
+                            setFeatureFlags((prev) => ({
+                              ...prev,
+                              bankPackages: cur.map((p) =>
+                                p.id === pack.id ? { ...p, label: e.target.value } : p
+                              )
+                            }));
+                          }}
+                          className="w-36 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs font-bold text-white outline-none"
+                          placeholder="Название пакета"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          <label className="text-[9px] text-cyan-300">Кристаллы:</label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={pack.crystals}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              const cur = getBankPackages(featureFlags);
+                              setFeatureFlags((prev) => ({
+                                ...prev,
+                                bankPackages: cur.map((p) =>
+                                  p.id === pack.id ? { ...p, crystals: val } : p
+                                )
+                              }));
+                            }}
+                            className="w-20 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-xs font-bold text-cyan-300"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <label className="text-[9px] text-emerald-300">Цена ($):</label>
+                          <input
+                            type="number"
+                            min={1}
+                            step="0.5"
+                            value={pack.priceUsd}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseFloat(e.target.value) || 1);
+                              const cur = getBankPackages(featureFlags);
+                              setFeatureFlags((prev) => ({
+                                ...prev,
+                                bankPackages: cur.map((p) =>
+                                  p.id === pack.id ? { ...p, priceUsd: val } : p
+                                )
+                              }));
+                            }}
+                            className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-xs font-bold text-emerald-300"
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-1">
+                          <label className="text-[9px] text-fuchsia-300">Бонус:</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={pack.bonusCrystals || 0}
+                            onChange={(e) => {
+                              const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              const cur = getBankPackages(featureFlags);
+                              setFeatureFlags((prev) => ({
+                                ...prev,
+                                bankPackages: cur.map((p) =>
+                                  p.id === pack.id ? { ...p, bonusCrystals: val } : p
+                                )
+                              }));
+                            }}
+                            className="w-16 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-xs font-bold text-fuchsia-300"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cur = getBankPackages(featureFlags);
+                            setFeatureFlags((prev) => ({
+                              ...prev,
+                              bankPackages: cur.filter((p) => p.id !== pack.id)
+                            }));
+                            showToast('Пакет удален. Не забудьте нажать «Сохранить»!');
+                          }}
+                          className="rounded bg-rose-950/40 border border-rose-500/30 px-2 py-1 text-xs text-rose-300 hover:bg-rose-900/60 cursor-pointer"
+                          title="Удалить пакет"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>

@@ -172,7 +172,7 @@ export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
   shopEnabled: true,
   bankPurchaseEnabled: true,
   bankPaymentUrl: '',
-  bankPaymentInstructions: 'Для покупки кристаллов выберите нужный пакет и свяжитесь с Администратором в чате или по указанным реквизитам.',
+  bankPaymentInstructions: 'Покупка кристаллов происходит только через Администратора игры. Выберите нужный пакет, нажмите «Заказать», сверьте ник своего персонажа и напишите Администратору для оплаты и зачисления.',
   bankPackages: DEFAULT_BANK_PACKAGES.map((p) => ({ ...p })),
   crystalToGoldRate: 1000,
   goldToCrystalRate: 2000,

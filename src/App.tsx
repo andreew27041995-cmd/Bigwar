@@ -243,7 +243,7 @@ export default function App() {
     | 'clanPyramid'
   >(null);
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail'>('profile');
-  const [adminModalInitialTab, setAdminModalInitialTab] = useState<'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid'>('players');
+  const [adminModalInitialTab, setAdminModalInitialTab] = useState<'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'bank'>('players');
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
 
@@ -4567,7 +4567,7 @@ export default function App() {
           id: 'lic_killer_' + now,
           timestamp: now,
           dateStr,
-          type: 'shop_buy',
+          type: 'purchase',
           description: activateNow
             ? `📜 Куплена и активирована «1. Лицензия киллера» на 1 день (24ч) за ${cost} 💎 (осталось: ${formatLicenseRemainingTime(nextUntil, now)})`
             : `📜 Куплена в запас «1. Лицензия киллера» (1 дн.) за ${cost} 💎 (в запасе: ${nextStored} шт.)`,
@@ -6444,7 +6444,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.0.62</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.0.63</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">24.10.2026</strong></span>
         </div>

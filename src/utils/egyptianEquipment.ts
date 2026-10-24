@@ -416,8 +416,10 @@ export const KILLER_LICENSE_CONFIG = {
   name: 'Лицензия киллера (Рецензия киллера)',
   shortName: 'Лицензия киллера',
   priceCrystals: 10,
+  costCrystals: 10,
   durationMs: 24 * 60 * 60 * 1000, // 1 день (24 часа)
   durationDays: 1,
+  durationLabel: '1 дн.',
   icon: KILLER_LICENSE_SVG,
   description:
     'Древний указ Фараона и Анубиса, дающий право вершить суд внутри Пирамиды в течение 1 дня (24 часов). С активной лицензией вы можете нападать и убивать других игроков ТОЛЬКО внутри Пирамиды (нападать с главного экрана Города или из Рейтинга запрещено). Разрешено убивать одного и того же игрока неограниченное количество раз! Каждое убийство засчитывается в прогресс достижения «Киллер» (до +500 ❤️ HP навсегда).'
@@ -426,6 +428,7 @@ export const KILLER_LICENSE_CONFIG = {
 export interface KillerAchievementTier {
   level: number;
   requiredKills: number;
+  killsRequired: number;
   hpBonusPerLevel: number;
   totalHpBonus: number;
   title: string;
@@ -436,6 +439,7 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
   {
     level: 1,
     requiredKills: 10,
+    killsRequired: 10,
     hpBonusPerLevel: 100,
     totalHpBonus: 100,
     title: 'Киллер 1 ур.',
@@ -444,6 +448,7 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
   {
     level: 2,
     requiredKills: 50,
+    killsRequired: 50,
     hpBonusPerLevel: 100,
     totalHpBonus: 200,
     title: 'Киллер 2 ур.',
@@ -452,6 +457,7 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
   {
     level: 3,
     requiredKills: 100,
+    killsRequired: 100,
     hpBonusPerLevel: 100,
     totalHpBonus: 300,
     title: 'Киллер 3 ур.',
@@ -460,6 +466,7 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
   {
     level: 4,
     requiredKills: 250,
+    killsRequired: 250,
     hpBonusPerLevel: 100,
     totalHpBonus: 400,
     title: 'Киллер 4 ур.',
@@ -468,6 +475,7 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
   {
     level: 5,
     requiredKills: 500,
+    killsRequired: 500,
     hpBonusPerLevel: 100,
     totalHpBonus: 500,
     title: 'Киллер 5 ур. (МАКС)',
@@ -482,10 +490,13 @@ export interface KillerAchievementStatus {
   kills: number;
   level: number;
   maxLevel: number;
+  isMaxLevel: boolean;
   totalHpBonus: number;
   currentTier: KillerAchievementTier | null;
   nextTier: KillerAchievementTier | null;
   nextTargetKills: number;
+  nextKillsRequired: number;
+  killsRemainingForNext: number;
   progressPct: number;
 }
 
@@ -506,6 +517,9 @@ export function getKillerAchievementInfo(rawPvpKills?: number | null): KillerAch
   const totalHpBonus = currentLevel * 100;
   const prevTarget = currentTier ? currentTier.requiredKills : 0;
   const nextTargetKills = nextTier ? nextTier.requiredKills : 500;
+  const nextKillsRequired = nextTargetKills;
+  const isMaxLevel = currentLevel >= 5;
+  const killsRemainingForNext = Math.max(0, nextKillsRequired - kills);
 
   let progressPct = 100;
   if (nextTier) {
@@ -518,10 +532,13 @@ export function getKillerAchievementInfo(rawPvpKills?: number | null): KillerAch
     kills,
     level: currentLevel,
     maxLevel: 5,
+    isMaxLevel,
     totalHpBonus,
     currentTier,
     nextTier,
     nextTargetKills,
+    nextKillsRequired,
+    killsRemainingForNext,
     progressPct
   };
 }

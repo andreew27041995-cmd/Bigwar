@@ -443,6 +443,7 @@ export function calculateHeroStatsBreakdown(hero: any, equippedOverride?: any) {
     gearGoldPct,
     gearExpPct,
     killerAchievementLevel: killerInfo.level,
+    killerAchievementLvl: killerInfo.level,
     killerHpBonus,
     totalDmg,
     totalMaxHp,

@@ -93,7 +93,25 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
         </div>
 
         <div className="space-y-3">
-          {/* 💎 Покупка кристаллов в Банке */}
+          {/* 👑 Информационный блок: Покупка кристаллов через Администратора */}
+          <div className="rounded-xl border-2 border-amber-500/60 bg-gradient-to-r from-amber-950/50 via-slate-900 to-amber-950/40 p-3 space-y-2 shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+            <div className="flex items-center gap-2 border-b border-amber-500/30 pb-1.5">
+              <span className="text-lg">👑</span>
+              <div>
+                <div className="text-xs font-black text-amber-300 uppercase tracking-wide">
+                  Покупка кристаллов через Администратора
+                </div>
+                <div className="text-[9px] text-amber-200/80">
+                  Безопасное пополнение баланса кристаллов для вашего персонажа
+                </div>
+              </div>
+            </div>
+            <p className="text-[10px] text-slate-200 leading-relaxed">
+              Покупка кристаллов осуществляется <b>только через официального Администратора</b>. Выберите подходящий пакет и нажмите кнопку <b className="text-amber-300">«Заказать»</b>. Откроется карточка с данными вашего персонажа, которую необходимо передать Администратору для оплаты и зачисления кристаллов.
+            </p>
+          </div>
+
+          {/* 💎 Банк Кристаллов */}
           <div className="rounded-xl border-2 border-cyan-500/50 bg-gradient-to-b from-cyan-950/35 via-slate-900 to-slate-950 p-3 space-y-2.5 shadow-[0_0_20px_rgba(34,211,238,0.15)]">
             <div className="flex items-center justify-between gap-2 border-b border-cyan-500/20 pb-2">
               <div className="flex items-center gap-1.5">
@@ -103,7 +121,7 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
                     Банк Кристаллов
                   </div>
                   <div className="text-[9.5px] text-slate-300">
-                    Выберите пакет кристаллов для пополнения баланса
+                    Выберите пакет кристаллов для оформления заказа
                   </div>
                 </div>
               </div>
@@ -131,8 +149,8 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
                       onClick={() => setSelectedPack(pack)}
                       className={`group relative flex flex-col justify-between rounded-xl border p-2.5 transition-all cursor-pointer ${
                         isSelected
-                          ? 'border-cyan-300 bg-gradient-to-b from-cyan-900/60 to-slate-900 shadow-[0_0_16px_rgba(34,211,238,0.4)] scale-[1.01]'
-                          : 'border-cyan-500/35 bg-slate-950/90 hover:border-cyan-400/80 hover:bg-slate-900'
+                          ? 'border-amber-400 bg-gradient-to-b from-amber-950/60 to-slate-900 shadow-[0_0_16px_rgba(245,158,11,0.4)] scale-[1.01]'
+                          : 'border-cyan-500/35 bg-slate-950/90 hover:border-amber-400/80 hover:bg-slate-900'
                       }`}
                     >
                       {Number(pack.bonusCrystals || 0) > 0 && (
@@ -165,14 +183,12 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
                             e.stopPropagation();
                             setSelectedPack(pack);
                             if (showToast) {
-                              showToast(
-                                `💎 Выбран пакет: ${pack.crystals} кристаллов за ${pack.priceUsd}$`
-                              );
+                              showToast(`📝 Сформирован заказ на ${pack.crystals} 💎 за ${pack.priceUsd}$ для персонажа ${hero.nick || 'Игрок'}`);
                             }
                           }}
-                          className="rounded-lg bg-gradient-to-r from-cyan-500 to-sky-500 px-2.5 py-1 text-[9.5px] font-black text-slate-950 shadow hover:from-cyan-400 hover:to-sky-400 active:scale-95 cursor-pointer"
+                          className="rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-2.5 py-1 text-[9.5px] font-black text-slate-950 shadow hover:from-amber-400 hover:to-yellow-400 active:scale-95 cursor-pointer"
                         >
-                          Купить
+                          Заказать
                         </button>
                       </div>
                     </div>
@@ -181,58 +197,110 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
               </div>
             )}
 
-            {/* Selected Package Checkout / Instructions Box */}
+            {/* Карточка заказа: показывает персонажа и данные для Администратора */}
             {selectedPack && (
-              <div className="rounded-xl border border-cyan-400/70 bg-slate-950/95 p-3 space-y-2 shadow-lg">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-xs font-black text-cyan-300">
-                    <CrystalIcon size="sm" />
-                    <span>
-                      Выбран пакет: {selectedPack.crystals.toLocaleString('ru-RU')} кристаллов —{' '}
-                      <span className="text-emerald-300">{selectedPack.priceUsd}$</span>
-                    </span>
+              <div className="rounded-xl border-2 border-amber-400 bg-gradient-to-b from-amber-950/40 via-slate-900 to-slate-950 p-3.5 space-y-3 shadow-[0_0_25px_rgba(245,158,11,0.25)] animate-in fade-in">
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-amber-500/30 pb-2">
+                  <div className="flex items-center gap-2 text-xs font-black text-amber-300 uppercase tracking-wide">
+                    <span>📜</span>
+                    <span>Карточка заказа кристаллов</span>
                   </div>
                   <button
                     type="button"
                     onClick={() => setSelectedPack(null)}
-                    className="text-xs font-bold text-slate-400 hover:text-white"
+                    className="text-xs font-bold text-slate-400 hover:text-white px-1.5 py-0.5 rounded bg-slate-800/60"
                   >
-                    ✕
+                    ✕ Закрыть
                   </button>
                 </div>
 
-                <div className="text-[10px] text-slate-200 leading-relaxed bg-slate-900/90 rounded-lg border border-slate-800 p-2">
-                  {bankInstructions}
+                {/* Блок персонажа (по центру в полный рост с данными) */}
+                <div className="flex flex-col sm:flex-row items-center gap-3.5 rounded-xl border border-amber-500/40 bg-slate-950/90 p-3">
+                  {/* Персонаж в полный рост */}
+                  <div className="relative flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400/70 bg-gradient-to-b from-amber-900/30 to-black p-1.5 shadow-[0_0_15px_rgba(245,158,11,0.3)] overflow-hidden">
+                    {hero.avatar && (hero.avatar.startsWith('data:') || hero.avatar.startsWith('http') || hero.avatar.startsWith('/')) ? (
+                      <img
+                        src={hero.avatar}
+                        alt={hero.nick || 'Персонаж'}
+                        className="h-full w-full object-contain filter drop-shadow-[0_4px_8px_rgba(0,0,0,0.8)]"
+                      />
+                    ) : (
+                      <span className="text-4xl filter drop-shadow">{hero.avatar || '🧙‍♂️'}</span>
+                    )}
+                    <span className="absolute bottom-1 right-1 rounded bg-black/80 px-1 text-[7.5px] font-black text-amber-300">
+                      Ур.{hero.level}
+                    </span>
+                  </div>
+
+                  {/* Данные персонажа */}
+                  <div className="flex-1 space-y-1 text-center sm:text-left min-w-0">
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
+                      <span className="text-sm font-black text-white">{hero.nick || 'Игрок'}</span>
+                      <span className="rounded bg-amber-500/20 border border-amber-400/60 px-1.5 py-0.2 text-[8.5px] font-black text-amber-300">
+                        Уровень {hero.level}
+                      </span>
+                      {hero.clanTag && (
+                        <span className="rounded bg-purple-950 border border-purple-500/50 px-1.5 py-0.2 text-[8.5px] font-black text-purple-300">
+                          [{hero.clanTag}] {hero.clanName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-300">
+                      Текущий баланс: <span className="font-bold text-cyan-300">{hero.crystals.toLocaleString('ru-RU')} 💎</span> | <span className="font-bold text-amber-300">{hero.gold.toLocaleString('ru-RU')} 🪙</span>
+                    </div>
+                    <div className="text-[9.5px] text-emerald-300 font-semibold">
+                      Пакет к начислению: <b>{selectedPack.crystals.toLocaleString('ru-RU')} 💎 Кристаллов</b> {Number(selectedPack.bonusCrystals || 0) > 0 ? `(+${selectedPack.bonusCrystals} бонус)` : ''}
+                    </div>
+                    <div className="text-[9.5px] text-slate-400">
+                      Сумма к оплате: <b className="text-emerald-400 text-xs">{selectedPack.priceUsd}$</b>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                  {bankPaymentUrl ? (
-                    <div className="text-[9.5px] text-cyan-300 font-bold break-all">
-                      🔗 Реквизиты / Ссылка: <span className="text-white select-all">{bankPaymentUrl}</span>
+                {/* Описание покупки через Администратора */}
+                <div className="rounded-lg border border-slate-800 bg-slate-900/90 p-2.5 space-y-1 text-[10px] text-slate-200">
+                  <div className="font-bold text-amber-300 flex items-center gap-1">
+                    <span>👑</span>
+                    <span>Инструкция по покупке через Администратора:</span>
+                  </div>
+                  <div>
+                    {bankInstructions}
+                  </div>
+                  {bankPaymentUrl && (
+                    <div className="pt-1 text-[9.5px] text-cyan-300 font-bold break-all">
+                      🔗 Реквизиты / Связь: <span className="text-white select-all">{bankPaymentUrl}</span>
                     </div>
-                  ) : (
-                    <span className="text-[9px] text-slate-400">
-                      Ваш игровой ник для зачисления: <strong className="text-amber-300">{hero.nick || 'Игрок'}</strong>
-                    </span>
                   )}
+                  <div className="text-[9px] text-amber-200/90 pt-1 border-t border-slate-800/80">
+                    Статус: <span className="text-amber-400 font-bold">⏳ Заказ сформирован — ожидает связи с Администратором</span>
+                  </div>
+                </div>
 
-                  {isAdminUser && onAddCrystals && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const total = selectedPack.crystals + Number(selectedPack.bonusCrystals || 0);
-                        onAddCrystals(
-                          total,
-                          `${selectedPack.crystals} кристаллов (${selectedPack.priceUsd}$)`,
-                          selectedPack.priceUsd
-                        );
-                        setSelectedPack(null);
-                      }}
-                      className="rounded-lg border border-emerald-400 bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-[10px] font-black text-white shadow cursor-pointer"
-                    >
-                      ⚡ Начислить пакет (Тест Админа: +{selectedPack.crystals} 💎)
-                    </button>
-                  )}
+                {/* Кнопки действий */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const orderText = `Заказ кристаллов в игре «Пирамида: Войны»:\nПерсонаж: ${hero.nick || 'Игрок'}\nУровень: ${hero.level}\nПакет: ${selectedPack.crystals} 💎 кристаллов ${Number(selectedPack.bonusCrystals || 0) > 0 ? `(+${selectedPack.bonusCrystals} бонус)` : ''}\nСумма к оплате: ${selectedPack.priceUsd}$\nДата: ${new Date().toLocaleString('ru-RU')}`;
+                      navigator.clipboard.writeText(orderText).then(() => {
+                        if (showToast) showToast('📋 Данные заказа скопированы! Передайте их Администратору в чате.');
+                      }).catch(() => {
+                        if (showToast) showToast(`Персонаж: ${hero.nick}, Пакет: ${selectedPack.crystals} 💎 за ${selectedPack.priceUsd}$`);
+                      });
+                    }}
+                    className="flex-1 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-3 py-2 text-xs font-black text-slate-950 shadow hover:from-amber-400 hover:to-yellow-400 active:scale-95 cursor-pointer text-center"
+                  >
+                    📋 Скопировать данные заказа для Администратора
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPack(null)}
+                    className="rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-bold text-slate-300 cursor-pointer"
+                  >
+                    Выбрать другой пакет
+                  </button>
                 </div>
               </div>
             )}
