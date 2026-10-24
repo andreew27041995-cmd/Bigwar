@@ -638,268 +638,529 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto pt-2 space-y-3">
-          {/* Menu Buttons */}
-          <div className="grid grid-cols-3 gap-1.5">
-            <button
-              onClick={onOpenInventory}
-              className="rounded bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700"
-            >
-              🎒 Сумка
-            </button>
-            <button
-              onClick={onOpenStats}
-              className="relative rounded bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700"
-            >
-              📊 Статы
-              {hero.statPoints > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[8px] font-black text-white ring-2 ring-slate-950 animate-bounce shadow-[0_0_8px_#ef4444]">
-                  {hero.statPoints}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab('mail');
-                if (onMarkMailRead) onMarkMailRead();
-              }}
-              className="relative rounded bg-sky-950/80 p-2 text-[10px] font-bold text-sky-300 border border-sky-500/50 hover:bg-sky-900/80"
-            >
-              📩 Почта
-              {unreadMailCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[8px] font-black text-white ring-2 ring-slate-950 animate-bounce">
-                  {unreadMailCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={onOpenFriends}
-              className="rounded bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700"
-            >
-              👥 Друзья
-            </button>
-            <button
-              onClick={onOpenTradeProtocol}
-              className="rounded bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700"
-            >
-              📜 Протокол
-            </button>
-            <button
-              onClick={onOpenDirectTransfer}
-              className="rounded bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700"
-            >
-              💸 Передача
-            </button>
-            {onOpenShop && (
-              <button
-                onClick={onOpenShop}
-                className="rounded bg-amber-600/30 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:bg-amber-600/50"
-              >
-                🛒 Магазин
-              </button>
-            )}
-            {onOpenCreateItem && (
-              <button
-                onClick={onOpenCreateItem}
-                className="rounded bg-cyan-900/50 p-2 text-[10px] font-extrabold text-cyan-200 border border-cyan-400/70 hover:bg-cyan-800/70"
-              >
-                ⚒️ Создать оружие
-              </button>
-            )}
-            {onOpenLeaderboard && (
-              <button
-                onClick={onOpenLeaderboard}
-                className="col-span-3 rounded bg-gradient-to-r from-amber-600/40 via-yellow-600/40 to-amber-600/40 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:from-amber-600/60 hover:to-yellow-600/60 shadow"
-              >
-                🏆 Рейтинг игроков (Топ Монстры & Топ Золото)
-              </button>
-            )}
-          </div>
+        <div className="flex-1 overflow-y-auto pt-1.5 space-y-2.5">
+          {(() => {
+            const activeSkin =
+              resolvedOwnedSkins.find((s) => s.id === hero.activeSkinId) || null;
+            const activeSkinSprite = activeSkin
+              ? activeSkin.avatarUrl || activeSkin.icon
+              : hero.avatar;
+            const activeSkinQuality = activeSkin
+              ? getQualityConfig(activeSkin.quality)
+              : null;
 
-          {/* Profile Card with HP and Energy bars */}
-          <div className="flex flex-col gap-2 rounded-lg border border-slate-700 bg-slate-900/80 p-2.5">
-            <div className="flex items-center gap-2.5">
-              <div className="relative flex h-11 w-11 items-center justify-center rounded-md border border-amber-400/80 bg-slate-800 text-xl shadow p-1 overflow-hidden shrink-0">
-                <CharacterAvatar avatar={hero.avatar} nick={currentUser} className="w-full h-full object-contain" />
-                {isPremActive && (
-                  <span
-                    className="absolute -top-1.5 -right-1.5 text-xs animate-bounce"
-                    title="Премиум активен (12ч)"
+            const leftSlots: ItemSlot[] = ['weapon', 'armor', 'gloves'];
+            const rightSlots: ItemSlot[] = ['pants', 'boots', 'ring'];
+
+            const handleCycleSkin = (dir: -1 | 1) => {
+              if (!onEquipSkin || resolvedOwnedSkins.length === 0) {
+                setActiveTab('collection');
+                return;
+              }
+              const curIdx = resolvedOwnedSkins.findIndex(
+                (s) => s.id === hero.activeSkinId
+              );
+              const nextIdx =
+                curIdx < 0
+                  ? 0
+                  : (curIdx + dir + resolvedOwnedSkins.length) %
+                    resolvedOwnedSkins.length;
+              const nextSkin = resolvedOwnedSkins[nextIdx];
+              if (nextSkin) {
+                onEquipSkin(nextSkin);
+              }
+            };
+
+            const renderPaperDollSlot = (slot: ItemSlot, side: 'left' | 'right') => {
+              const info = SLOT_INFO[slot];
+              const item = equipped[slot];
+              const quality = item ? getQualityConfig(item.quality) : null;
+              const curDur = item
+                ? item.durability ?? item.maxDurability ?? getItemDefaultMaxDurability(item.lvl)
+                : 0;
+              const maxDur = item
+                ? item.maxDurability ?? getItemDefaultMaxDurability(item.lvl)
+                : 0;
+
+              return (
+                <div
+                  key={slot}
+                  onClick={() => {
+                    if (!item) onOpenInventory();
+                  }}
+                  title={
+                    item
+                      ? `${info.name}: ${item.name} (Ур.${item.lvl})`
+                      : `${info.name}: пусто (нажмите, чтобы открыть Сумку)`
+                  }
+                  className={`relative flex flex-col justify-between rounded-xl border p-1.5 min-h-[72px] transition-all ${
+                    !item
+                      ? 'cursor-pointer hover:border-amber-500/50 hover:bg-slate-800/70 active:scale-[0.98]'
+                      : ''
+                  }`}
+                  style={{
+                    borderColor: item ? quality?.color : 'rgba(71, 85, 105, 0.7)',
+                    background: item
+                      ? 'linear-gradient(145deg, rgba(30, 41, 59, 0.92) 0%, rgba(15, 23, 42, 0.96) 100%)'
+                      : 'linear-gradient(145deg, rgba(15, 23, 42, 0.8) 0%, rgba(9, 13, 22, 0.9) 100%)',
+                    boxShadow: item
+                      ? `0 0 10px ${quality?.color}30, inset 0 1px 0 rgba(255,255,255,0.08)`
+                      : 'inset 0 1px 3px rgba(0,0,0,0.6)'
+                  }}
+                >
+                  {/* Top Row: Slot Icon + Slot Title & Level */}
+                  <div
+                    className={`flex items-center gap-1.5 ${
+                      side === 'right' ? 'flex-row' : 'flex-row'
+                    }`}
                   >
-                    👑
-                  </span>
-                )}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-amber-300">
-                  {isPremActive && <span title="Премиум VIP">👑</span>}
-                  <span className="truncate">{currentUser || 'Игрок'}</span>
-                  {isPremActive && (
-                    <span className="rounded bg-yellow-500/20 border border-yellow-500/40 px-1 py-0.2 text-[8.5px] font-black text-yellow-300 shrink-0">
-                      👑 VIP
-                    </span>
+                    <div
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-slate-950/90 p-0.5 text-base shadow-inner overflow-hidden"
+                      style={{
+                        borderColor: item ? `${quality?.color}88` : '#334155'
+                      }}
+                    >
+                      {item ? (
+                        <ItemIcon icon={item.icon} alt={item.name} fallback={info.icon} />
+                      ) : (
+                        <span className="opacity-50 text-sm">{info.icon}</span>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[8px] font-bold uppercase tracking-wider text-slate-400 truncate">
+                          {info.name}
+                        </span>
+                        {item && (
+                          <span className="shrink-0 rounded bg-slate-950/90 px-1 py-[0.5px] text-[7.5px] font-black text-amber-300 border border-amber-500/30">
+                            {item.lvl} ур.
+                          </span>
+                        )}
+                      </div>
+                      {item ? (
+                        <div
+                          className="truncate text-[9px] font-extrabold leading-tight mt-0.5"
+                          style={{ color: quality?.color }}
+                        >
+                          {item.name}
+                        </div>
+                      ) : (
+                        <div className="text-[8.5px] text-slate-500 italic leading-tight mt-0.5">
+                          + Одеть
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Bottom Row: Stats, Durability & Unequip Button */}
+                  {item ? (
+                    <div className="mt-1 pt-1 border-t border-slate-800/80 flex items-center justify-between gap-1">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">
+                          {item.dmg > 0 && (
+                            <span className="text-amber-300">+{item.dmg}⚔️</span>
+                          )}
+                          {item.hp > 0 && (
+                            <span className="text-red-300">+{item.hp}❤️</span>
+                          )}
+                          {(item.dodgeBonus ?? 0) > 0 && (
+                            <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
+                          )}
+                          {(item.energyBonus ?? 0) > 0 && (
+                            <span className="text-cyan-300">+{item.energyBonus}⚡</span>
+                          )}
+                          {(item.goldBonusPct ?? 0) > 0 && (
+                            <span className="text-yellow-300">+{item.goldBonusPct}%🪙</span>
+                          )}
+                          {(item.expBonusPct ?? 0) > 0 && (
+                            <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                          )}
+                        </div>
+                        <div className="text-[7px] text-amber-400/90 font-semibold mt-0.5 leading-none">
+                          🔧 {curDur}/{maxDur}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUnequip(slot);
+                        }}
+                        className="shrink-0 rounded bg-red-950/90 px-1.5 py-0.5 text-[7.5px] font-extrabold text-red-300 border border-red-500/50 hover:bg-red-800 hover:text-white active:scale-95 cursor-pointer"
+                        title="Снять предмет в сумку"
+                      >
+                        Снять
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex items-center justify-between text-[7.5px] text-slate-500">
+                      <span>Пустой слот</span>
+                      <span className="text-amber-400/80 font-bold">🎒 Сумка ➔</span>
+                    </div>
                   )}
                 </div>
-                <div className="text-[10px] text-slate-400 truncate">
-                  {isPremActive ? '👑 ' : ''}Уровень {hero.level} • Сумка: {effectiveBagCapacity} слотов • {hero.gold} 🪙 • {hero.crystals} 💎
-                </div>
-                <div className="text-[9px] text-slate-400 flex items-center gap-1 mt-0.5">
-                  <span className="text-slate-500 font-medium">🕒 Вход в игру:</span>
-                  <span className="text-amber-300 font-bold">{formatFullDateTime(hero.lastSeen || hero.last_seen || Date.now())}</span>
-                </div>
-              </div>
-            </div>
+              );
+            };
 
-            {/* Health & Energy Bars */}
-            <div className="flex flex-col gap-1 border-t border-slate-800/80 pt-1.5">
-              <div className="relative h-3 w-full overflow-hidden rounded bg-slate-800 border border-slate-700">
-                <div
-                  className="h-full bg-red-600 transition-all duration-300"
-                  style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        ((Number.isFinite(hero.hp) ? hero.hp : totalHp) / Math.max(1, totalHp)) * 100
-                      )
-                    )}%`
-                  }}
-                />
-                <div className="absolute inset-0 flex items-center justify-center text-[7.5px] font-extrabold text-white drop-shadow tabular-nums">
-                  ❤️ Здоровье: {Number.isFinite(hero.hp) ? hero.hp : totalHp} / {totalHp} HP
-                </div>
-              </div>
-              <div className="relative h-3 w-full overflow-hidden rounded bg-slate-800 border border-slate-700">
-                <div
-                  className="h-full bg-sky-600 transition-all duration-300"
-                  style={{
-                    width: `${Math.max(
-                      0,
-                      Math.min(
-                        100,
-                        ((Number.isFinite(hero.energy) ? hero.energy : 100) /
-                          Math.max(1, statsBreakdown.totalMaxEnergy)) *
-                          100
-                      )
-                    )}%`
-                  }}
-                />
-                <div className="absolute inset-0 flex items-center justify-center text-[7.5px] font-extrabold text-white drop-shadow tabular-nums">
-                  ⚡ Энергия: {Number.isFinite(hero.energy) ? hero.energy : 100} / {statsBreakdown.totalMaxEnergy} EN
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Active Bonuses / VIP Block with live countdown timer */}
-          <ActiveVipBonusesBlock
-            isPremium={isPremActive}
-            premiumUntil={hero.premiumUntil}
-            isOwnProfile={true}
-            onOpenPremium={onOpenPremium}
-          />
-
-          {/* Equipment Grid */}
-          <div>
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Экипированные предметы
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {slots.map((slot) => {
-                const info = SLOT_INFO[slot];
-                const item = equipped[slot];
-                const quality = item ? getQualityConfig(item.quality) : null;
-
-                return (
-                  <div
-                    key={slot}
-                    className="flex min-h-[50px] items-center justify-between rounded-md border p-2 text-[10px]"
-                    style={{
-                      borderColor: item ? quality?.color : '#334155',
-                      backgroundColor: item
-                        ? 'rgba(30, 41, 59, 0.7)'
-                        : 'rgba(15, 23, 42, 0.6)'
-                    }}
-                  >
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <span className="text-base shrink-0 w-8 h-8 flex items-center justify-center bg-slate-900 rounded overflow-hidden p-0.5">
-                        {item ? (
-                          <ItemIcon icon={item.icon} alt={item.name} fallback={info.icon} />
-                        ) : (
-                          info.icon
-                        )}
+            return (
+              <>
+                {/* 1. Compact Player Header & Vitals Card */}
+                <div className="rounded-xl border border-amber-500/40 bg-gradient-to-b from-slate-900/95 to-slate-950/95 p-2.5 shadow-lg space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-amber-500/20 border border-amber-400/60 text-xs font-black text-amber-300 shrink-0">
+                        {hero.level}
                       </span>
-                      <div className="truncate">
-                        <div className="text-[9px] text-slate-400">{info.name}</div>
-                        {item ? (
-                          <>
-                            <div
-                              className="truncate font-semibold"
-                              style={{ color: quality?.color }}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1 text-xs font-black text-amber-300 truncate">
+                          {isPremActive && <span title="Премиум VIP">👑</span>}
+                          <span className="truncate">{currentUser || 'Игрок'}</span>
+                          {isPremActive && (
+                            <span className="rounded bg-yellow-500/20 border border-yellow-500/50 px-1 py-0.2 text-[8px] font-black text-yellow-300 shrink-0">
+                              VIP
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[8.5px] text-slate-400 truncate">
+                          Ур. {hero.level} • Сумка: {effectiveBagCapacity} сл. • Вход:{' '}
+                          <span className="text-slate-300 font-semibold">
+                            {formatFullDateTime(hero.lastSeen || hero.last_seen || Date.now())}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Currency Balances */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-amber-950/80 border border-amber-500/40 px-2 py-0.5 text-[9.5px] font-black text-amber-300">
+                        🪙 {hero.gold.toLocaleString('ru-RU')}
+                      </span>
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-cyan-950/80 border border-cyan-500/40 px-2 py-0.5 text-[9.5px] font-black text-cyan-200">
+                        💎 {hero.crystals.toLocaleString('ru-RU')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Health & Energy Bars side by side */}
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div className="relative h-3.5 w-full overflow-hidden rounded-md bg-slate-800 border border-red-500/40">
+                      <div
+                        className="h-full bg-gradient-to-r from-red-700 to-red-500 transition-all duration-300"
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(
+                              100,
+                              ((Number.isFinite(hero.hp) ? hero.hp : totalHp) /
+                                Math.max(1, totalHp)) *
+                                100
+                            )
+                          )}%`
+                        }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center text-[7.5px] font-extrabold text-white drop-shadow tabular-nums">
+                        ❤️ {Number.isFinite(hero.hp) ? hero.hp : totalHp} / {totalHp} HP
+                      </div>
+                    </div>
+                    <div className="relative h-3.5 w-full overflow-hidden rounded-md bg-slate-800 border border-sky-500/40">
+                      <div
+                        className="h-full bg-gradient-to-r from-sky-700 to-cyan-500 transition-all duration-300"
+                        style={{
+                          width: `${Math.max(
+                            0,
+                            Math.min(
+                              100,
+                              ((Number.isFinite(hero.energy) ? hero.energy : 100) /
+                                Math.max(1, statsBreakdown.totalMaxEnergy)) *
+                                100
+                            )
+                          )}%`
+                        }}
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center text-[7.5px] font-extrabold text-white drop-shadow tabular-nums">
+                        ⚡ {Number.isFinite(hero.energy) ? hero.energy : 100} /{' '}
+                        {statsBreakdown.totalMaxEnergy} EN
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. ELEVATED RPG PAPER-DOLL EQUIPMENT & FULL-BODY SKIN SHOWCASE */}
+                <div
+                  className="rounded-2xl border-2 border-amber-500/50 p-2 sm:p-2.5 shadow-[0_0_25px_rgba(245,158,11,0.15)] space-y-2"
+                  style={{
+                    background:
+                      'radial-gradient(circle at 50% 45%, rgba(147, 51, 234, 0.16) 0%, rgba(30, 20, 12, 0.92) 55%, rgba(9, 13, 22, 0.98) 100%)'
+                  }}
+                >
+                  <div className="flex items-center justify-between px-0.5">
+                    <div className="text-[10px] font-black uppercase tracking-wider text-amber-300 flex items-center gap-1">
+                      <span>🛡️ Амуниция и Облик Персонажа</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('collection')}
+                      className="rounded-md border border-purple-400/60 bg-purple-950/70 px-2 py-0.5 text-[8.5px] font-black text-purple-200 hover:bg-purple-800/80 active:scale-95 cursor-pointer"
+                    >
+                      🎭 Скины ({resolvedOwnedSkins.length})
+                    </button>
+                  </div>
+
+                  {/* 3-Column Paper-Doll Grid: Left Gear | Center Full-Body Character Skin | Right Gear */}
+                  <div className="grid grid-cols-[1fr_1.18fr_1fr] gap-1.5 sm:gap-2 items-stretch">
+                    {/* Left Equipment Column: Weapon, Armor, Gloves */}
+                    <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                      {leftSlots.map((slot) => renderPaperDollSlot(slot, 'left'))}
+                    </div>
+
+                    {/* Center Full-Body Character Skin Pedestal */}
+                    <div
+                      className="relative flex flex-col items-center justify-between rounded-xl border-2 p-1.5 overflow-hidden select-none"
+                      style={{
+                        borderColor: activeSkinQuality?.color || '#f59e0b',
+                        background:
+                          'radial-gradient(ellipse at 50% 45%, rgba(245, 158, 11, 0.22) 0%, rgba(88, 28, 135, 0.28) 48%, rgba(9, 6, 15, 0.96) 100%)',
+                        boxShadow: `inset 0 0 22px ${
+                          activeSkinQuality?.color || '#f59e0b'
+                        }33, 0 0 14px rgba(0,0,0,0.8)`
+                      }}
+                    >
+                      {/* Top Active Skin Name & Level Badge */}
+                      <div className="w-full text-center border-b border-amber-500/25 pb-1 z-10">
+                        <div
+                          className="truncate text-[9px] font-black leading-tight drop-shadow"
+                          style={{ color: activeSkinQuality?.color || '#fde047' }}
+                        >
+                          {activeSkin ? `🎭 ${activeSkin.name}` : '👤 Стандартный облик'}
+                        </div>
+                        <div className="text-[7.5px] font-bold text-slate-300 leading-none mt-0.5">
+                          {activeSkin
+                            ? `${activeSkinQuality?.name || 'Редкий'} • ${activeSkin.lvl} ур.`
+                            : `Герой ${hero.level} ур.`}
+                        </div>
+                      </div>
+
+                      {/* Center Full-Height Character Avatar + Optional Quick Switch Arrows */}
+                      <div className="relative flex-1 w-full flex items-center justify-center my-1 min-h-[145px] sm:min-h-[165px]">
+                        {/* Ambient Glow Aura */}
+                        <div
+                          className="pointer-events-none absolute inset-3 rounded-full blur-xl opacity-45"
+                          style={{
+                            backgroundColor: activeSkinQuality?.color || '#f59e0b'
+                          }}
+                        />
+
+                        {/* Left Quick Skin Switch Arrow */}
+                        {resolvedOwnedSkins.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleCycleSkin(-1)}
+                            title="Предыдущий скин"
+                            className="absolute left-0.5 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-amber-400/60 bg-slate-950/85 text-[10px] font-black text-amber-300 hover:bg-amber-500 hover:text-slate-950 active:scale-90 shadow cursor-pointer"
+                          >
+                            ◀
+                          </button>
+                        )}
+
+                        {/* Full-Body Character Sprite in Full Height */}
+                        <div
+                          onClick={() => setActiveTab('collection')}
+                          title="Нажмите, чтобы выбрать или сменить скин персонажа"
+                          className="relative z-10 flex h-[142px] sm:h-[160px] w-full items-center justify-center px-2 cursor-pointer transition-transform hover:scale-[1.03]"
+                        >
+                          <CharacterAvatar
+                            avatar={activeSkinSprite}
+                            nick={currentUser}
+                            fullBody={true}
+                            size="full"
+                            className="w-full h-full max-h-[156px] object-contain"
+                          />
+                        </div>
+
+                        {/* Right Quick Skin Switch Arrow */}
+                        {resolvedOwnedSkins.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleCycleSkin(1)}
+                            title="Следующий скин"
+                            className="absolute right-0.5 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-amber-400/60 bg-slate-950/85 text-[10px] font-black text-amber-300 hover:bg-amber-500 hover:text-slate-950 active:scale-90 shadow cursor-pointer"
+                          >
+                            ▶
+                          </button>
+                        )}
+
+                        {/* Golden RPG Pedestal Floor under character's feet */}
+                        <div className="pointer-events-none absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4/5 h-2.5 rounded-full bg-gradient-to-r from-transparent via-amber-500/45 to-transparent blur-[1px] border-b border-amber-400/60" />
+                      </div>
+
+                      {/* Bottom Skin Bonuses & Change Skin Action */}
+                      <div className="w-full z-10 space-y-1 pt-0.5 border-t border-amber-500/20">
+                        {activeSkin && (
+                          <div className="truncate text-center text-[7.5px] font-bold text-emerald-300 px-1">
+                            {formatSkinBonusesText(activeSkin)}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('collection')}
+                            className="flex-1 rounded-lg bg-gradient-to-r from-purple-600/90 to-indigo-600/90 border border-purple-400/70 py-1 text-[8px] font-black text-white hover:brightness-110 active:scale-95 shadow cursor-pointer"
+                          >
+                            🎭 Сменить скин
+                          </button>
+                          {activeSkin && onEquipSkin && (
+                            <button
+                              type="button"
+                              onClick={() => onEquipSkin(null)}
+                              title="Снять скин"
+                              className="shrink-0 rounded-lg bg-slate-900 border border-slate-600 px-1.5 py-1 text-[8px] font-bold text-slate-300 hover:bg-red-950 hover:text-red-200 hover:border-red-500/50 active:scale-95 cursor-pointer"
                             >
-                              {item.name}
-                            </div>
-                              <div className="text-[8px] text-slate-300 flex flex-wrap gap-1 mt-0.5">
-                                <span>Ур.{item.lvl}</span>
-                                {item.hp > 0 && <span className="text-red-300">+{item.hp} HP</span>}
-                                {item.dmg > 0 && <span className="text-amber-300">+{item.dmg} Урон</span>}
-                                {(item.dodgeBonus ?? 0) > 0 && <span className="text-emerald-300">+{item.dodgeBonus}% Укл</span>}
-                                {(item.energyBonus ?? 0) > 0 && <span className="text-cyan-300">+{item.energyBonus} Энерг</span>}
-                                {(item.goldBonusPct ?? 0) > 0 && <span className="text-yellow-300">+{item.goldBonusPct}% Зол</span>}
-                                {(item.expBonusPct ?? 0) > 0 && <span className="text-purple-300">+{item.expBonusPct}% Опыт</span>}
-                              </div>
-                              <div className="text-[8px] text-amber-400 font-bold mt-0.5">
-                                🔧 Прочность: {item.durability ?? item.maxDurability ?? getItemDefaultMaxDurability(item.lvl)}/{item.maxDurability ?? getItemDefaultMaxDurability(item.lvl)}
-                              </div>
-                            </>
-                          ) : (
-                            <div className="text-[9px] text-slate-500 italic">пусто</div>
+                              ✕
+                            </button>
                           )}
                         </div>
                       </div>
-                      {item && (
-                        <button
-                          onClick={() => onUnequip(slot)}
-                          className="ml-1 shrink-0 rounded bg-red-950/80 px-1.5 py-1 text-[8px] font-bold text-red-300 border border-red-500/40 hover:bg-red-900"
-                          title="Снять предмет"
-                        >
-                          Снять
-                        </button>
-                      )}
                     </div>
-                  );
-                })}
-              </div>
-            </div>
 
-            {/* Combat Stats summary */}
-            <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-2.5 text-[10px] space-y-1">
-              <div className="font-bold text-amber-400 mb-1">⚔️ Боевые характеристики и бонусы</div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Урон (сила + экип.):</span>
-                <span className="font-bold text-amber-300">{totalDmg} ({statsBreakdown.strDamage} + {statsBreakdown.gearDmg})</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Здоровье (HP):</span>
-                <span className="font-bold text-red-300">{hero.hp} / {totalHp} ({statsBreakdown.baseHp} + {statsBreakdown.gearHp})</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Шанс уклонения:</span>
-                <span className="font-bold text-sky-300">{dodgeChance}% ({statsBreakdown.baseDodgePct}% + {statsBreakdown.gearDodge}%)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Энергия:</span>
-                <span className="font-bold text-cyan-300">{hero.energy} / {statsBreakdown.totalMaxEnergy} (100 + {statsBreakdown.gearEnergy})</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Бонус к золоту (перчатки):</span>
-                <span className="font-bold text-yellow-300">+{statsBreakdown.gearGoldPct}%</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Бонус к опыту (кольцо):</span>
-                <span className="font-bold text-purple-300">+{statsBreakdown.gearExpPct}%</span>
-              </div>
-            </div>
+                    {/* Right Equipment Column: Pants, Boots, Ring */}
+                    <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                      {rightSlots.map((slot) => renderPaperDollSlot(slot, 'right'))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Quick Action Menu Buttons */}
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    onClick={onOpenInventory}
+                    className="rounded-lg bg-amber-600/25 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:bg-amber-600/40 active:scale-95 shadow"
+                  >
+                    🎒 Сумка ({effectiveBagCapacity})
+                  </button>
+                  <button
+                    onClick={onOpenStats}
+                    className="relative rounded-lg bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700 active:scale-95"
+                  >
+                    📊 Статы
+                    {hero.statPoints > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[8px] font-black text-white ring-2 ring-slate-950 animate-bounce shadow-[0_0_8px_#ef4444]">
+                        {hero.statPoints}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab('mail');
+                      if (onMarkMailRead) onMarkMailRead();
+                    }}
+                    className="relative rounded-lg bg-sky-950/80 p-2 text-[10px] font-bold text-sky-300 border border-sky-500/50 hover:bg-sky-900/80 active:scale-95"
+                  >
+                    📩 Почта
+                    {unreadMailCount > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-600 px-1 text-[8px] font-black text-white ring-2 ring-slate-950 animate-bounce">
+                        {unreadMailCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={onOpenFriends}
+                    className="rounded-lg bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700 active:scale-95"
+                  >
+                    👥 Друзья
+                  </button>
+                  <button
+                    onClick={onOpenTradeProtocol}
+                    className="rounded-lg bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700 active:scale-95"
+                  >
+                    📜 Протокол
+                  </button>
+                  <button
+                    onClick={onOpenDirectTransfer}
+                    className="rounded-lg bg-slate-800 p-2 text-[10px] font-bold text-slate-200 border border-slate-700 hover:bg-slate-700 active:scale-95"
+                  >
+                    💸 Передача
+                  </button>
+                  {onOpenShop && (
+                    <button
+                      onClick={onOpenShop}
+                      className="rounded-lg bg-emerald-950/70 p-2 text-[10px] font-extrabold text-emerald-300 border border-emerald-500/60 hover:bg-emerald-900/70 active:scale-95"
+                    >
+                      🛒 Магазин
+                    </button>
+                  )}
+                  {onOpenCreateItem && (
+                    <button
+                      onClick={onOpenCreateItem}
+                      className="rounded-lg bg-cyan-900/50 p-2 text-[10px] font-extrabold text-cyan-200 border border-cyan-400/70 hover:bg-cyan-800/70 active:scale-95"
+                    >
+                      ⚒️ Создать оружие
+                    </button>
+                  )}
+                  {onOpenLeaderboard && (
+                    <button
+                      onClick={onOpenLeaderboard}
+                      className="rounded-lg bg-gradient-to-r from-amber-600/40 via-yellow-600/40 to-amber-600/40 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:from-amber-600/60 hover:to-yellow-600/60 active:scale-95 shadow"
+                    >
+                      🏆 Рейтинг
+                    </button>
+                  )}
+                </div>
+
+                {/* 4. Combat Stats Summary */}
+                <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-2.5 text-[10px] space-y-1">
+                  <div className="font-bold text-amber-400 mb-1">
+                    ⚔️ Боевые характеристики и бонусы
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Урон (сила + экип.):</span>
+                    <span className="font-bold text-amber-300">
+                      {totalDmg} ({statsBreakdown.strDamage} + {statsBreakdown.gearDmg})
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Здоровье (HP):</span>
+                    <span className="font-bold text-red-300">
+                      {hero.hp} / {totalHp} ({statsBreakdown.baseHp} + {statsBreakdown.gearHp})
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Шанс уклонения:</span>
+                    <span className="font-bold text-sky-300">
+                      {dodgeChance}% ({statsBreakdown.baseDodgePct}% + {statsBreakdown.gearDodge}%)
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Энергия:</span>
+                    <span className="font-bold text-cyan-300">
+                      {hero.energy} / {statsBreakdown.totalMaxEnergy} (100 +{' '}
+                      {statsBreakdown.gearEnergy})
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Бонус к золоту (перчатки):</span>
+                    <span className="font-bold text-yellow-300">
+                      +{statsBreakdown.gearGoldPct}%
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Бонус к опыту (кольцо):</span>
+                    <span className="font-bold text-purple-300">
+                      +{statsBreakdown.gearExpPct}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* 5. Active Bonuses / VIP Block */}
+                <ActiveVipBonusesBlock
+                  isPremium={isPremActive}
+                  premiumUntil={hero.premiumUntil}
+                  isOwnProfile={true}
+                  onOpenPremium={onOpenPremium}
+                />
+              </>
+            );
+          })()}
+
 
           {/* Referral Program Section */}
           <div className="rounded-lg border border-purple-500/40 bg-purple-950/30 p-3 space-y-2">

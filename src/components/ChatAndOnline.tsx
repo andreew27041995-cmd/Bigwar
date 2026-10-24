@@ -65,15 +65,7 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const isPyramid = heroLocation === 'pyramid';
-  const chatHidden = isPyramid && isChatCollapsed;
-
-  // Reset collapse state when leaving pyramid
-  useEffect(() => {
-    if (!isPyramid && isChatCollapsed) {
-      setIsChatCollapsed(false);
-    }
-  }, [isPyramid, isChatCollapsed]);
+  const chatHidden = isChatCollapsed;
 
   const filteredMessages = messages.filter((m) => m.channel === activeChannel);
 
@@ -311,17 +303,16 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
               ⚔️ Лог{combatLog.length > 0 ? ` (${combatLog.length})` : ''}
             </button>
 
-            {/* Arrow button available ONLY in the Pyramid: collapses ONLY the chat block to the right */}
-            {isPyramid && (
-              <button
-                type="button"
-                onClick={() => setIsChatCollapsed(true)}
-                className="flex items-center justify-center rounded border border-amber-500/60 bg-amber-950/80 px-1.5 py-0.5 text-[9px] font-black text-amber-300 hover:bg-amber-800 hover:text-white active:scale-95 shrink-0 shadow"
-                title="Свернуть чат вправо (открыть экипировку)"
-              >
-                ▶
-              </button>
-            )}
+            {/* Collapse Chat Button: hides chat and reveals full-body character & equipment */}
+            <button
+              type="button"
+              onClick={() => setIsChatCollapsed(true)}
+              className="flex items-center justify-center gap-0.5 rounded border border-amber-500/60 bg-amber-950/80 px-1.5 py-0.5 text-[8.5px] font-black text-amber-300 hover:bg-amber-800 hover:text-white active:scale-95 shrink-0 shadow cursor-pointer"
+              title="Скрыть чат (показать персонажа в полный рост и амуницию)"
+            >
+              <span>👤</span>
+              <span>▶</span>
+            </button>
           </div>
 
           {activeChannel === 'combatLog' ? (
@@ -475,98 +466,68 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
           )}
         </div>
       ) : (
-        /* Interactive Equipment Zone displayed in the freed area when Chat is collapsed to the right */
+        /* Interactive Full-Height Character & Equipment Zone displayed when Chat is hidden */
         <div
           className="relative flex w-[55%] min-w-0 items-stretch justify-between border-r border-amber-700/50 p-1.5 select-none overflow-hidden transition-all duration-300 ease-in-out"
           style={{
             backgroundImage: `
-              radial-gradient(ellipse at 45% 50%, rgba(217, 119, 6, 0.18) 0%, rgba(28, 17, 9, 0.94) 70%, #090604 100%),
-              repeating-linear-gradient(90deg, rgba(245, 158, 11, 0.03) 0px, rgba(245, 158, 11, 0.03) 24px, rgba(0, 0, 0, 0.25) 24px, rgba(0, 0, 0, 0.25) 25px)
+              radial-gradient(ellipse at 45% 50%, rgba(245, 158, 11, 0.22) 0%, rgba(88, 28, 135, 0.24) 45%, rgba(15, 10, 18, 0.96) 100%)
             `
           }}
         >
           {/* Equipment & Full-Body Hero Display Panel */}
-          <div className="flex flex-1 min-w-0 items-center justify-center gap-1.5 sm:gap-2.5 pr-1">
-            {/* Left Column of Square Slots: Top [Оружие], Middle [Штаны], Bottom [Перчатки] */}
+          <div className="flex flex-1 min-w-0 items-stretch justify-center gap-1.5 sm:gap-2 pr-1">
+            {/* Left Column of Square Slots: Top [Оружие], Middle [Броня], Bottom [Перчатки] */}
             <div className="flex flex-col items-center justify-between gap-1 py-0.5 shrink-0">
               {renderEquipSlot('weapon', 'Оружие')}
-              {renderEquipSlot('pants', 'Штаны')}
+              {renderEquipSlot('armor', 'Броня')}
               {renderEquipSlot('gloves', 'Перчатки')}
             </div>
 
-            {/* Center: Full-Height Character Figure & Pedestal */}
+            {/* Center: True Full-Height Character Skin Showcase & Pedestal */}
             <div
               onClick={onOpenCharModal}
-              title="Нажмите, чтобы открыть окно персонажа"
-              className="group relative flex h-full max-h-[154px] flex-1 min-w-[68px] max-w-[105px] cursor-pointer flex-col items-center justify-between rounded-lg border border-amber-500/50 bg-gradient-to-b from-amber-950/60 via-[#170e07]/95 to-black/95 px-1.5 py-1 shadow-[inset_0_0_16px_rgba(245,158,11,0.2)] hover:border-amber-400"
+              title="Нажмите, чтобы открыть окно персонажа и амуниции"
+              className="group relative flex h-full flex-1 min-w-[76px] max-w-[122px] cursor-pointer flex-col items-center justify-between rounded-xl border-2 border-amber-500/60 bg-gradient-to-b from-amber-950/60 via-[#150c1f]/95 to-black/95 px-1.5 py-1 shadow-[inset_0_0_20px_rgba(245,158,11,0.25),0_0_10px_rgba(0,0,0,0.8)] hover:border-amber-400 transition-all"
             >
-              {/* Decorative Egyptian header */}
-              <div className="w-full text-center border-b border-amber-500/25 pb-0.5 shrink-0">
-                <div className="truncate text-[7.5px] font-black text-amber-300 leading-none">
+              {/* Decorative Header with Nickname & Level */}
+              <div className="w-full flex items-center justify-between gap-1 border-b border-amber-500/25 pb-0.5 shrink-0 z-10">
+                <span className="truncate text-[7.5px] font-black text-amber-300 leading-none">
                   {heroIsPremium ? '👑 ' : ''}{myNick}
-                </div>
-                <div className="text-[6.5px] font-bold text-amber-400/80 leading-none mt-0.5">
-                  {heroIsPremium ? '👑 ' : ''}{heroLevel} ур.
-                </div>
+                </span>
+                <span className="shrink-0 rounded bg-amber-500/20 border border-amber-400/40 px-1 py-[0.5px] text-[6.5px] font-black text-amber-200 leading-none">
+                  {heroLevel} ур.
+                </span>
               </div>
 
-              {/* Full-Body Character Figure */}
-              <div className="relative flex flex-1 w-full flex-col items-center justify-center my-0.5 overflow-hidden">
-                {/* Golden Aura Glow behind full-body figure */}
-                <div className="pointer-events-none absolute inset-1 rounded-full bg-amber-500/15 blur-md" />
+              {/* Full-Body Character Sprite in Full Height (в полный рост) */}
+              <div className="relative flex flex-1 w-full min-h-0 items-center justify-center my-0.5 overflow-hidden">
+                {/* Golden/Purple Royal Aura behind full-body figure */}
+                <div className="pointer-events-none absolute inset-1.5 rounded-full bg-gradient-to-b from-amber-500/25 via-purple-500/20 to-transparent blur-md" />
 
-                {/* Full-body silhouette + Hero Avatar */}
-                <div className="relative flex flex-col items-center justify-center">
-                  {/* Head / Avatar */}
-                  <div className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center drop-shadow-[0_2px_8px_rgba(251,191,36,0.5)] z-10 p-0.5 overflow-hidden">
-                    <CharacterAvatar avatar={heroAvatar} nick={currentUser} className="w-full h-full object-contain" />
-                  </div>
-                  {/* Full-body Ancient Egyptian Armor Silhouette under head */}
-                  <svg
-                    viewBox="0 0 64 76"
-                    className="-mt-1.5 h-12 sm:h-14 w-11 sm:w-12 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]"
-                    fill="none"
-                  >
-                    {/* Pharaoh Collar / Shoulders */}
-                    <path
-                      d="M14 10 C22 4, 42 4, 50 10 L56 26 L46 29 L43 18 L42 42 L22 42 L21 18 L18 29 L8 26 Z"
-                      fill="url(#egyptGoldGrad)"
-                      stroke="#fbbf24"
-                      strokeWidth="1.5"
-                    />
-                    {/* Belt & Royal Shendyt Kilt (Pants) */}
-                    <path
-                      d="M21 42 L43 42 L46 56 L34 56 L32 48 L30 56 L18 56 Z"
-                      fill="#78350f"
-                      stroke="#f59e0b"
-                      strokeWidth="1.4"
-                    />
-                    {/* Boots / Greaves */}
-                    <path
-                      d="M21 56 L29 56 L28 73 L19 73 Z M35 56 L43 56 L45 73 L36 73 Z"
-                      fill="#451a03"
-                      stroke="#d97706"
-                      strokeWidth="1.4"
-                    />
-                    <defs>
-                      <linearGradient id="egyptGoldGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.85" />
-                        <stop offset="100%" stopColor="#451a03" stopOpacity="0.95" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
+                <div className="relative z-10 flex h-full w-full items-center justify-center p-0.5 transition-transform duration-200 group-hover:scale-105">
+                  <CharacterAvatar
+                    avatar={heroAvatar}
+                    nick={currentUser}
+                    fullBody={true}
+                    size="full"
+                    className="w-full h-full max-h-[118px] sm:max-h-[132px] object-contain"
+                  />
                 </div>
+
+                {/* Glowing Stone Pedestal Ring under feet */}
+                <div className="pointer-events-none absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4/5 h-2 rounded-full bg-gradient-to-r from-transparent via-amber-400/50 to-transparent blur-[0.5px] border-b border-amber-400/70" />
               </div>
 
-              {/* Stone Pedestal Footer */}
-              <div className="w-full rounded bg-amber-950/80 border border-amber-500/30 py-[1px] text-center text-[6px] font-extrabold uppercase tracking-wider text-amber-300/90 shrink-0">
-                Экипировка
+              {/* Pedestal Footer */}
+              <div className="w-full rounded bg-gradient-to-r from-amber-950/90 via-purple-950/90 to-amber-950/90 border border-amber-500/40 py-[1.5px] text-center text-[6.5px] font-black uppercase tracking-wider text-amber-200 shrink-0 z-10 group-hover:text-white">
+                🛡️ Персонаж
               </div>
             </div>
 
-            {/* Right Column of Square Slots: Top [Броня], Middle [Сапоги / ноги], Bottom [Кольцо] */}
+            {/* Right Column of Square Slots: Top [Штаны], Middle [Сапоги], Bottom [Кольцо] */}
             <div className="flex flex-col items-center justify-between gap-1 py-0.5 shrink-0">
-              {renderEquipSlot('armor', 'Броня')}
+              {renderEquipSlot('pants', 'Штаны')}
               {renderEquipSlot('boots', 'Сапоги')}
               {renderEquipSlot('ring', 'Кольцо')}
             </div>
@@ -576,7 +537,7 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
           <button
             type="button"
             onClick={() => setIsChatCollapsed(false)}
-            className="flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-amber-500/70 bg-gradient-to-b from-amber-900/85 via-amber-950 to-slate-950 px-2 py-2 text-[9px] font-black text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:border-amber-400 hover:text-white active:scale-95 shrink-0"
+            className="flex flex-col items-center justify-center gap-1 rounded-lg border-2 border-amber-500/70 bg-gradient-to-b from-amber-900/85 via-amber-950 to-slate-950 px-2 py-2 text-[9px] font-black text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:border-amber-400 hover:text-white active:scale-95 shrink-0 cursor-pointer"
             title="Развернуть чат обратно"
           >
             <span className="text-xs leading-none">◀</span>

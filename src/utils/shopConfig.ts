@@ -5,11 +5,11 @@ export type { CharacterSkinTemplate, BankPackageConfig };
 export const PERSONAL_SKIN_DEFAULT_SPRITE_DATA_URL =
   `data:image/svg+xml;utf8,` +
   encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 120" fill="none">
       <defs>
-        <radialGradient id="aura" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.55"/>
-          <stop offset="70%" stop-color="#9333ea" stop-opacity="0.25"/>
+        <radialGradient id="aura" cx="50%" cy="48%" r="48%">
+          <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.45"/>
+          <stop offset="65%" stop-color="#9333ea" stop-opacity="0.22"/>
           <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
         </radialGradient>
         <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -21,25 +21,47 @@ export const PERSONAL_SKIN_DEFAULT_SPRITE_DATA_URL =
           <stop offset="0%" stop-color="#38bdf8"/>
           <stop offset="100%" stop-color="#1e3a8a"/>
         </linearGradient>
+        <linearGradient id="darkArmor" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#312e81"/>
+          <stop offset="100%" stop-color="#0f172a"/>
+        </linearGradient>
       </defs>
-      <circle cx="32" cy="32" r="29" fill="url(#aura)"/>
+      <!-- Royal Aura & Shadow Pedestal -->
+      <ellipse cx="40" cy="58" rx="34" ry="48" fill="url(#aura)"/>
+      <ellipse cx="40" cy="112" rx="24" ry="5" fill="#f59e0b" fill-opacity="0.35"/>
+      <!-- Royal Cloak -->
+      <path d="M22 36 L12 98 L28 94 L40 98 L52 94 L68 98 L58 36 Z" fill="#3b0764" stroke="url(#gold)" stroke-width="1.4"/>
       <!-- Nemes Royal Headdress -->
-      <path d="M14 26 L20 10 L44 10 L50 26 L46 46 L38 42 L26 42 L18 46 Z" fill="url(#lapis)" stroke="url(#gold)" stroke-width="2.2"/>
-      <path d="M18 16 H46 M16 22 H48 M17 28 H47" stroke="url(#gold)" stroke-width="1.6"/>
+      <path d="M21 26 L26 9 L54 9 L59 26 L55 43 L46 39 L34 39 L25 43 Z" fill="url(#lapis)" stroke="url(#gold)" stroke-width="2"/>
+      <path d="M25 14 H55 M23 20 H57 M24 26 H56" stroke="url(#gold)" stroke-width="1.5"/>
       <!-- Cobra Uraeus Crown -->
-      <circle cx="32" cy="11" r="3.5" fill="url(#gold)" stroke="#fff" stroke-width="0.8"/>
-      <circle cx="32" cy="11" r="1.5" fill="#ef4444"/>
+      <circle cx="40" cy="10" r="3.5" fill="url(#gold)" stroke="#fff" stroke-width="0.8"/>
+      <circle cx="40" cy="10" r="1.5" fill="#ef4444"/>
       <!-- Pharaoh Face & Glowing Eyes -->
-      <path d="M23 20 H41 V34 C41 39 36 42 32 42 C28 42 23 39 23 34 Z" fill="#d97706" stroke="url(#gold)" stroke-width="1.5"/>
-      <ellipse cx="28" cy="27" rx="2.3" ry="1.3" fill="#67e8f9"/>
-      <ellipse cx="36" cy="27" rx="2.3" ry="1.3" fill="#67e8f9"/>
+      <path d="M30 18 H50 V31 C50 36 45 39 40 39 C35 39 30 36 30 31 Z" fill="#d97706" stroke="url(#gold)" stroke-width="1.5"/>
+      <ellipse cx="36" cy="25" rx="2.3" ry="1.3" fill="#67e8f9"/>
+      <ellipse cx="44" cy="25" rx="2.3" ry="1.3" fill="#67e8f9"/>
       <!-- Royal Beard -->
-      <path d="M30 41 L34 41 L33 50 L31 50 Z" fill="url(#gold)"/>
-      <!-- Golden Armor & Collar -->
-      <path d="M16 44 C22 40 42 40 48 44 L52 58 H12 Z" fill="url(#gold)" stroke="#fef08a" stroke-width="1.5"/>
-      <path d="M22 46 C27 50 37 50 42 46" stroke="#1e3a8a" stroke-width="2.2" fill="none"/>
-      <!-- Glowing Gem on Chest -->
-      <polygon points="32,47 36,52 32,57 28,52" fill="#38bdf8" stroke="#fff" stroke-width="1"/>
+      <path d="M38 38 L42 38 L41 46 L39 46 Z" fill="url(#gold)"/>
+      <!-- Broad Golden Pauldrons & Torso Armor -->
+      <path d="M16 42 C25 36 55 36 64 42 L68 54 L56 56 L53 46 L52 68 L28 68 L27 46 L24 56 L12 54 Z" fill="url(#darkArmor)" stroke="url(#gold)" stroke-width="1.8"/>
+      <path d="M24 42 C32 49 48 49 56 42" stroke="url(#gold)" stroke-width="2.5" fill="none"/>
+      <polygon points="40,46 44,52 40,58 36,52" fill="#38bdf8" stroke="#fff" stroke-width="1"/>
+      <!-- Arms & Golden Vambraces -->
+      <path d="M15 54 L22 55 L20 74 L13 73 Z M65 54 L58 55 L60 74 L67 73 Z" fill="#b45309" stroke="url(#gold)" stroke-width="1.4"/>
+      <!-- Glowing Khopesh Sword in Right Hand -->
+      <path d="M16 72 L16 48 C16 36 6 34 8 24 C10 17 18 18 20 24" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" fill="none"/>
+      <path d="M16 74 L16 66" stroke="url(#gold)" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- Royal Scepter Ankh in Left Hand -->
+      <path d="M64 46 L64 86 M59 52 H69" stroke="url(#gold)" stroke-width="2.4" stroke-linecap="round"/>
+      <circle cx="64" cy="41" r="4.5" stroke="#38bdf8" stroke-width="2.2" fill="none"/>
+      <!-- Royal Belt & Shendyt Kilt -->
+      <rect x="27" y="66" width="26" height="5" rx="1.5" fill="url(#gold)" stroke="#fff" stroke-width="0.8"/>
+      <path d="M26 71 L54 71 L58 90 L44 90 L40 78 L36 90 L22 90 Z" fill="url(#lapis)" stroke="url(#gold)" stroke-width="1.6"/>
+      <path d="M37 71 L43 71 L45 92 L40 95 L35 92 Z" fill="url(#gold)"/>
+      <!-- Armored Greaves & Boots -->
+      <path d="M26 90 L35 90 L34 111 L24 111 Z M45 90 L54 90 L56 111 L46 111 Z" fill="url(#darkArmor)" stroke="url(#gold)" stroke-width="1.6"/>
+      <path d="M22 109 H35 V114 H20 Z M45 109 H58 V114 H45 Z" fill="url(#gold)"/>
     </svg>`
   );
 

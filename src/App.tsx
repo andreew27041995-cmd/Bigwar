@@ -703,8 +703,23 @@ export default function App() {
         }
       });
 
-      // Add active character skin bonuses
+      // Add active character skin bonuses & synchronize active skin avatar sprite
       const skinBonuses = getActiveSkinBonuses(currentHero.activeSkinId, undefined, currentHero.ownedSkins);
+      let resolvedSkinAvatar = currentHero.avatar;
+      if (currentHero.activeSkinId) {
+        const ownedResolved = resolvePlayerOwnedSkins(
+          currentHero.ownedSkinIds,
+          currentHero.ownedSkinExpirations,
+          undefined,
+          currentHero.ownedSkins,
+          currentHero.activeSkinId,
+          currentHero.avatar
+        );
+        const activeSkinObj = ownedResolved.find((s) => s.id === currentHero.activeSkinId);
+        if (activeSkinObj && (activeSkinObj.avatarUrl || activeSkinObj.icon)) {
+          resolvedSkinAvatar = activeSkinObj.avatarUrl || activeSkinObj.icon;
+        }
+      }
       dmg += Number(skinBonuses.dmgBonus || skinBonuses.dmg || 0);
       hp += Number(skinBonuses.hpBonus || skinBonuses.hp || 0);
       dodgeBonus += Number(skinBonuses.dodgeBonus || 0);
@@ -749,6 +764,7 @@ export default function App() {
 
       return {
         ...currentHero,
+        avatar: resolvedSkinAvatar,
         gearDmg: dmg,
         gearHp: hp,
         gearDodge: dodgeBonus,
@@ -6220,7 +6236,23 @@ export default function App() {
           heroPyramidTier={pyramidTier}
           currentUser={currentUser}
           heroLevel={hero.level}
-          heroAvatar={hero.avatar}
+          heroAvatar={(() => {
+            if (hero.activeSkinId) {
+              const ownedResolved = resolvePlayerOwnedSkins(
+                hero.ownedSkinIds,
+                hero.ownedSkinExpirations,
+                shopSkins,
+                hero.ownedSkins,
+                hero.activeSkinId,
+                hero.avatar
+              );
+              const activeSkin = ownedResolved.find((s) => s.id === hero.activeSkinId);
+              if (activeSkin && (activeSkin.avatarUrl || activeSkin.icon)) {
+                return activeSkin.avatarUrl || activeSkin.icon;
+              }
+            }
+            return hero.avatar;
+          })()}
           heroIsPremium={Boolean(
             hero.isPremium && hero.premiumUntil && hero.premiumUntil > Date.now()
           )}
@@ -6241,7 +6273,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.0.60</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.0.61</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">24.10.2026</strong></span>
         </div>
