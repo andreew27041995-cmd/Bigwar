@@ -72,7 +72,8 @@ import { ShopModal } from './components/modals/ShopModal';
 import {
   KILLER_LICENSE_CONFIG,
   getKillerAchievementInfo,
-  formatLicenseRemainingTime
+  formatLicenseRemainingTime,
+  calculateKillerStunChance
 } from './utils/egyptianEquipment';
 import {
   playStepSound,
@@ -2138,8 +2139,396 @@ export default function App() {
     return h;
   };
 
+  // Unified PvP Attack on another player (online or offline) in the Pyramid with Killer License and 50% + 5%/lvl Stun
+  const executePvPAttackOnPlayer = (
+    targetNick: string,
+    targetCellCoords?: { r: number; c: number }
+  ) => {
+    const cleanNick = (targetNick || '').trim();
+    if (!cleanNick) return;
+    const activeNickLower = (currentUser || '').trim().toLowerCase();
+    if (activeNickLower && cleanNick.toLowerCase() === activeNickLower) {
+      showToast('🛡️ Нельзя нападать на самого себя!');
+      return;
+    }
+
+    // 1. Attacker must be in the Pyramid
+    if (screen !== 'pyramid') {
+      showToast(
+        '🛡️ Вы находитесь на главной (в Городе)! Чтобы напасть на игрока, сначала войдите в Пирамиду.'
+      );
+      return;
+    }
+
+    // 2. Attacker must not be stunned
+    const stunRemainingMs = Math.max(0, (hero.stunUntil || 0) - Date.now());
+    if (stunRemainingMs > 0) {
+      const sec = Math.ceil(stunRemainingMs / 1000);
+      showToast(`💫 Вы оглушены (${sec}с)! Движение и атака заблокированы.`);
+      return;
+    }
+
+    // 3. Attacker must have an active Killer License
+    const isKillerLicenseActive = Boolean(
+      hero.killerLicenseUntil && hero.killerLicenseUntil > Date.now()
+    );
+    if (!isKillerLicenseActive) {
+      const storedCount = Number(hero.killerLicenses || 0);
+      const hintMsg =
+        storedCount > 0
+          ? `У вас есть ${storedCount} шт. в запасе — нажмите «Использовать» в Персонаже или Магазине!`
+          : `Купите её в разделе «Магазин ➔ Лицензии» за ${KILLER_LICENSE_CONFIG.costCrystals} 💎 (срок 1 день).`;
+      showToast(
+        `📜 Для нападения на игрока ${cleanNick} в Пирамиде нужна активная «Лицензия киллера»! ${hintMsg}`
+      );
+      addCombatLog(
+        `📜 Нападение заблокировано: требуется активная «Лицензия киллера» (${hintMsg})`,
+        'pvp'
+      );
+      return;
+    }
+
+    // 4. Energy cost check
+    const energyCost = 3;
+    if (hero.energy < energyCost) {
+      addCombatLog(
+        `⚡ Недостаточно энергии для атаки игрока ${cleanNick}! Требуется ${energyCost}⚡.`,
+        'pvp'
+      );
+      showToast(`⚡ Недостаточно энергии для атаки игрока ${cleanNick}! Требуется ${energyCost}⚡.`);
+      return;
+    }
+
+    // 5. Target lookup & location rule
+    const targetInRealtime = realtimePlayers.find(
+      (p) => p.nick.trim().toLowerCase() === cleanNick.toLowerCase()
+    );
+    const targetLoc = (targetInRealtime?.location || '').toLowerCase();
+    const isTargetOnMain = targetLoc === 'city' || targetLoc === 'город';
+
+    // If target is in City ("на главной"), attacking them is STRICTLY forbidden!
+    if (isTargetOnMain) {
+      showToast(
+        `🛡️ Игрок ${cleanNick} находится на главной (в Городе) — нападение запрещено! Нападать можно только на игроков в Пирамиде.`
+      );
+      return;
+    }
+
+    // If target is in Pyramid (online OR offline): CAN be attacked and killed!
+    const enemyIsOnline = Boolean(targetInRealtime?.isOnline);
+    const enemyCurrentHp = Number(targetInRealtime?.hp ?? 100);
+    const enemyMaxHp = Number(targetInRealtime?.maxHp ?? 100);
+    const enemyLvl = Math.max(1, Number(targetInRealtime?.lvl ?? 1));
+    const enemyRow = targetInRealtime ? Number(targetInRealtime.row ?? 9) : (targetCellCoords?.r ?? 9);
+    const enemyCol = targetInRealtime ? Number(targetInRealtime.col ?? 0) : (targetCellCoords?.c ?? 0);
+
+    if (enemyCurrentHp <= 0) {
+      showToast(`💀 Игрок ${cleanNick} уже повержен и ожидает возрождения в Городе.`);
+      return;
+    }
+
+    playAttackSound();
+    const totalStr = hero.str + (hero.gearStr || 0);
+    const playerDmg = 16 + hero.bonusDmg + (hero.gearDmg || 0) + totalStr * 2;
+    const updatedEnemyHp = Math.max(0, enemyCurrentHp - playerDmg);
+    const nextEnergy = Math.max(0, hero.energy - energyCost);
+
+    const hitRow = targetCellCoords?.r ?? enemyRow;
+    const hitCol = targetCellCoords?.c ?? enemyCol;
+
+    const popupId = 'dmg_' + Date.now();
+    setDamagePopups((prev) => [
+      ...prev,
+      { id: popupId, row: hitRow, col: hitCol, amount: playerDmg, type: 'player', timestamp: Date.now() }
+    ]);
+    setTimeout(() => setDamagePopups((prev) => prev.filter((p) => p.id !== popupId)), 1000);
+
+    // Stun Roll: 50% base from Killer License + 5% per Killer Achievement level (Only against players!)
+    const currentKillerInfo = getKillerAchievementInfo(hero.pvpKills || 0);
+    const stunCalculation = calculateKillerStunChance(currentKillerInfo.level, true);
+    const stunRoll = Math.random() * 100;
+    const didStun = stunCalculation.canStun && stunRoll < stunCalculation.stunChance;
+    const stunDurationMs = didStun ? stunCalculation.stunDurationMs : 0;
+    const targetStunUntil = didStun ? Date.now() + stunDurationMs : (targetInRealtime?.stunUntil ?? 0);
+
+    if (didStun) {
+      const stunPopupId = 'stun_' + Date.now();
+      setDamagePopups((prev) => [
+        ...prev,
+        { id: stunPopupId, row: hitRow, col: hitCol, amount: 0, text: '💫 ОГЛУШЁН (3с)', type: 'player', timestamp: Date.now() }
+      ]);
+      setTimeout(() => setDamagePopups((prev) => prev.filter((p) => p.id !== stunPopupId)), 1500);
+    }
+
+    if (updatedEnemyHp <= 0) {
+      playLevelUpSound();
+      const stolenGold = Math.floor(180 + Math.random() * 220);
+      const now = Date.now();
+      const dateStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const citySpawnRow = ROWS_COUNT - 1;
+      const citySpawnCol = Math.floor((ROWS_COUNT - 1) / 2);
+
+      const prevKills = Number(heroRef.current.pvpKills || 0);
+      const nextKills = prevKills + 1;
+      const prevKillerAch = getKillerAchievementInfo(prevKills);
+      const nextKillerAch = getKillerAchievementInfo(nextKills);
+      const leveledUpKiller = nextKillerAch.level > prevKillerAch.level;
+
+      setHero((prev) => {
+        const nextRaw: HeroState = {
+          ...prev,
+          energy: nextEnergy,
+          gold: prev.gold + stolenGold,
+          goldInCurrentRun: prev.goldInCurrentRun + stolenGold,
+          pvpKills: (prev.pvpKills || 0) + 1
+        };
+        const recalced = recalcGear(equippedRef.current, nextRaw);
+        if (leveledUpKiller) {
+          recalced.hp = Math.min(recalced.maxHp, recalced.hp + 100);
+        }
+        heroRef.current = recalced;
+        return recalced;
+      });
+
+      if (currentUser) {
+        flushPlayerUpdates(currentUser, {
+          pvp_kills: nextKills,
+          gold: heroRef.current.gold,
+          max_hp: heroRef.current.maxHp,
+          hp: heroRef.current.hp,
+          energy: nextEnergy
+        });
+      }
+
+      // Update killed player in Supabase: send them to the City with 0 HP and 0 energy (both online & offline)
+      updatePlayerInDatabase(cleanNick, {
+        location: 'city',
+        pyramid_tier: 1,
+        пирамидальный_уровень: 1,
+        row: citySpawnRow,
+        ряд: citySpawnRow,
+        col: citySpawnCol,
+        ц: citySpawnCol,
+        hp: 0,
+        energy: 0,
+        was_killed_in_pvp: true,
+        killed_by: currentUser || 'Игрок',
+        last_seen: Date.now()
+      });
+
+      setRealtimePlayers((prev) =>
+        prev.map((p) =>
+          p.nick.toLowerCase() === cleanNick.toLowerCase()
+            ? {
+                ...p,
+                location: 'city',
+                pyramidTier: 1,
+                row: citySpawnRow,
+                col: citySpawnCol,
+                hp: 0,
+                wasKilledInPvp: true,
+                killedBy: currentUser || 'Игрок'
+              }
+            : p
+        )
+      );
+      setPyramidPlayersInPyramid((prev) =>
+        prev.filter((n) => n.toLowerCase() !== cleanNick.toLowerCase())
+      );
+
+      setTradeProtocol((prev) => [
+        {
+          id: 'pvp_' + now,
+          timestamp: now,
+          dateStr,
+          type: 'gold_transfer',
+          description: `⚔️ Победа в PvP над ${cleanNick}${
+            !enemyIsOnline ? ' (оффлайн)' : ''
+          }: конфисковано 50% ресурсов (+${stolenGold} 🪙) | Киллер: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5, +${nextKillerAch.totalStunBonus}% оглуш.)`,
+          amount: stolenGold,
+          targetNick: cleanNick
+        },
+        ...prev
+      ]);
+
+      const msgTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const pvpChatMsg: ChatMessage = {
+        id: 'pvp_chat_' + Date.now(),
+        time: msgTime,
+        author: 'PvP Арена',
+        text: `⚔️ [PvP] ${currentUser || 'Игрок'} убил игрока ${cleanNick}${
+          !enemyIsOnline ? ' (оффлайн)' : ''
+        } в Пирамиде по Лицензии киллера! ${cleanNick} отправлен на возрождение в Город (+${stolenGold} 🪙)!`,
+        isSystem: true,
+        channel: 'world'
+      };
+      setChatMessages((prev) => [...prev, pvpChatMsg]);
+      broadcastWorldChatMessageInSupabase(pvpChatMsg);
+
+      addCombatLog(
+        `⚔️ УБИЙСТВО ИГРОКА: Вы убили ${cleanNick}${
+          !enemyIsOnline ? ' (оффлайн)' : ''
+        } (урон: ${playerDmg}, -${energyCost}⚡)! Добыча: +${stolenGold} 🪙 | Достижение «Киллер»: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5)`,
+        'pvp'
+      );
+
+      showToast(
+        leveledUpKiller
+          ? `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5! Здоровье +100 ❤️ HP и шанс оглушения +5% 💫 навсегда (всего +${nextKillerAch.totalHpBonus} HP, +${nextKillerAch.totalStunBonus}% оглуш.)!`
+          : `⚔️ Вы убили ${cleanNick}${!enemyIsOnline ? ' (оффлайн)' : ''} в Пирамиде! +${stolenGold} 🪙 (Киллер: ${nextKills} уб.)`
+      );
+
+      if (leveledUpKiller) {
+        addCombatLog(
+          `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5 ПОЛУЧЕНО (${nextKills} убийств)! Ваше макс. здоровье увеличено на +100 ❤️ HP, а шанс оглушения на +5% 💫 навсегда (всего +${nextKillerAch.totalHpBonus} HP, шанс ${nextKillerAch.stunChanceWithLicense}%)!`,
+          'pvp'
+        );
+        const achChatMsg: ChatMessage = {
+          id: 'ach_killer_' + Date.now(),
+          time: msgTime,
+          author: 'Достижения',
+          text: `🏆 ${currentUser || 'Игрок'} достиг ${nextKillerAch.level} уровня достижения «Киллер» (${nextKills} убийств в Пирамиде) и получил +100 ❤️ HP и +5% к оглушению навсегда (всего +${nextKillerAch.totalHpBonus} HP, шанс оглушения ${nextKillerAch.stunChanceWithLicense}%)!`,
+          isSystem: true,
+          channel: 'world'
+        };
+        setChatMessages((prev) => [...prev, achChatMsg]);
+        broadcastWorldChatMessageInSupabase(achChatMsg);
+      }
+
+      // Defeated player leaves a gold sack on the cell
+      const newMap = pyramidMap.map((rowArr, rI) =>
+        rowArr.map((cCell, cI) => {
+          if (rI === hitRow && cI === hitCol) {
+            if (rI === PYRAMID_EXIT_POS.row && cI === PYRAMID_EXIT_POS.col) {
+              return { type: 'exit' as const };
+            }
+            if (rI === PYRAMID_SPAWN_POS.row && cI === PYRAMID_SPAWN_POS.col) {
+              return { type: 'empty' as const };
+            }
+            return { type: 'sack' as const, sackGold: stolenGold };
+          }
+          return cCell;
+        })
+      );
+      setPyramidMap(newMap);
+      savePyramidTierToSupabase(
+        pyramidTier,
+        newMap,
+        pyramidSeedRef.current,
+        lastRespawnTime,
+        currentUser || 'player'
+      );
+    } else {
+      // Victim survived this hit
+      updatePlayerInDatabase(cleanNick, {
+        hp: updatedEnemyHp,
+        ...(didStun ? { stun_until: targetStunUntil, stunUntil: targetStunUntil } : {})
+      });
+
+      setRealtimePlayers((prev) =>
+        prev.map((p) =>
+          p.nick.toLowerCase() === cleanNick.toLowerCase()
+            ? {
+                ...p,
+                hp: updatedEnemyHp,
+                ...(didStun ? { stunUntil: targetStunUntil } : {})
+              }
+            : p
+        )
+      );
+
+      if (didStun) {
+        // Victim is stunned! Victim CANNOT counter-attack!
+        addCombatLog(
+          `💫 ОГЛУШЕНИЕ (${stunCalculation.stunChance}% шанс)! Игрок ${cleanNick} оглушён на 3 сек! Жертва не может двигаться и не смогла ответить на удар (урон: -${playerDmg} HP, осталось ${updatedEnemyHp}/${enemyMaxHp} HP) [-${energyCost}⚡].`,
+          'pvp'
+        );
+        showToast(`💫 Игрок ${cleanNick} оглушён на 3 сек! (-${playerDmg} HP)`);
+        const nextHeroState = { ...heroRef.current, energy: nextEnergy };
+        heroRef.current = nextHeroState;
+        setHero(nextHeroState);
+      } else {
+        const totalAgi = hero.agi + (hero.gearAgi || 0);
+        const dodgeChance = Math.min(40, totalAgi * 1);
+        const dodgeRoll = Math.random() * 100;
+        const enemyDmg = enemyLvl * 3 + Math.floor(Math.random() * 8);
+
+        if (dodgeRoll < dodgeChance) {
+          addCombatLog(
+            `⚔️ Удар по игроку ${cleanNick}: -${playerDmg} HP (осталось ${updatedEnemyHp}/${enemyMaxHp} HP) [-${energyCost}⚡]. 💨 Вы уклонились от ответа!`,
+            'pvp'
+          );
+          const nextHeroState = { ...heroRef.current, energy: nextEnergy };
+          heroRef.current = nextHeroState;
+          setHero(nextHeroState);
+        } else {
+          const newHp = Math.max(0, hero.hp - enemyDmg);
+          const damagedHeroState = { ...heroRef.current, hp: newHp, energy: nextEnergy };
+          heroRef.current = damagedHeroState;
+          setHero(damagedHeroState);
+
+          if (newHp <= 0) {
+            const lostGold = Math.floor(heroRef.current.goldInCurrentRun * 0.5);
+            const nextDeadHero: HeroState = {
+              ...heroRef.current,
+              deaths: heroRef.current.deaths + 1,
+              gold: Math.max(0, heroRef.current.gold - lostGold),
+              goldInCurrentRun: 0,
+              hp: 0,
+              energy: 0
+            };
+            heroRef.current = nextDeadHero;
+            setHero(nextDeadHero);
+            const msgTime = new Date().toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+            const deathPvpMsg: ChatMessage = {
+              id: 'death_pvp_' + Date.now(),
+              time: msgTime,
+              author: 'PvP Арена',
+              text: `☠️ Игрок ${currentUser || 'Игрок'} пал в бою против ${cleanNick} в Пирамиде и потерял 50% добычи (-${lostGold} 🪙)!`,
+              isSystem: true,
+              channel: 'world'
+            };
+            setChatMessages((prev) => [...prev, deathPvpMsg]);
+            broadcastWorldChatMessageInSupabase(deathPvpMsg);
+            addCombatLog(
+              `💀 Вы пали в PvP от руки ${cleanNick} и потеряли ${lostGold} 🪙! Возрождение в Городе (HP и ⚡ восстанавливаются).`,
+              'pvp'
+            );
+            handleExitToCity(true);
+            return;
+          }
+          addCombatLog(
+            `⚔️ Удар по игроку ${cleanNick}: -${playerDmg} HP (осталось ${updatedEnemyHp}/${enemyMaxHp} HP) [-${energyCost}⚡]. Ответ: -${enemyDmg} HP`,
+            'pvp'
+          );
+        }
+      }
+
+      const newMap = pyramidMap.map((rowArr, rI) =>
+        rowArr.map((cCell, cI) => {
+          if (rI === hitRow && cI === hitCol) {
+            return { ...cCell, playerHp: updatedEnemyHp };
+          }
+          return cCell;
+        })
+      );
+      setPyramidMap(newMap);
+    }
+  };
+
   // Click pyramid block
   const handlePyramidBlockClick = (r: number, c: number) => {
+    // 0. Stun movement lock
+    const stunRemainingMs = Math.max(0, (hero.stunUntil || 0) - Date.now());
+    if (stunRemainingMs > 0) {
+      const sec = Math.ceil(stunRemainingMs / 1000);
+      showToast(`💫 Вы оглушены! Нельзя двигаться ещё ${sec} сек.`);
+      return;
+    }
+
     const rowDiff = Math.abs(r - playerPos.row);
     const colDiff = Math.abs(c - playerPos.col);
 
@@ -2238,296 +2627,7 @@ export default function App() {
 
     if (hasEnemyPlayer) {
       const enemyNick = enemyOnCell?.nick || cell.playerNick || 'Соперник';
-      const enemyLvl = enemyOnCell?.lvl || cell.playerLvl || 1;
-      const enemyCurrentHp = enemyOnCell?.hp ?? cell.playerHp ?? 100;
-      const enemyMaxHp = enemyOnCell?.maxHp ?? cell.playerMaxHp ?? 100;
-      const enemyIsOnline =
-        enemyOnCell !== undefined
-          ? Boolean(enemyOnCell.isOnline)
-          : Boolean(cell.playerIsOnline ?? true);
-      const energyCost = 3;
-
-      // Enforce active Killer License ("Рецензия киллера") to attack/kill other players in the Pyramid
-      const isKillerLicenseActive = Boolean(
-        hero.killerLicenseUntil && hero.killerLicenseUntil > Date.now()
-      );
-      if (!isKillerLicenseActive) {
-        const storedCount = Number(hero.killerLicenses || 0);
-        const hintMsg =
-          storedCount > 0
-            ? `У вас есть ${storedCount} шт. в запасе — нажмите «Использовать» в Персонаже или Магазине!`
-            : `Купите её в разделе «Магазин ➔ Лицензии» за ${KILLER_LICENSE_CONFIG.costCrystals} 💎 (срок 1 день).`;
-        showToast(
-          `📜 Для нападения на игрока ${enemyNick} в Пирамиде нужна активная «Лицензия киллера»! ${hintMsg}`
-        );
-        addCombatLog(
-          `📜 Нападение заблокировано: требуется активная «Лицензия киллера» (${hintMsg})`,
-          'pvp'
-        );
-        return;
-      }
-
-      if (hero.energy < energyCost) {
-        addCombatLog(
-          `⚡ Недостаточно энергии для атаки игрока ${enemyNick}! Требуется ${energyCost}⚡.`,
-          'pvp'
-        );
-        return;
-      }
-
-      playAttackSound();
-      const totalStr = hero.str + (hero.gearStr || 0);
-      const playerDmg = 16 + hero.bonusDmg + (hero.gearDmg || 0) + totalStr * 2;
-      const updatedEnemyHp = enemyCurrentHp - playerDmg;
-      const nextEnergy = Math.max(0, hero.energy - energyCost);
-
-      const popupId = 'dmg_' + Date.now();
-      setDamagePopups((prev) => [
-        ...prev,
-        { id: popupId, row: r, col: c, amount: playerDmg, type: 'player', timestamp: Date.now() }
-      ]);
-      setTimeout(() => setDamagePopups((prev) => prev.filter((p) => p.id !== popupId)), 1000);
-
-      if (updatedEnemyHp <= 0) {
-        playLevelUpSound();
-        const stolenGold = Math.floor(180 + Math.random() * 220);
-        const now = Date.now();
-        const dateStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const citySpawnRow = ROWS_COUNT - 1;
-        const citySpawnCol = Math.floor((ROWS_COUNT - 1) / 2);
-
-        const prevKills = Number(heroRef.current.pvpKills || 0);
-        const nextKills = prevKills + 1;
-        const prevKillerAch = getKillerAchievementInfo(prevKills);
-        const nextKillerAch = getKillerAchievementInfo(nextKills);
-        const leveledUpKiller = nextKillerAch.level > prevKillerAch.level;
-
-        setHero((prev) => {
-          const nextRaw: HeroState = {
-            ...prev,
-            energy: nextEnergy,
-            gold: prev.gold + stolenGold,
-            goldInCurrentRun: prev.goldInCurrentRun + stolenGold,
-            pvpKills: (prev.pvpKills || 0) + 1
-          };
-          const recalced = recalcGear(equippedRef.current, nextRaw);
-          if (leveledUpKiller) {
-            recalced.hp = Math.min(recalced.maxHp, recalced.hp + 100);
-          }
-          heroRef.current = recalced;
-          return recalced;
-        });
-
-        if (currentUser) {
-          flushPlayerUpdates(currentUser, {
-            pvp_kills: nextKills,
-            gold: heroRef.current.gold,
-            max_hp: heroRef.current.maxHp,
-            hp: heroRef.current.hp,
-            energy: nextEnergy
-          });
-        }
-
-        // Update killed player in Supabase: send them to the City with 0 HP and 0 energy so they regenerate naturally (both online & offline)
-        updatePlayerInDatabase(enemyNick, {
-          location: 'city',
-          pyramid_tier: 1,
-          пирамидальный_уровень: 1,
-          row: citySpawnRow,
-          ряд: citySpawnRow,
-          col: citySpawnCol,
-          ц: citySpawnCol,
-          hp: 0,
-          energy: 0,
-          was_killed_in_pvp: true,
-          killed_by: currentUser || 'Игрок',
-          last_seen: Date.now()
-        });
-
-        setRealtimePlayers((prev) =>
-          prev.map((p) =>
-            p.nick.toLowerCase() === enemyNick.toLowerCase()
-              ? {
-                  ...p,
-                  location: 'city',
-                  pyramidTier: 1,
-                  row: citySpawnRow,
-                  col: citySpawnCol,
-                  hp: 0,
-                  wasKilledInPvp: true,
-                  killedBy: currentUser || 'Игрок'
-                }
-              : p
-          )
-        );
-        setPyramidPlayersInPyramid((prev) =>
-          prev.filter((n) => n.toLowerCase() !== enemyNick.toLowerCase())
-        );
-
-        setTradeProtocol((prev) => [
-          {
-            id: 'pvp_' + now,
-            timestamp: now,
-            dateStr,
-            type: 'gold_transfer',
-            description: `⚔️ Победа в PvP над ${enemyNick}${
-              !enemyIsOnline ? ' (оффлайн)' : ''
-            }: конфисковано 50% ресурсов (+${stolenGold} 🪙) | Киллер: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5)`,
-            amount: stolenGold,
-            targetNick: enemyNick
-          },
-          ...prev
-        ]);
-
-        const msgTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const pvpChatMsg: ChatMessage = {
-          id: 'pvp_chat_' + Date.now(),
-          time: msgTime,
-          author: 'PvP Арена',
-          text: `⚔️ [PvP] ${currentUser || 'Игрок'} убил игрока ${enemyNick}${
-            !enemyIsOnline ? ' (оффлайн)' : ''
-          } в Пирамиде по Лицензии киллера! ${enemyNick} отправлен на возрождение в Город (+${stolenGold} 🪙)!`,
-          isSystem: true,
-          channel: 'world'
-        };
-        setChatMessages((prev) => [...prev, pvpChatMsg]);
-        broadcastWorldChatMessageInSupabase(pvpChatMsg);
-
-        addCombatLog(
-          `⚔️ УБИЙСТВО ИГРОКА: Вы убили ${enemyNick}${
-            !enemyIsOnline ? ' (оффлайн)' : ''
-          } (урон: ${playerDmg}, -${energyCost}⚡)! Добыча: +${stolenGold} 🪙 | Достижение «Киллер»: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5)`,
-          'pvp'
-        );
-
-        showToast(
-          leveledUpKiller
-            ? `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5! Здоровье увеличено на +100 ❤️ HP навсегда (всего +${nextKillerAch.totalHpBonus} HP)!`
-            : `⚔️ Вы убили ${enemyNick}${!enemyIsOnline ? ' (оффлайн)' : ''} в Пирамиде! +${stolenGold} 🪙 (Киллер: ${nextKills} уб.)`
-        );
-
-        if (leveledUpKiller) {
-          addCombatLog(
-            `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5 ПОЛУЧЕНО (${nextKills} убийств)! Ваше макс. здоровье увеличено на +100 ❤️ HP навсегда (бонус: +${nextKillerAch.totalHpBonus} HP)!`,
-            'pvp'
-          );
-          const achChatMsg: ChatMessage = {
-            id: 'ach_killer_' + Date.now(),
-            time: msgTime,
-            author: 'Достижения',
-            text: `🏆 ${currentUser || 'Игрок'} достиг ${nextKillerAch.level} уровня достижения «Киллер» (${nextKills} убийств в Пирамиде) и получил +100 ❤️ HP навсегда (всего +${nextKillerAch.totalHpBonus} HP)!`,
-            isSystem: true,
-            channel: 'world'
-          };
-          setChatMessages((prev) => [...prev, achChatMsg]);
-          broadcastWorldChatMessageInSupabase(achChatMsg);
-        }
-
-        // Defeated player leaves a gold sack on the cell (unless it's the Exit or Spawn cell)
-        const newMap = pyramidMap.map((rowArr, rI) =>
-          rowArr.map((cCell, cI) => {
-            if (rI === r && cI === c) {
-              if (rI === PYRAMID_EXIT_POS.row && cI === PYRAMID_EXIT_POS.col) {
-                return { type: 'exit' as const };
-              }
-              if (rI === PYRAMID_SPAWN_POS.row && cI === PYRAMID_SPAWN_POS.col) {
-                return { type: 'empty' as const };
-              }
-              return { type: 'sack' as const, sackGold: stolenGold };
-            }
-            return cCell;
-          })
-        );
-        setPyramidMap(newMap);
-        savePyramidTierToSupabase(
-          pyramidTier,
-          newMap,
-          pyramidSeedRef.current,
-          lastRespawnTime,
-          currentUser || 'player'
-        );
-      } else {
-        // Persist enemy's reduced HP in Supabase so all players see it and it does not reset
-        updatePlayerInDatabase(enemyNick, {
-          hp: updatedEnemyHp
-        });
-
-        setRealtimePlayers((prev) =>
-          prev.map((p) =>
-            p.nick.toLowerCase() === enemyNick.toLowerCase()
-              ? { ...p, hp: updatedEnemyHp }
-              : p
-          )
-        );
-
-        const totalAgi = hero.agi + (hero.gearAgi || 0);
-        const dodgeChance = Math.min(40, totalAgi * 1);
-        const dodgeRoll = Math.random() * 100;
-        const enemyDmg = enemyLvl * 3 + Math.floor(Math.random() * 8);
-
-        if (dodgeRoll < dodgeChance) {
-          addCombatLog(
-            `⚔️ Удар по игроку ${enemyNick}: -${playerDmg} HP (осталось ${updatedEnemyHp}/${enemyMaxHp} HP) [-${energyCost}⚡]. 💨 Вы уклонились от ответа!`,
-            'pvp'
-          );
-          const nextHeroState = { ...heroRef.current, energy: nextEnergy };
-          heroRef.current = nextHeroState;
-          setHero(nextHeroState);
-        } else {
-          const newHp = Math.max(0, hero.hp - enemyDmg);
-          const damagedHeroState = { ...heroRef.current, hp: newHp, energy: nextEnergy };
-          heroRef.current = damagedHeroState;
-          setHero(damagedHeroState);
-
-          if (newHp <= 0) {
-            const lostGold = Math.floor(heroRef.current.goldInCurrentRun * 0.5);
-            const nextDeadHero: HeroState = {
-              ...heroRef.current,
-              deaths: heroRef.current.deaths + 1,
-              gold: Math.max(0, heroRef.current.gold - lostGold),
-              goldInCurrentRun: 0,
-              hp: 0,
-              energy: 0
-            };
-            heroRef.current = nextDeadHero;
-            setHero(nextDeadHero);
-            const msgTime = new Date().toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit'
-            });
-            const deathPvpMsg: ChatMessage = {
-              id: 'death_pvp_' + Date.now(),
-              time: msgTime,
-              author: 'PvP Арена',
-              text: `☠️ Игрок ${currentUser || 'Игрок'} пал в бою против ${enemyNick} в Пирамиде и потерял 50% добычи (-${lostGold} 🪙)!`,
-              isSystem: true,
-              channel: 'world'
-            };
-            setChatMessages((prev) => [...prev, deathPvpMsg]);
-            broadcastWorldChatMessageInSupabase(deathPvpMsg);
-            addCombatLog(
-              `💀 Вы пали в PvP от руки ${enemyNick} и потеряли ${lostGold} 🪙! Возрождение в Городе (HP и ⚡ восстанавливаются).`,
-              'pvp'
-            );
-            handleExitToCity(true);
-            return;
-          }
-          addCombatLog(
-            `⚔️ Удар по игроку ${enemyNick}: -${playerDmg} HP (осталось ${updatedEnemyHp}/${enemyMaxHp} HP) [-${energyCost}⚡]. Ответ: -${enemyDmg} HP`,
-            'pvp'
-          );
-        }
-
-        const newMap = pyramidMap.map((rowArr, rI) =>
-          rowArr.map((cCell, cI) => {
-            if (rI === r && cI === c) {
-              return { ...cCell, playerHp: updatedEnemyHp };
-            }
-            return cCell;
-          })
-        );
-        setPyramidMap(newMap);
-      }
+      executePvPAttackOnPlayer(enemyNick, { r, c });
       return;
     }
 
@@ -4627,11 +4727,8 @@ export default function App() {
     );
   }, [hero, currentUser, flushPlayerUpdates, showToast]);
 
-  const handleAttackPlayer = (_targetNick: string) => {
-    // Strictly disallow attacking from main screen, online list, or leaderboard profile modal
-    showToast(
-      `🛡️ Убивать игроков через профиль на главной или в рейтинге запрещено! Нападать можно только внутри Пирамиды при наличии активной «Лицензии киллера».`
-    );
+  const handleAttackPlayer = (targetNick: string) => {
+    executePvPAttackOnPlayer(targetNick);
   };
 
   const handleClaimReferralReward = (refNick = '') => {
@@ -6444,7 +6541,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.0.64</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.0.65</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">24.10.2026</strong></span>
         </div>

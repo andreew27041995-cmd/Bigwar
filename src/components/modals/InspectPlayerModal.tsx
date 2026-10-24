@@ -761,7 +761,13 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                 <div className="flex justify-between">
                   <span className="text-slate-400">🏆 Достижение «Киллер»:</span>
                   <span className="font-bold text-emerald-300">
-                    Ур. {killerAch.level} / 5 (+{killerAch.totalHpBonus} ❤️ HP навсегда)
+                    Ур. {killerAch.level} / 5 (+{killerAch.totalHpBonus} ❤️ HP, +{killerAch.totalStunBonus}% оглуш.)
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">💫 Шанс оглушения игроков:</span>
+                  <span className="font-bold text-amber-300">
+                    {killerAch.stunChanceWithLicense}% (база 50% + {killerAch.totalStunBonus}%)
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -785,7 +791,7 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                     🏆 Достижение «Киллер» ({killerAch.level}/5 ур.)
                   </span>
                   <span className="text-[8.5px] font-bold text-emerald-300">
-                    +{killerAch.totalHpBonus} ❤️ HP навсегда
+                    +{killerAch.totalHpBonus} ❤️ HP • +{killerAch.totalStunBonus}% 💫
                   </span>
                 </div>
                 <div className="text-[8px] text-slate-400 leading-snug">
@@ -808,6 +814,7 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                         </div>
                         <div className="text-[7.5px] font-bold">{tier.killsRequired} уб.</div>
                         <div className="text-[7px] text-red-300 font-bold">+100 ❤️</div>
+                        <div className="text-[6.5px] text-amber-300 font-bold">+{tier.totalStunBonus}% 💫</div>
                       </div>
                     );
                   })}
@@ -821,13 +828,13 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                 isOwnProfile={false}
               />
 
-              {/* PvP Attack Rule: ONLY on Pyramid cells with an active Killer License (never from profile modal / main screen / leaderboard) */}
+              {/* PvP Attack Rule: ONLY inside Pyramid with active Killer License */}
               <div className="rounded-lg border border-amber-500/35 bg-slate-950/90 p-2 text-center space-y-0.5">
                 <div className="text-[9px] font-extrabold text-amber-300">
                   🗡️ Правило PvP и Лицензии киллера
                 </div>
                 <div className="text-[8px] text-slate-300 leading-snug">
-                  Нападать и убивать игроков через профиль на главной или в рейтинге нельзя — атака разрешена <strong className="text-red-300">только внутри Пирамиды</strong> на соседней клетке при активной «Лицензии киллера» (10 💎 на 1 день в Магазине).
+                  Нападать на игрока можно <strong className="text-red-300">только внутри Пирамиды</strong> (как онлайн, так и оффлайн) при наличии активной «Лицензии киллера». Если игрок находится на главной (в Городе) — нападение невозможно! Оглушение на 3 сек срабатывает только с лицензией и только на игроков.
                 </div>
               </div>
             </div>
@@ -863,6 +870,27 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
 
         {/* Action Buttons Bar */}
         <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-slate-800 pt-2">
+          {/* PvP Attack Button */}
+          {onAttackPvP && (
+            inPyramid ? (
+              <button
+                onClick={() => {
+                  onAttackPvP(nick);
+                }}
+                className="col-span-2 rounded bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 border border-red-400 py-1.5 text-[10.5px] font-black text-white hover:brightness-110 active:scale-95 shadow-[0_0_12px_rgba(239,68,68,0.6)] flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>⚔️ Напасть на игрока в Пирамиде (PvP){!isOnline ? ' [Оффлайн]' : ''}</span>
+              </button>
+            ) : (
+              <button
+                disabled
+                className="col-span-2 rounded bg-slate-800/90 border border-slate-700 py-1.5 text-[9.5px] font-bold text-slate-400 cursor-not-allowed opacity-80 flex items-center justify-center gap-1.5"
+                title="Игрок находится на главной (в Городе) — нападение невозможно! Нападать разрешено только внутри Пирамиды."
+              >
+                <span>🛡️ Игрок на главной (нападение запрещено)</span>
+              </button>
+            )
+          )}
           {/* Add Friend Button */}
           <button
             onClick={handleAddFriendClick}

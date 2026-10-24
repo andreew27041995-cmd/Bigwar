@@ -416,6 +416,7 @@ export interface HeroState {
   banInfo?: PlayerBanInfo | null;
   killerLicenseUntil?: number;
   killerLicenses?: number;
+  stunUntil?: number;
 }
 
 export interface WheelWinnerEntry {

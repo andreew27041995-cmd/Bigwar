@@ -420,9 +420,11 @@ export const KILLER_LICENSE_CONFIG = {
   durationMs: 24 * 60 * 60 * 1000, // 1 день (24 часа)
   durationDays: 1,
   durationLabel: '1 дн.',
+  baseStunChance: 50, // Базовый шанс оглушения 50%
+  stunDurationSec: 3, // Длительность оглушения 3 секунды
   icon: KILLER_LICENSE_SVG,
   description:
-    'Древний указ Фараона и Анубиса, дающий право вершить суд внутри Пирамиды в течение 1 дня (24 часов). С активной лицензией вы можете нападать и убивать других игроков ТОЛЬКО внутри Пирамиды (нападать с главного экрана Города или из Рейтинга запрещено). Разрешено убивать одного и того же игрока неограниченное количество раз! Каждое убийство засчитывается в прогресс достижения «Киллер» (до +500 ❤️ HP навсегда).'
+    'Древний указ Фараона и Анубиса, дающий право вершить суд внутри Пирамиды в течение 1 дня (24 часов). С активной лицензией вы можете нападать и убивать других игроков ТОЛЬКО внутри Пирамиды (как онлайн, так и оффлайн; нападать на главной в Городе запрещено). Лицензия дарует базовый бонус оглушения 50% на 3 секунды при ударе по игроку (игрок не может двигаться 3 сек)! Разрешено убивать одного и того же игрока многократно. Каждое убийство развивает достижение «Киллер» (до +500 ❤️ HP и до +25% к шансу оглушения навсегда).'
 };
 
 export interface KillerAchievementTier {
@@ -431,6 +433,8 @@ export interface KillerAchievementTier {
   killsRequired: number;
   hpBonusPerLevel: number;
   totalHpBonus: number;
+  stunBonusPerLevel: number;
+  totalStunBonus: number;
   title: string;
   rankName: string;
 }
@@ -442,6 +446,8 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
     killsRequired: 10,
     hpBonusPerLevel: 100,
     totalHpBonus: 100,
+    stunBonusPerLevel: 5,
+    totalStunBonus: 5,
     title: 'Киллер 1 ур.',
     rankName: 'Охотник Песков'
   },
@@ -451,6 +457,8 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
     killsRequired: 50,
     hpBonusPerLevel: 100,
     totalHpBonus: 200,
+    stunBonusPerLevel: 5,
+    totalStunBonus: 10,
     title: 'Киллер 2 ур.',
     rankName: 'Клинок Анубиса'
   },
@@ -460,6 +468,8 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
     killsRequired: 100,
     hpBonusPerLevel: 100,
     totalHpBonus: 300,
+    stunBonusPerLevel: 5,
+    totalStunBonus: 15,
     title: 'Киллер 3 ур.',
     rankName: 'Палач Пирамиды'
   },
@@ -469,6 +479,8 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
     killsRequired: 250,
     hpBonusPerLevel: 100,
     totalHpBonus: 400,
+    stunBonusPerLevel: 5,
+    totalStunBonus: 20,
     title: 'Киллер 4 ур.',
     rankName: 'Жнец Дуата'
   },
@@ -478,13 +490,15 @@ export const KILLER_ACHIEVEMENT_LEVELS: KillerAchievementTier[] = [
     killsRequired: 500,
     hpBonusPerLevel: 100,
     totalHpBonus: 500,
+    stunBonusPerLevel: 5,
+    totalStunBonus: 25,
     title: 'Киллер 5 ур. (МАКС)',
     rankName: 'Владыка Кровавой Пирамиды'
   }
 ];
 
 export const KILLER_ACHIEVEMENT_DESCRIPTION =
-  'Боевое достижение охотника за головами в Пирамиде (макс. 5 уровень). За каждый полученный уровень достижения ваше максимальное здоровье увеличивается на +100 ❤️ HP НАВСЕГДА (до +500 ❤️ HP на 5 уровне). В зачёт идут убийства игроков внутри Пирамиды при активной Лицензии киллера. Разрешено убивать одного и того же игрока многократно.';
+  'Боевое достижение охотника за головами в Пирамиде (макс. 5 уровень). За каждый полученный уровень достижения ваше максимальное здоровье увеличивается на +100 ❤️ HP НАВСЕГДА (до +500 ❤️ HP на 5 уровне), а шанс оглушения игроков при ударе возрастает на +5% (до +25% оглушения). В зачёт идут убийства игроков внутри Пирамиды при активной Лицензии киллера. Оглушение действует ТОЛЬКО на игроков и обездвиживает жертву на 3 секунды!';
 
 export interface KillerAchievementStatus {
   kills: number;
@@ -492,12 +506,26 @@ export interface KillerAchievementStatus {
   maxLevel: number;
   isMaxLevel: boolean;
   totalHpBonus: number;
+  totalStunBonus: number;
+  stunChanceWithLicense: number;
   currentTier: KillerAchievementTier | null;
   nextTier: KillerAchievementTier | null;
   nextTargetKills: number;
   nextKillsRequired: number;
   killsRemainingForNext: number;
   progressPct: number;
+}
+
+export function calculateKillerStunChance(
+  killerAchievementLevel: number,
+  hasActiveLicense: boolean
+): { canStun: boolean; stunChance: number; stunDurationMs: number } {
+  if (!hasActiveLicense) {
+    return { canStun: false, stunChance: 0, stunDurationMs: 0 };
+  }
+  const safeLvl = Math.max(0, Math.min(5, Number(killerAchievementLevel) || 0));
+  const stunChance = 50 + safeLvl * 5; // 50% base + 5% per lvl (up to 75%)
+  return { canStun: true, stunChance, stunDurationMs: 3000 };
 }
 
 export function getKillerAchievementInfo(rawPvpKills?: number | null): KillerAchievementStatus {
@@ -515,6 +543,8 @@ export function getKillerAchievementInfo(rawPvpKills?: number | null): KillerAch
   const nextTier =
     KILLER_ACHIEVEMENT_LEVELS.find((t) => t.level === currentLevel + 1) || null;
   const totalHpBonus = currentLevel * 100;
+  const totalStunBonus = currentLevel * 5; // +5% per lvl
+  const stunChanceWithLicense = 50 + totalStunBonus;
   const prevTarget = currentTier ? currentTier.requiredKills : 0;
   const nextTargetKills = nextTier ? nextTier.requiredKills : 500;
   const nextKillsRequired = nextTargetKills;
@@ -534,6 +564,8 @@ export function getKillerAchievementInfo(rawPvpKills?: number | null): KillerAch
     maxLevel: 5,
     isMaxLevel,
     totalHpBonus,
+    totalStunBonus,
+    stunChanceWithLicense,
     currentTier,
     nextTier,
     nextTargetKills,

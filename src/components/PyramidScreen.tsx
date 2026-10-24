@@ -180,8 +180,10 @@ export const PyramidScreen: React.FC<PyramidScreenProps> = ({
   const nextExp = hero.level >= MAX_LEVEL ? 0 : EXP_TABLE[hero.level] || 1000;
   const expPercent = nextExp > 0 ? Math.min(100, (hero.exp / nextExp) * 100) : 100;
 
+  const isHeroStunned = Boolean(hero.stunUntil && hero.stunUntil > nowMs);
+  const stunRemainingSec = isHeroStunned ? Math.ceil(((hero.stunUntil || 0) - nowMs) / 1000) : 0;
   const timeRemaining = Math.max(0, moveDelay - (Date.now() - lastMoveTime));
-  const canMove = timeRemaining === 0;
+  const canMove = timeRemaining === 0 && !isHeroStunned;
 
   const tierTitle =
     pyramidTier === 1
@@ -328,10 +330,18 @@ export const PyramidScreen: React.FC<PyramidScreenProps> = ({
           <div className="flex items-center gap-1">
             <div
               className={`rounded bg-slate-950/90 border border-slate-700 px-1.5 py-0.5 text-[7px] font-bold tabular-nums shadow ${
-                canMove ? 'text-emerald-400' : 'text-amber-400'
+                isHeroStunned
+                  ? 'text-yellow-400 border-yellow-500/70 animate-pulse bg-yellow-950/60'
+                  : canMove
+                  ? 'text-emerald-400'
+                  : 'text-amber-400'
               }`}
             >
-              {canMove ? '✅ Шаг готов' : `⏳ ${(timeRemaining / 1000).toFixed(1)}с`}
+              {isHeroStunned
+                ? `💫 Оглушён (${stunRemainingSec}с)`
+                : canMove
+                ? '✅ Шаг готов'
+                : `⏳ ${(timeRemaining / 1000).toFixed(1)}с`}
             </div>
             <div
               className="rounded bg-slate-950/90 border border-slate-700 px-1.5 py-0.5 text-[7px] text-slate-300 tabular-nums shadow"
@@ -429,6 +439,17 @@ export const PyramidScreen: React.FC<PyramidScreenProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Stun alert notification banner */}
+      {isHeroStunned && (
+        <div className="relative z-30 mx-2 mt-1 flex items-center justify-center gap-1.5 rounded-lg border-2 border-yellow-400 bg-gradient-to-r from-amber-950 via-yellow-900 to-amber-950 px-2.5 py-1 text-center shadow-[0_0_15px_rgba(234,179,8,0.7)] animate-pulse shrink-0">
+          <span className="text-sm">💫</span>
+          <span className="text-[10px] font-black uppercase text-yellow-200 tracking-wide">
+            ВЫ ОГЛУШЕНЫ ({stunRemainingSec}с) — движение и атака заблокированы!
+          </span>
+          <span className="text-sm">💫</span>
+        </div>
+      )}
 
       {/* Floating Vertical Square Potion Bottle Buttons in the upper-left flank of the pyramid so they don't push the grid down */}
       <div className="absolute left-2 top-[76px] z-20 flex flex-col gap-1.5">

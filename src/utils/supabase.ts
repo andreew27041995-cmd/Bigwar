@@ -71,6 +71,7 @@ export interface RealtimePlayer {
   role?: 'admin' | 'mod' | 'winner' | 'regular';
   lastSeen?: number;
   last_seen?: number;
+  stunUntil?: number;
   wasKilledInPvp?: boolean;
   killedBy?: string;
   gold?: number;
@@ -525,6 +526,8 @@ export function unpackPlayerRow(row: any): any {
       }
       return rawBan;
     })(),
+    stun_until: Math.max(0, Number(parsedEmailData.stun_until ?? parsedEmailData.stunUntil ?? row.stun_until ?? row.stunUntil ?? 0)),
+    stunUntil: Math.max(0, Number(parsedEmailData.stun_until ?? parsedEmailData.stunUntil ?? row.stun_until ?? row.stunUntil ?? 0)),
     _rawEmailJson: parsedEmailData
   };
 
@@ -638,7 +641,13 @@ export function unpackPlayerRow(row: any): any {
             : existingCache.trade_protocol,
         inventory: Array.isArray(unpacked.inventory)
           ? unpacked.inventory
-          : existingCache.inventory
+          : existingCache.inventory,
+        killer_license_until: unpacked.killer_license_until ?? existingCache.killer_license_until,
+        killerLicenseUntil: unpacked.killerLicenseUntil ?? existingCache.killerLicenseUntil,
+        killer_licenses: unpacked.killer_licenses ?? existingCache.killer_licenses,
+        killerLicenses: unpacked.killerLicenses ?? existingCache.killerLicenses,
+        stun_until: unpacked.stun_until ?? existingCache.stun_until,
+        stunUntil: unpacked.stunUntil ?? existingCache.stunUntil
       });
     }
   }
@@ -739,7 +748,8 @@ export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
     activeSkinId: row.activeSkinId ?? row.active_skin_id ?? null,
     banInfo: row.banInfo ?? row.ban_info ?? null,
     killerLicenseUntil: Math.max(0, Number(row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
-    killerLicenses: Math.max(0, Number(row.killer_licenses ?? row.killerLicenses ?? 0))
+    killerLicenses: Math.max(0, Number(row.killer_licenses ?? row.killerLicenses ?? 0)),
+    stunUntil: Math.max(0, Number(row.stun_until ?? row.stunUntil ?? 0))
   } as any;
 }
 
@@ -2159,7 +2169,43 @@ export async function updatePlayerInDatabase(
               ? (updates as any).ban_info
               : (updates as any).banInfo !== undefined
               ? (updates as any).banInfo
-              : (cached as any).ban_info ?? (cached as any).banInfo ?? (existingJson as any).ban_info ?? (existingJson as any).banInfo ?? null
+              : (cached as any).ban_info ?? (cached as any).banInfo ?? (existingJson as any).ban_info ?? (existingJson as any).banInfo ?? null,
+          killer_license_until:
+            (updates as any).killer_license_until !== undefined
+              ? Number((updates as any).killer_license_until)
+              : (updates as any).killerLicenseUntil !== undefined
+              ? Number((updates as any).killerLicenseUntil)
+              : Number((cached as any).killer_license_until ?? (cached as any).killerLicenseUntil ?? (existingJson as any).killer_license_until ?? (existingJson as any).killerLicenseUntil ?? 0),
+          killerLicenseUntil:
+            (updates as any).killer_license_until !== undefined
+              ? Number((updates as any).killer_license_until)
+              : (updates as any).killerLicenseUntil !== undefined
+              ? Number((updates as any).killerLicenseUntil)
+              : Number((cached as any).killer_license_until ?? (cached as any).killerLicenseUntil ?? (existingJson as any).killer_license_until ?? (existingJson as any).killerLicenseUntil ?? 0),
+          killer_licenses:
+            (updates as any).killer_licenses !== undefined
+              ? Number((updates as any).killer_licenses)
+              : (updates as any).killerLicenses !== undefined
+              ? Number((updates as any).killerLicenses)
+              : Number((cached as any).killer_licenses ?? (cached as any).killerLicenses ?? (existingJson as any).killer_licenses ?? (existingJson as any).killerLicenses ?? 0),
+          killerLicenses:
+            (updates as any).killer_licenses !== undefined
+              ? Number((updates as any).killer_licenses)
+              : (updates as any).killerLicenses !== undefined
+              ? Number((updates as any).killerLicenses)
+              : Number((cached as any).killer_licenses ?? (cached as any).killerLicenses ?? (existingJson as any).killer_licenses ?? (existingJson as any).killerLicenses ?? 0),
+          stun_until:
+            (updates as any).stun_until !== undefined
+              ? Number((updates as any).stun_until)
+              : (updates as any).stunUntil !== undefined
+              ? Number((updates as any).stunUntil)
+              : Number((cached as any).stun_until ?? (cached as any).stunUntil ?? (existingJson as any).stun_until ?? (existingJson as any).stunUntil ?? 0),
+          stunUntil:
+            (updates as any).stun_until !== undefined
+              ? Number((updates as any).stun_until)
+              : (updates as any).stunUntil !== undefined
+              ? Number((updates as any).stunUntil)
+              : Number((cached as any).stun_until ?? (cached as any).stunUntil ?? (existingJson as any).stun_until ?? (existingJson as any).stunUntil ?? 0)
         };
 
         playerStateCache.set(lowerName, {

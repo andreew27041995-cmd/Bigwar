@@ -445,6 +445,8 @@ export function calculateHeroStatsBreakdown(hero: any, equippedOverride?: any) {
     killerAchievementLevel: killerInfo.level,
     killerAchievementLvl: killerInfo.level,
     killerHpBonus,
+    killerStunBonus: killerInfo.totalStunBonus,
+    killerStunChance: killerInfo.stunChanceWithLicense,
     totalDmg,
     totalMaxHp,
     totalDodgePct,
