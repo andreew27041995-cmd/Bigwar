@@ -272,8 +272,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-2xl bg-slate-950/80 w-10 h-10 rounded-lg flex items-center justify-center border border-slate-700 shrink-0 overflow-hidden p-0.5">
-                        <ItemIcon icon={item.icon} alt={item.name} />
+                      <span className="text-2xl bg-slate-950/80 w-10 h-10 rounded-lg flex items-center justify-center border border-amber-500/40 shrink-0 overflow-hidden p-0.5">
+                        <ItemIcon icon={item.icon} alt={item.name} slot={slotKey as any} />
                       </span>
                       <div>
                         <div className="text-xs font-bold flex items-center gap-1.5 flex-wrap" style={{ color: q.color }}>

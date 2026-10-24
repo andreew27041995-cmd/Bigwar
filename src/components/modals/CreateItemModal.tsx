@@ -367,7 +367,9 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                           : 'bg-[#1a1410] border-[#3a2a1a] text-[#a08c70] hover:border-[#d4af37]/50'
                       }`}
                     >
-                      <span className="text-lg">{SLOT_ICONS[s]}</span>
+                      <span className="w-6 h-6 flex items-center justify-center">
+                        <ItemIcon icon={SLOT_ICONS[s]} slot={s} name={SLOT_NAMES[s]} imgClassName="w-full h-full object-contain" />
+                      </span>
                       <span>{SLOT_NAMES[s]}</span>
                     </button>
                   ))}

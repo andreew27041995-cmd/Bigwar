@@ -1,6 +1,7 @@
 import { GameItem, ItemQuality, ItemQualityKey, ItemSlot, MarketLot, FriendEntry, HeroState, EquippedGear, PyramidCell } from '../types/game';
 import { pickConfiguredPyramidMob, findMonsterConfigByName } from './monsterConfig';
 import { getFeatureFlags } from './shopConfig';
+import { EGYPTIAN_SLOT_SVGS, getKillerAchievementInfo } from './egyptianEquipment';
 
 export const QUALITIES: ItemQuality[] = [
   { key: 'common', name: 'Обычное', color: '#94a3b8', mult: 1.0, chance: 0.75 },
@@ -22,7 +23,7 @@ export interface EgyptianSlotInfo {
 export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   weapon: {
     name: 'Оружие',
-    icon: '⚔️',
+    icon: EGYPTIAN_SLOT_SVGS.weapon,
     pools: {
       low: [
         'Бронзовый Кинжал Себека',
@@ -47,7 +48,7 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   },
   armor: {
     name: 'Броня',
-    icon: '🛡️',
+    icon: EGYPTIAN_SLOT_SVGS.armor,
     pools: {
       low: [
         'Льняное Одеяние Писца',
@@ -71,7 +72,7 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   },
   pants: {
     name: 'Штаны',
-    icon: '👖',
+    icon: EGYPTIAN_SLOT_SVGS.pants,
     pools: {
       low: [
         'Шенти Новичка Луксора',
@@ -93,7 +94,7 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   },
   boots: {
     name: 'Сапоги',
-    icon: '👟',
+    icon: EGYPTIAN_SLOT_SVGS.boots,
     pools: {
       low: [
         'Сандалии Пустынника',
@@ -114,7 +115,7 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   },
   gloves: {
     name: 'Перчатки',
-    icon: '🧤',
+    icon: EGYPTIAN_SLOT_SVGS.gloves,
     pools: {
       low: [
         'Обмотки Бальзамировщика',
@@ -135,7 +136,7 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
   },
   ring: {
     name: 'Кольцо',
-    icon: '💍',
+    icon: EGYPTIAN_SLOT_SVGS.ring,
     pools: {
       low: [
         'Медное Кольцо Нила',
@@ -333,7 +334,8 @@ export function getHeroTotalMaxHp(hero: HeroState, gearHpOverride?: number): num
     gearHpOverride !== undefined
       ? Math.max(1, Number(hero.vit || 1))
       : Math.max(1, Number(hero.vit || 1) + Number(hero.gearVit || 0));
-  return getHeroMaxHpFromVit(effVit) + gHp + Number(hero.bonusHp || 0);
+  const killerHpBonus = getKillerAchievementInfo(hero.pvpKills ?? (hero as any).pvp_kills ?? 0).totalHpBonus;
+  return getHeroMaxHpFromVit(effVit) + gHp + Number(hero.bonusHp || 0) + killerHpBonus;
 }
 
 export function getHeroTotalMaxEnergy(hero: HeroState, gearEnergyOverride?: number): number {
@@ -419,9 +421,11 @@ export function calculateHeroStatsBreakdown(hero: any, equippedOverride?: any) {
   const strDamage = getHeroDamageFromStr(strPoints);
   const baseDodgePct = getHeroDodgeFromAgi(agiPoints);
   const baseHp = getHeroMaxHpFromVit(vitPoints);
+  const killerInfo = getKillerAchievementInfo(hero?.pvpKills ?? hero?.pvp_kills ?? 0);
+  const killerHpBonus = killerInfo.totalHpBonus;
 
   const totalDmg = Math.max(1, Math.round(Number(strDamage || 0) + Number(gearDmg || 0) + Number(hero?.bonusDmg || 0)));
-  const totalMaxHp = Math.max(10, Math.round(Number(baseHp || 100) + Number(gearHp || 0) + Number(hero?.bonusHp || 0)));
+  const totalMaxHp = Math.max(10, Math.round(Number(baseHp || 100) + Number(gearHp || 0) + Number(hero?.bonusHp || 0) + killerHpBonus));
   const totalDodgePct = Math.min(75, Math.max(0, Math.round(Number(baseDodgePct || 0) + Number(gearDodge || 0))));
   const totalMaxEnergy = Math.max(50, Math.round(100 + Number(gearEnergy || 0)));
 
@@ -438,6 +442,8 @@ export function calculateHeroStatsBreakdown(hero: any, equippedOverride?: any) {
     gearEnergy,
     gearGoldPct,
     gearExpPct,
+    killerAchievementLevel: killerInfo.level,
+    killerHpBonus,
     totalDmg,
     totalMaxHp,
     totalDodgePct,

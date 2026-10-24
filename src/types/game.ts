@@ -414,6 +414,8 @@ export interface HeroState {
   ownedSkins?: CharacterSkinTemplate[];
   activeSkinId?: string | null;
   banInfo?: PlayerBanInfo | null;
+  killerLicenseUntil?: number;
+  killerLicenses?: number;
 }
 
 export interface WheelWinnerEntry {

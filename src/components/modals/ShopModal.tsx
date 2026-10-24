@@ -1,11 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { HeroState, ShopItemTemplate, ItemSlot, GameItem, CharacterSkinTemplate } from '../../types/game';
 import { SHOP_CATEGORY_LABELS, getShopSkins, getActiveSkinBonuses, getPremiumConfig } from '../../utils/shopConfig';
+import {
+  EGYPTIAN_SLOT_SVGS,
+  KILLER_LICENSE_CONFIG,
+  KILLER_ACHIEVEMENT_LEVELS,
+  KILLER_ACHIEVEMENT_DESCRIPTION,
+  getKillerAchievementInfo,
+  formatLicenseRemainingTime
+} from '../../utils/egyptianEquipment';
 import { ItemIcon } from '../ItemIcon';
 import { CharacterAvatar } from '../CharacterAvatar';
 import { GoldCoinIcon, CrystalIcon } from '../CurrencyIcon';
 
-type ShopTabId = ItemSlot | 'elixirs' | 'skins';
+type ShopTabId = ItemSlot | 'elixirs' | 'skins' | 'licenses';
 
 interface ShopModalProps {
   hero: HeroState;
@@ -16,18 +24,21 @@ interface ShopModalProps {
   onBuyElixir?: (type: 'hp' | 'en' | 'exp', quantity: number) => void;
   onBuySkin?: (skin: CharacterSkinTemplate) => void;
   onEquipSkin?: (skin: CharacterSkinTemplate | null) => void;
+  onBuyKillerLicense?: (activateNow: boolean) => void;
+  onUseKillerLicense?: () => void;
   onOpenAuction?: () => void;
   onOpenCreateItem?: () => void;
   onClose: () => void;
 }
 
 const SHOP_CATEGORIES: { id: ShopTabId; label: string; icon: string }[] = [
-  { id: 'weapon', label: 'Оружие', icon: '⚔️' },
-  { id: 'armor', label: 'Броня', icon: '🦺' },
-  { id: 'pants', label: 'Штаны', icon: '👖' },
-  { id: 'boots', label: 'Сапоги', icon: '🥾' },
-  { id: 'gloves', label: 'Перчатки', icon: '🧤' },
-  { id: 'ring', label: 'Кольцо', icon: '💍' },
+  { id: 'weapon', label: 'Оружие', icon: EGYPTIAN_SLOT_SVGS.weapon },
+  { id: 'armor', label: 'Броня', icon: EGYPTIAN_SLOT_SVGS.armor },
+  { id: 'pants', label: 'Штаны', icon: EGYPTIAN_SLOT_SVGS.pants },
+  { id: 'boots', label: 'Сапоги', icon: EGYPTIAN_SLOT_SVGS.boots },
+  { id: 'gloves', label: 'Перчатки', icon: EGYPTIAN_SLOT_SVGS.gloves },
+  { id: 'ring', label: 'Кольцо', icon: EGYPTIAN_SLOT_SVGS.ring },
+  { id: 'licenses', label: 'Лицензии', icon: KILLER_LICENSE_CONFIG.icon },
   { id: 'elixirs', label: 'Эликсиры', icon: '🧪' },
   { id: 'skins', label: 'Скины', icon: '🎨' }
 ];
@@ -41,11 +52,19 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   onBuyElixir,
   onBuySkin,
   onEquipSkin,
+  onBuyKillerLicense,
+  onUseKillerLicense,
   onOpenAuction,
   onOpenCreateItem,
   onClose
 }) => {
   const [activeCategory, setActiveCategory] = useState<ShopTabId>('weapon');
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const heroLvl = Math.max(1, Number(hero.level || (hero as any).lvl || 1));
   const heroGold = Number(hero.gold || 0);
@@ -76,7 +95,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const isBagFull = bagItems.length >= bagCapacity;
 
   const filteredItems =
-    activeCategory === 'elixirs' || activeCategory === 'skins'
+    activeCategory === 'elixirs' || activeCategory === 'skins' || activeCategory === 'licenses'
       ? []
       : shopItems
           .filter((item) => {
@@ -204,12 +223,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       </div>
 
       {/* Category tabs */}
-      <div className="grid grid-cols-4 sm:grid-cols-8 gap-1.5 mb-2.5 shrink-0">
+      <div className="grid grid-cols-3 sm:grid-cols-9 gap-1.5 mb-2.5 shrink-0">
         {SHOP_CATEGORIES.map((cat) => {
           const isActive = activeCategory === cat.id;
           const count =
             cat.id === 'elixirs'
               ? 3
+              : cat.id === 'licenses'
+              ? 1
               : cat.id === 'skins'
               ? enabledSkins.length
               : shopItems.filter((i) => {
@@ -222,23 +243,221 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               key={cat.id}
               type="button"
               onClick={() => setActiveCategory(cat.id)}
-              className={`py-1.5 px-1.5 rounded-lg text-[10px] font-bold flex flex-col items-center justify-center gap-0.5 border transition-all cursor-pointer ${
+              className={`py-1.5 px-1 rounded-lg text-[9.5px] font-bold flex flex-col items-center justify-center gap-0.5 border transition-all cursor-pointer ${
                 isActive
-                  ? 'bg-amber-500 border-amber-400 text-slate-950 shadow-md'
+                  ? cat.id === 'licenses'
+                    ? 'bg-gradient-to-b from-red-500 to-amber-500 border-red-300 text-slate-950 shadow-[0_0_12px_rgba(239,68,68,0.5)]'
+                    : 'bg-amber-500 border-amber-400 text-slate-950 shadow-md'
+                  : cat.id === 'licenses'
+                  ? 'bg-red-950/60 border-red-500/60 text-red-200 hover:border-red-400'
                   : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
               }`}
             >
-              <span className="text-sm leading-none">{cat.icon}</span>
+              <span className="w-5 h-5 flex items-center justify-center text-sm leading-none">
+                <ItemIcon icon={cat.icon} alt={cat.label} imgClassName="w-full h-full object-contain" />
+              </span>
               <span className="truncate max-w-full">{cat.label}</span>
-              <span className={`text-[8.5px] ${isActive ? 'text-slate-900' : 'text-slate-400'}`}>({count})</span>
+              <span className={`text-[8px] ${isActive ? 'text-slate-900' : 'text-slate-400'}`}>({count})</span>
             </button>
           );
         })}
       </div>
 
-      {/* Items / Elixirs / Skins list */}
+      {/* Items / Licenses / Elixirs / Skins list */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-        {activeCategory === 'skins' ? (
+        {activeCategory === 'licenses' ? (
+          (() => {
+            const killerUntil = Number(hero.killerLicenseUntil || 0);
+            const isLicenseActive = killerUntil > nowMs;
+            const storedLicenses = Math.max(0, Number(hero.killerLicenses || 0));
+            const canAffordLicense = heroCrystals >= KILLER_LICENSE_CONFIG.costCrystals;
+            const killerAch = getKillerAchievementInfo(hero.pvpKills || 0);
+
+            return (
+              <div className="space-y-3">
+                {/* Active Killer License Status Banner (чтобы не забыть про действие лицензии) */}
+                <div
+                  className={`rounded-xl border-2 p-3 flex flex-wrap items-center justify-between gap-2.5 shadow-lg ${
+                    isLicenseActive
+                      ? 'border-red-500/80 bg-gradient-to-r from-red-950/90 via-amber-950/50 to-slate-950 shadow-[0_0_20px_rgba(239,68,68,0.28)]'
+                      : 'border-amber-500/45 bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-12 h-12 rounded-xl border-2 border-red-500/60 bg-slate-950 flex items-center justify-center p-1 shrink-0 shadow-inner">
+                      <ItemIcon
+                        icon={KILLER_LICENSE_CONFIG.icon}
+                        alt={KILLER_LICENSE_CONFIG.name}
+                        imgClassName="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-black uppercase tracking-wider text-red-300">
+                          {isLicenseActive
+                            ? '🗡️ Лицензия киллера АКТИВНА!'
+                            : '🔒 Лицензия киллера не активна'}
+                        </span>
+                        {storedLicenses > 0 && (
+                          <span className="rounded bg-amber-950/90 border border-amber-400/60 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                            📦 В запасе: {storedLicenses} шт.
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-300 mt-0.5">
+                        {isLicenseActive ? (
+                          <span>
+                            ⏳ Осталось времени действия:{' '}
+                            <strong className="font-mono text-emerald-300 text-[11px]">
+                              {formatLicenseRemainingTime(killerUntil, nowMs)}
+                            </strong>{' '}
+                            (до {new Date(killerUntil).toLocaleString('ru-RU')})
+                          </span>
+                        ) : (
+                          <span>
+                            Без активной лицензии нападать на игроков в Пирамиде нельзя. Купите или активируйте лицензию на 1 день!
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {storedLicenses > 0 && onUseKillerLicense && (
+                    <button
+                      type="button"
+                      onClick={onUseKillerLicense}
+                      className="rounded-xl border-2 border-emerald-400 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 px-3 py-1.5 text-[10px] font-black text-white shadow-[0_0_12px_rgba(16,185,129,0.5)] active:scale-95 cursor-pointer shrink-0"
+                    >
+                      🗡️ Использовать из запаса (+1 дн.)
+                    </button>
+                  )}
+                </div>
+
+                {/* Main Card: 1. Лицензия киллера (Рецензия киллера) */}
+                <div className="rounded-2xl border-2 border-amber-500/60 bg-gradient-to-b from-[#24160e] via-slate-900 to-slate-950 p-3.5 shadow-[0_0_25px_rgba(245,158,11,0.18)] space-y-3">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-amber-500/25 pb-2.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-14 h-14 rounded-2xl border-2 border-amber-400 bg-slate-950 flex items-center justify-center p-1.5 shrink-0 shadow-[0_0_14px_rgba(245,158,11,0.35)]">
+                        <ItemIcon
+                          icon={KILLER_LICENSE_CONFIG.icon}
+                          alt={KILLER_LICENSE_CONFIG.name}
+                          imgClassName="w-full h-full object-contain"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-sm font-black text-amber-300">
+                            1. {KILLER_LICENSE_CONFIG.name} (Рецензия киллера)
+                          </span>
+                          <span className="rounded-md bg-red-950/90 border border-red-500/60 px-2 py-0.5 text-[9.5px] font-black text-red-300">
+                            ⏱️ Срок действия: {KILLER_LICENSE_CONFIG.durationLabel} (24 часа)
+                          </span>
+                        </div>
+                        <div className="text-[10.5px] text-cyan-300 font-extrabold mt-1 flex items-center gap-1.5">
+                          <span>Стоимость:</span>
+                          <span className="inline-flex items-center gap-1 rounded bg-cyan-950/90 border border-cyan-400/60 px-2 py-0.5 text-cyan-200 font-black">
+                            {KILLER_LICENSE_CONFIG.costCrystals} 💎 кристаллов
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap sm:flex-col items-end gap-1.5 w-full sm:w-auto shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onBuyKillerLicense?.(true)}
+                        disabled={!canAffordLicense}
+                        className={`flex-1 sm:flex-none px-3.5 py-2 rounded-xl text-[10.5px] font-black transition-all cursor-pointer ${
+                          canAffordLicense
+                            ? 'bg-gradient-to-r from-red-600 via-amber-500 to-red-600 hover:brightness-110 text-white shadow-[0_0_15px_rgba(239,68,68,0.5)] active:scale-95'
+                            : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                        }`}
+                      >
+                        {canAffordLicense
+                          ? isLicenseActive
+                            ? '⚡ Купить и продлить (+1 дн. · 10 💎)'
+                            : '⚡ Купить и использовать (10 💎)'
+                          : 'Мало кристаллов (10 💎)'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onBuyKillerLicense?.(false)}
+                        disabled={!canAffordLicense}
+                        className={`px-3 py-1.5 rounded-lg text-[9.5px] font-bold transition-all cursor-pointer ${
+                          canAffordLicense
+                            ? 'bg-slate-800 hover:bg-slate-700 border border-amber-500/50 text-amber-200 active:scale-95'
+                            : 'bg-slate-900 text-slate-600 border border-slate-800 cursor-not-allowed'
+                        }`}
+                        title="Купить лицензию про запас и активировать в любой момент"
+                      >
+                        📦 Купить в запас (10 💎)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Detailed Description of Killer License */}
+                  <div className="rounded-xl border border-amber-500/30 bg-slate-950/85 p-2.5 space-y-1.5 text-[10px] text-slate-200 leading-relaxed">
+                    <div className="font-black text-amber-300 uppercase tracking-wider text-[10px]">
+                      📜 Описание и правила действия «Лицензии киллера»:
+                    </div>
+                    <p>{KILLER_LICENSE_CONFIG.description}</p>
+                    <ul className="list-disc pl-4 space-y-0.5 text-[9.5px] text-slate-300">
+                      <li>
+                        <strong className="text-red-300">Атака ТОЛЬКО в Пирамиде:</strong> Убивать других игроков можно исключительно находясь внутри Пирамиды на соседней клетке (нападать через профиль на главной или в рейтинге нельзя).
+                      </li>
+                      <li>
+                        <strong className="text-amber-300">Повторные убийства разрешены:</strong> Разрешается убивать одного и того же игрока неограниченное количество раз — каждое убийство идёт в зачёт!
+                      </li>
+                      <li>
+                        <strong className="text-emerald-300">Срок действия 1 день (24 часа):</strong> Таймер действия лицензии отображается в Пирамиде, в профиле Персонажа и в Магазине, чтобы вы никогда не забыли о времени действия.
+                      </li>
+                    </ul>
+                  </div>
+
+                  {/* Linked Killer Achievement Info Block */}
+                  <div className="rounded-xl border border-red-500/40 bg-gradient-to-b from-red-950/35 to-slate-950/90 p-2.5 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-[10.5px] font-black text-red-300 flex items-center gap-1.5">
+                        <span>🏆 Достижение персонажа: «Киллер» (Макс. 5 ур.)</span>
+                      </div>
+                      <span className="rounded bg-emerald-950/90 border border-emerald-500/50 px-2 py-0.5 text-[9.5px] font-black text-emerald-300">
+                        Ваш уровень: {killerAch.level}/5 • Бонус: +{killerAch.totalHpBonus} ❤️ HP навсегда
+                      </span>
+                    </div>
+                    <p className="text-[9.5px] text-slate-300 leading-snug">
+                      {KILLER_ACHIEVEMENT_DESCRIPTION}
+                    </p>
+                    <div className="grid grid-cols-5 gap-1 pt-0.5">
+                      {KILLER_ACHIEVEMENT_LEVELS.map((tier) => {
+                        const unlocked = killerAch.kills >= tier.killsRequired;
+                        return (
+                          <div
+                            key={tier.level}
+                            className={`rounded-lg border p-1.5 text-center ${
+                              unlocked
+                                ? 'border-emerald-400/80 bg-emerald-950/50 text-emerald-200'
+                                : 'border-slate-800 bg-slate-900/80 text-slate-400'
+                            }`}
+                          >
+                            <div className="text-[9px] font-black text-amber-300">
+                              {tier.level} ур. {unlocked ? '✅' : '🔒'}
+                            </div>
+                            <div className="text-[8.5px] font-bold mt-0.5">
+                              {tier.killsRequired} уб.
+                            </div>
+                            <div className="text-[8px] text-red-300 font-extrabold mt-0.5">
+                              +100 ❤️ HP
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()
+        ) : activeCategory === 'skins' ? (
           <div className="space-y-2.5">
             {/* Active Skin Status Banner */}
             <div className="rounded-xl border border-fuchsia-500/50 bg-gradient-to-r from-fuchsia-950/60 via-slate-900 to-slate-900 p-2.5 flex items-center justify-between gap-2.5">
@@ -645,8 +864,12 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                 className="bg-slate-900/90 border border-amber-500/30 rounded-xl p-2.5 flex items-center justify-between gap-2.5 shadow-md"
               >
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="text-2xl bg-slate-950 w-11 h-11 rounded-xl flex items-center justify-center border border-amber-500/30 shrink-0 overflow-hidden p-0.5">
-                    <ItemIcon icon={item.icon} alt={item.name} />
+                  <div className="text-2xl bg-slate-950 w-11 h-11 rounded-xl flex items-center justify-center border border-amber-500/40 shrink-0 overflow-hidden p-1 shadow-inner">
+                    <ItemIcon
+                      icon={item.icon}
+                      alt={item.name}
+                      slot={(item.slot || (item as any).type || 'weapon') as ItemSlot}
+                    />
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">

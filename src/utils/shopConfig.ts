@@ -105,6 +105,7 @@ export const SHOP_CATEGORY_LABELS: Record<string, string> = {
   ring: 'Кольцо',
   helmet: 'Шлем',
   elixirs: 'Эликсиры',
+  licenses: 'Лицензии',
   skins: 'Скины'
 };
 

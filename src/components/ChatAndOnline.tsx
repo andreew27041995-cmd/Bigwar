@@ -242,13 +242,28 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
         }}
       >
 
-        {/* Item or default slot icon */}
+        {/* Item or default Egyptian slot icon */}
         <span
-          className={`flex h-5 w-5 items-center justify-center text-base sm:text-lg leading-none drop-shadow ${
-            item ? 'opacity-100 scale-105' : 'opacity-65 group-hover:opacity-90'
+          className={`flex h-6 w-6 items-center justify-center text-base sm:text-lg leading-none drop-shadow ${
+            item ? 'opacity-100 scale-105' : 'opacity-70 group-hover:opacity-95'
           }`}
         >
-          {item ? <ItemIcon icon={item.icon} alt={item.name} fallback={info.icon} /> : info.icon}
+          {item ? (
+            <ItemIcon
+              icon={item.icon}
+              alt={item.name}
+              slot={slot}
+              fallback={info.icon}
+              imgClassName="w-full h-full object-contain"
+            />
+          ) : (
+            <ItemIcon
+              icon={info.icon}
+              alt={info.name}
+              slot={slot}
+              imgClassName="w-full h-full object-contain"
+            />
+          )}
         </span>
 
         {/* Slot Label */}

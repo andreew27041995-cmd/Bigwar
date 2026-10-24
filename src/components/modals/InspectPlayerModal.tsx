@@ -13,7 +13,20 @@ import {
   formatLastSeen,
   formatFullDateTime
 } from '../../utils/gameData';
-import { CharacterSkinTemplate, formatSkinBonusesText, getShopSkins } from '../../utils/shopConfig';
+import {
+  CharacterSkinTemplate,
+  formatSkinBonusesText,
+  getShopSkins,
+  resolvePlayerOwnedSkins
+} from '../../utils/shopConfig';
+import {
+  KILLER_LICENSE_CONFIG,
+  KILLER_ACHIEVEMENT_LEVELS,
+  KILLER_ACHIEVEMENT_DESCRIPTION,
+  KILLER_ACHIEVEMENT_SVG,
+  getKillerAchievementInfo,
+  formatLicenseRemainingTime
+} from '../../utils/egyptianEquipment';
 import { ActiveVipBonusesBlock } from '../ActiveVipBonusesBlock';
 import CharacterAvatar from '../CharacterAvatar';
 import { ItemIcon } from '../ItemIcon';
@@ -49,11 +62,17 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   isHeroInPyramid = false,
   isTargetInPyramid = false
 }) => {
-  const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms'>('protocol');
+  const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms'>('gear');
   const [smsText, setSmsText] = useState('');
   const [friendAdded, setFriendAdded] = useState(isFriend);
   const [livePlayer, setLivePlayer] = useState<RealtimePlayer | null>(targetPlayer || null);
   const [loadingProfile, setLoadingProfile] = useState(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Fetch latest player record from Supabase on open so protocol, gear, VIP, and online status are always fresh
   useEffect(() => {
@@ -129,6 +148,9 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   const mobsKilled = p?.mobsKilled ?? 0;
   const pvpKills = p?.pvpKills ?? 0;
   const deaths = p?.deaths ?? 0;
+  const killerAch = getKillerAchievementInfo(pvpKills);
+  const killerLicenseUntil = Number((p as any)?.killerLicenseUntil ?? (p as any)?.killer_license_until ?? 0);
+  const isKillerLicenseActive = killerLicenseUntil > nowMs;
 
   const playerProtocol: TradeProtocolEntry[] = Array.isArray(p?.tradeProtocol)
     ? p!.tradeProtocol!
@@ -243,10 +265,18 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
               ) : null}
             </div>
 
-            <div className="flex items-center gap-2.5 text-[8.5px] text-slate-400 mt-1">
+            <div className="flex items-center gap-2.5 text-[8.5px] text-slate-400 mt-1 flex-wrap">
               <span>❤️ {hp}/{maxHp} HP</span>
               <span>⚔️ {dmg} DMG</span>
               <span className="text-amber-300 font-bold">⭐ Репутация: {repScore}</span>
+              <span className="rounded bg-red-950/90 border border-red-500/50 px-1.5 py-0.2 text-[8px] font-black text-red-200">
+                🏆 Киллер: {killerAch.level}/5 ур. (+{killerAch.totalHpBonus} ❤️ HP)
+              </span>
+              {isKillerLicenseActive && (
+                <span className="rounded bg-amber-950/90 border border-amber-400/60 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
+                  🗡️ Лицензия: {formatLicenseRemainingTime(killerLicenseUntil, nowMs)}
+                </span>
+              )}
             </div>
 
             {/* Баланс игрока (доступен для просмотра всем, редактирование только администраторам) */}
@@ -370,57 +400,231 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
           )}
 
           {tab === 'gear' && (
-            <div className="space-y-1.5">
-              <div className="text-[9px] font-bold text-slate-400 mb-1">
-                Надетая экипировка игрока {nick}:
-              </div>
-              {SLOTS_LIST.map((slotKey) => {
-                const slotMeta = SLOT_INFO[slotKey];
-                const item = equippedObj[slotKey];
-                const q = item ? getQualityConfig(item.quality) : null;
+            <div className="space-y-2.5">
+              {(() => {
+                const catalog = (shopSkins && shopSkins.length > 0 ? shopSkins : getShopSkins()) as CharacterSkinTemplate[];
+                const resolvedSkins = resolvePlayerOwnedSkins(
+                  p?.ownedSkinIds,
+                  p?.ownedSkinExpirations,
+                  catalog,
+                  p?.ownedSkins,
+                  p?.activeSkinId,
+                  p?.avatar
+                );
+                const activeSkin = resolvedSkins.find((s) => s.id === p?.activeSkinId) || null;
+                const activeSkinSprite = activeSkin
+                  ? activeSkin.avatarUrl || activeSkin.icon
+                  : p?.avatar || (isAdmin ? '👑' : '🧙‍♂️');
+                const activeSkinQuality = activeSkin ? getQualityConfig(activeSkin.quality) : null;
+
+                const leftSlots: ItemSlot[] = ['weapon', 'armor', 'gloves'];
+                const rightSlots: ItemSlot[] = ['pants', 'boots', 'ring'];
+
+                const renderInspectSlot = (slotKey: ItemSlot) => {
+                  const slotMeta = SLOT_INFO[slotKey];
+                  const item = equippedObj[slotKey];
+                  const q = item ? getQualityConfig(item.quality) : null;
+
+                  return (
+                    <div
+                      key={slotKey}
+                      className="flex flex-col justify-between rounded-xl border p-1.5 min-h-[66px]"
+                      style={{
+                        borderColor: item ? q?.color : 'rgba(217, 119, 6, 0.5)',
+                        background: item
+                          ? 'linear-gradient(145deg, rgba(42, 27, 14, 0.94) 0%, rgba(15, 23, 42, 0.96) 100%)'
+                          : 'linear-gradient(145deg, rgba(28, 19, 10, 0.85) 0%, rgba(10, 14, 24, 0.92) 100%)',
+                        boxShadow: item
+                          ? `0 0 10px ${q?.color}30, inset 0 1px 0 rgba(251,191,36,0.15)`
+                          : 'inset 0 1px 3px rgba(0,0,0,0.65)'
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-slate-950/95 p-1 overflow-hidden shadow-inner"
+                          style={{
+                            borderColor: item ? `${q?.color}88` : 'rgba(217, 119, 6, 0.5)'
+                          }}
+                        >
+                          {item ? (
+                            <ItemIcon
+                              icon={item.icon}
+                              alt={item.name}
+                              slot={slotKey}
+                              fallback={slotMeta.icon}
+                              imgClassName="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <ItemIcon
+                              icon={slotMeta.icon}
+                              alt={slotMeta.name}
+                              slot={slotKey}
+                              imgClassName="w-full h-full object-contain opacity-65"
+                            />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[7.5px] font-extrabold uppercase tracking-wider text-amber-300/90 truncate">
+                              {slotMeta.name}
+                            </span>
+                            {item && (
+                              <span className="shrink-0 rounded bg-slate-950/90 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-amber-500/30">
+                                {item.lvl} ур.
+                              </span>
+                            )}
+                          </div>
+                          {item ? (
+                            <div
+                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5"
+                              style={{ color: q?.color }}
+                            >
+                              {item.name}
+                            </div>
+                          ) : (
+                            <div className="text-[8px] italic text-slate-500 mt-0.5">Пусто</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {item && (
+                        <div className="mt-1 pt-0.5 border-t border-slate-800/80 flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">
+                          {item.dmg > 0 && <span className="text-amber-300">+{item.dmg}⚔️</span>}
+                          {item.hp > 0 && <span className="text-red-300">+{item.hp}❤️</span>}
+                          {(item.dodgeBonus ?? 0) > 0 && (
+                            <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
+                          )}
+                          {(item.energyBonus ?? 0) > 0 && (
+                            <span className="text-cyan-300">+{item.energyBonus}⚡</span>
+                          )}
+                          {(item.goldBonusPct ?? 0) > 0 && (
+                            <span className="text-yellow-300">+{item.goldBonusPct}%🪙</span>
+                          )}
+                          {(item.expBonusPct ?? 0) > 0 && (
+                            <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
 
                 return (
                   <div
-                    key={slotKey}
-                    className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 p-2 text-[10px]"
+                    className="rounded-2xl border-2 border-amber-500/50 p-2 shadow-[0_0_20px_rgba(245,158,11,0.15)] space-y-2"
+                    style={{
+                      background:
+                        'radial-gradient(circle at 50% 45%, rgba(147, 51, 234, 0.15) 0%, rgba(30, 20, 12, 0.92) 55%, rgba(9, 13, 22, 0.98) 100%)'
+                    }}
                   >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-lg shrink-0 w-8 h-8 flex items-center justify-center bg-slate-900 rounded overflow-hidden p-0.5">
-                        {item ? (
-                          <ItemIcon icon={item.icon} alt={item.name} fallback={slotMeta.icon} />
-                        ) : (
-                          slotMeta.icon
-                        )}
+                    <div className="flex items-center justify-between px-0.5">
+                      <span className="text-[9.5px] font-black uppercase tracking-wider text-amber-300">
+                        𓂀 Амуниция и Облик игрока {nick}
                       </span>
-                      <div className="min-w-0">
-                        <div className="text-[8.5px] font-semibold text-slate-400">
-                          {slotMeta.name}
+                      <span className="text-[8px] font-bold text-slate-400">
+                        Ур. {level}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-[1fr_1.15fr_1fr] gap-1.5 items-stretch">
+                      <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                        {leftSlots.map((s) => renderInspectSlot(s))}
+                      </div>
+
+                      <div
+                        className="relative flex flex-col items-center justify-between rounded-xl border-2 p-1.5 overflow-hidden"
+                        style={{
+                          borderColor: activeSkinQuality?.color || '#f59e0b',
+                          background:
+                            'radial-gradient(ellipse at 50% 45%, rgba(245, 158, 11, 0.22) 0%, rgba(88, 28, 135, 0.28) 48%, rgba(9, 6, 15, 0.96) 100%)'
+                        }}
+                      >
+                        <div className="w-full text-center border-b border-amber-500/25 pb-1 z-10">
+                          <div
+                            className="truncate text-[8.5px] font-black leading-tight"
+                            style={{ color: activeSkinQuality?.color || '#fde047' }}
+                          >
+                            {activeSkin ? `🎭 ${activeSkin.name}` : '👤 Стандартный облик'}
+                          </div>
                         </div>
-                        {item ? (
-                          <>
-                            <div
-                              className="font-extrabold flex items-center gap-1 flex-wrap"
-                              style={{ color: q?.color }}
-                            >
-                              <span>{item.name}</span>
-                            </div>
-                            <div className="text-[8.5px] text-slate-400">
-                              Ур. {item.lvl}
-                              {item.dmg > 0 ? ` • ⚔️ +${item.dmg}` : ''}
-                              {item.hp > 0 ? ` • ❤️ +${item.hp}` : ''}
-                              {item.str ? ` • 💪 +${item.str}` : ''}
-                              {item.agi ? ` • 💨 +${item.agi}` : ''}
-                              {item.vit ? ` • 🛡️ +${item.vit}` : ''}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-[9px] italic text-slate-500">Пусто</div>
+
+                        <div className="relative flex-1 w-full flex items-center justify-center my-1 min-h-[135px]">
+                          <CharacterAvatar
+                            avatar={activeSkinSprite}
+                            nick={nick}
+                            fullBody={true}
+                            size="full"
+                            className="w-full h-full max-h-[145px] object-contain"
+                          />
+                          <div className="pointer-events-none absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4/5 h-2 rounded-full bg-gradient-to-r from-transparent via-amber-500/45 to-transparent blur-[1px] border-b border-amber-400/60" />
+                        </div>
+
+                        {activeSkin && (
+                          <div className="w-full truncate text-center text-[7px] font-bold text-emerald-300 border-t border-amber-500/20 pt-0.5">
+                            {formatSkinBonusesText(activeSkin)}
+                          </div>
                         )}
+                      </div>
+
+                      <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                        {rightSlots.map((s) => renderInspectSlot(s))}
                       </div>
                     </div>
                   </div>
                 );
-              })}
+              })()}
+
+              {/* Достижения игрока (видны всем игрокам при нажатии на персонажа) */}
+              <div className="rounded-xl border-2 border-amber-500/55 bg-gradient-to-b from-[#22140d] via-slate-900 to-slate-950 p-2.5 space-y-2 shadow-md">
+                <div className="flex items-center justify-between gap-2 flex-wrap border-b border-amber-500/25 pb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-9 h-9 rounded-xl border border-amber-400/70 bg-slate-950 p-1 shrink-0 flex items-center justify-center">
+                      <ItemIcon
+                        icon={KILLER_ACHIEVEMENT_SVG}
+                        alt="Достижение Киллер"
+                        imgClassName="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                        🏆 Достижение: «Киллер» (Ур. {killerAch.level} / 5)
+                      </div>
+                      <div className="text-[8px] text-emerald-300 font-bold">
+                        Бонус к здоровью навсегда: +{killerAch.totalHpBonus} ❤️ HP
+                      </div>
+                    </div>
+                  </div>
+                  <span className="rounded bg-red-950/90 border border-red-500/60 px-2 py-0.5 text-[8.5px] font-black text-red-200">
+                    ⚔️ Убито: {killerAch.kills} игр.
+                  </span>
+                </div>
+
+                <div className="text-[8px] text-slate-300 leading-snug">
+                  {KILLER_ACHIEVEMENT_DESCRIPTION}
+                </div>
+
+                <div className="grid grid-cols-5 gap-1">
+                  {KILLER_ACHIEVEMENT_LEVELS.map((tier) => {
+                    const unlocked = killerAch.kills >= tier.killsRequired;
+                    return (
+                      <div
+                        key={tier.level}
+                        className={`rounded-lg border p-1 text-center ${
+                          unlocked
+                            ? 'border-emerald-400 bg-emerald-950/55 text-emerald-200'
+                            : 'border-slate-800 bg-slate-900/80 text-slate-500'
+                        }`}
+                      >
+                        <div className="text-[7.5px] font-black text-amber-300">
+                          {tier.level} ур. {unlocked ? '✅' : '🔒'}
+                        </div>
+                        <div className="text-[7.5px] font-bold">{tier.killsRequired} уб.</div>
+                        <div className="text-[7px] text-red-300 font-bold">+100 ❤️</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
 
@@ -555,8 +759,58 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                   <span className="font-bold text-red-400">{pvpKills}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span className="text-slate-400">🏆 Достижение «Киллер»:</span>
+                  <span className="font-bold text-emerald-300">
+                    Ур. {killerAch.level} / 5 (+{killerAch.totalHpBonus} ❤️ HP навсегда)
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">🗡️ Лицензия киллера:</span>
+                  <span className={`font-bold ${isKillerLicenseActive ? 'text-amber-300' : 'text-slate-500'}`}>
+                    {isKillerLicenseActive
+                      ? `🟢 Активна (${formatLicenseRemainingTime(killerLicenseUntil, nowMs)})`
+                      : '⚪ Не активна'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-slate-400">💀 Количество смертей:</span>
                   <span className="font-bold text-slate-300">{deaths}</span>
+                </div>
+              </div>
+
+              {/* Достижения персонажа: Киллер (видны всем игрокам при просмотре профиля) */}
+              <div className="rounded-xl border border-amber-500/45 bg-slate-950 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9.5px] font-black text-amber-300">
+                    🏆 Достижение «Киллер» ({killerAch.level}/5 ур.)
+                  </span>
+                  <span className="text-[8.5px] font-bold text-emerald-300">
+                    +{killerAch.totalHpBonus} ❤️ HP навсегда
+                  </span>
+                </div>
+                <div className="text-[8px] text-slate-400 leading-snug">
+                  {KILLER_ACHIEVEMENT_DESCRIPTION}
+                </div>
+                <div className="grid grid-cols-5 gap-1 pt-0.5">
+                  {KILLER_ACHIEVEMENT_LEVELS.map((tier) => {
+                    const unlocked = killerAch.kills >= tier.killsRequired;
+                    return (
+                      <div
+                        key={tier.level}
+                        className={`rounded border p-1 text-center ${
+                          unlocked
+                            ? 'border-emerald-400 bg-emerald-950/50 text-emerald-200'
+                            : 'border-slate-800 bg-slate-900/70 text-slate-500'
+                        }`}
+                      >
+                        <div className="text-[7.5px] font-black text-amber-300">
+                          {tier.level} ур. {unlocked ? '✅' : '🔒'}
+                        </div>
+                        <div className="text-[7.5px] font-bold">{tier.killsRequired} уб.</div>
+                        <div className="text-[7px] text-red-300 font-bold">+100 ❤️</div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -567,36 +821,15 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                 isOwnProfile={false}
               />
 
-              {/* PvP Attack Section: ONLY when running in the Pyramid! */}
-              {inPyramid && isHeroInPyramid && onAttackPvP ? (
-                <div className="rounded-lg border border-red-500/50 bg-red-950/40 p-2 text-center animate-pulse">
-                  <div className="text-[9px] text-red-300 font-bold mb-1">
-                    ⚔️ Игрок находится в Пирамиде!
-                  </div>
-                  <div className="text-[8px] text-slate-300 mb-1.5">
-                    Победитель PvP забирает 50% всех добытых ресурсов и золота за текущий заход!
-                  </div>
-                  <button
-                    onClick={() => {
-                      onAttackPvP(nick);
-                      onClose();
-                    }}
-                    className="w-full rounded bg-red-600 py-1.5 text-[10px] font-black uppercase text-white hover:bg-red-500 active:scale-95 shadow-[0_0_12px_rgba(239,68,68,0.7)]"
-                  >
-                    ⚔️ Напасть в PvP (-50% лута)
-                  </button>
+              {/* PvP Attack Rule: ONLY on Pyramid cells with an active Killer License (never from profile modal / main screen / leaderboard) */}
+              <div className="rounded-lg border border-amber-500/35 bg-slate-950/90 p-2 text-center space-y-0.5">
+                <div className="text-[9px] font-extrabold text-amber-300">
+                  🗡️ Правило PvP и Лицензии киллера
                 </div>
-              ) : (
-                <div className="rounded-lg border border-slate-800 bg-slate-950/80 p-2 text-center">
-                  <div className="text-[9px] font-bold text-slate-400 mb-0.5">
-                    🛡️ Мирная зона
-                  </div>
-                  <div className="text-[8px] text-slate-500">
-                    Нападать на игрока нельзя:{' '}
-                    {inPyramid ? 'войдите в Пирамиду для атаки' : 'он находится в безопасном городе'}.
-                  </div>
+                <div className="text-[8px] text-slate-300 leading-snug">
+                  Нападать и убивать игроков через профиль на главной или в рейтинге нельзя — атака разрешена <strong className="text-red-300">только внутри Пирамиды</strong> на соседней клетке при активной «Лицензии киллера» (10 💎 на 1 день в Магазине).
                 </div>
-              )}
+              </div>
             </div>
           )}
 

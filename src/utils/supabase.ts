@@ -13,6 +13,7 @@ import {
   CharacterSkinTemplate
 } from '../types/game';
 import { registerPlayerOwnedSkinsInMemory } from './shopConfig';
+import { getKillerAchievementInfo } from './egyptianEquipment';
 import {
   generateDeterministicPyramidCells,
   respawnDeterministicPyramidCells,
@@ -112,6 +113,8 @@ export interface RealtimePlayer {
   ownedSkins?: CharacterSkinTemplate[];
   activeSkinId?: string | null;
   banInfo?: PlayerBanInfo | null;
+  killerLicenseUntil?: number;
+  killerLicenses?: number;
 }
 
 export type RealtimeConnectionStatus =
@@ -323,7 +326,9 @@ export function unpackPlayerRow(row: any): any {
 
   const bonusHpVal = Math.max(0, Number(parsedEmailData.bonus_hp ?? row.bonus_hp ?? 0));
   const bonusDmgVal = Math.max(0, Number(parsedEmailData.bonus_dmg ?? row.bonus_dmg ?? 0));
-  const calculatedMaxHp = getHeroMaxHpFromVit(normalizedStats.vit) + gearHpBonus + bonusHpVal;
+  const unpackedPvpKills = Math.max(0, Number(parsedEmailData.pvp_kills ?? row.pvp_kills ?? 0));
+  const killerHpBonus = getKillerAchievementInfo(unpackedPvpKills).totalHpBonus;
+  const calculatedMaxHp = getHeroMaxHpFromVit(normalizedStats.vit) + gearHpBonus + bonusHpVal + killerHpBonus;
   const calculatedMaxEnergy = 100 + gearEnBonus;
   const calculatedDmg = getHeroDamageFromStr(normalizedStats.str) + gearDmgBonus + bonusDmgVal;
 
@@ -424,7 +429,11 @@ export function unpackPlayerRow(row: any): any {
     mobsKilled: resolvedMobsKilled,
     total_gold_collected: resolvedTotalGold,
     totalGoldCollected: resolvedTotalGold,
-    pvp_kills: Math.max(0, Number(parsedEmailData.pvp_kills ?? row.pvp_kills ?? 0)),
+    pvp_kills: unpackedPvpKills,
+    killer_license_until: Math.max(0, Number(parsedEmailData.killer_license_until ?? parsedEmailData.killerLicenseUntil ?? row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killerLicenseUntil: Math.max(0, Number(parsedEmailData.killer_license_until ?? parsedEmailData.killerLicenseUntil ?? row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killer_licenses: Math.max(0, Number(parsedEmailData.killer_licenses ?? parsedEmailData.killerLicenses ?? row.killer_licenses ?? row.killerLicenses ?? 0)),
+    killerLicenses: Math.max(0, Number(parsedEmailData.killer_licenses ?? parsedEmailData.killerLicenses ?? row.killer_licenses ?? row.killerLicenses ?? 0)),
     deaths: Math.max(0, Number(parsedEmailData.deaths ?? row.deaths ?? 0)),
     last_wheel_spin_time: Number(parsedEmailData.last_wheel_spin_time ?? row.last_wheel_spin_time ?? 0),
     last_gold_wheel_spin_time: Number(parsedEmailData.last_gold_wheel_spin_time ?? row.last_gold_wheel_spin_time ?? 0),
@@ -726,7 +735,9 @@ export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
     ownedSkinExpirations: row.ownedSkinExpirations ?? row.owned_skin_expirations ?? {},
     ownedSkins: Array.isArray(row.ownedSkins ?? row.owned_skins) ? (row.ownedSkins ?? row.owned_skins) : [],
     activeSkinId: row.activeSkinId ?? row.active_skin_id ?? null,
-    banInfo: row.banInfo ?? row.ban_info ?? null
+    banInfo: row.banInfo ?? row.ban_info ?? null,
+    killerLicenseUntil: Math.max(0, Number(row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killerLicenses: Math.max(0, Number(row.killer_licenses ?? row.killerLicenses ?? 0))
   } as any;
 }
 

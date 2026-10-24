@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { ItemSlot } from '../types/game';
+import { resolveEgyptianEquipmentIcon } from '../utils/egyptianEquipment';
 
 export function normalizeItemIconValue(icon?: string | null, fallback = '⚔️'): string {
   if (!icon || typeof icon !== 'string') return fallback;
@@ -47,6 +49,7 @@ export function resolveItemIconSrc(icon: string): string {
 interface ItemIconProps {
   icon?: string | null;
   name?: string;
+  slot?: ItemSlot;
   alt?: string;
   fallback?: string;
   className?: string;
@@ -56,14 +59,17 @@ interface ItemIconProps {
 export const ItemIcon: React.FC<ItemIconProps> = ({
   icon,
   name,
+  slot,
   alt = 'icon',
   fallback = '⚔️',
   className = '',
   imgClassName = 'w-full h-full object-contain'
 }) => {
   const [imgError, setImgError] = useState(false);
-  const normalized = normalizeItemIconValue(icon, fallback);
+  const rawNormalized = normalizeItemIconValue(icon, fallback);
   const effectiveAlt = name || alt;
+  const egyptianResolved = resolveEgyptianEquipmentIcon(rawNormalized, effectiveAlt, slot);
+  const normalized = egyptianResolved || rawNormalized;
 
   useEffect(() => {
     setImgError(false);
@@ -71,11 +77,13 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
 
   if (!imgError && isImageIconPath(normalized)) {
     const src = resolveItemIconSrc(normalized);
+    const isEgyptianGeneratedSvg = Boolean(egyptianResolved && egyptianResolved.startsWith('data:image/svg+xml'));
     const isCustomUploadedOrUrl =
-      normalized.startsWith('data:image/') ||
-      normalized.startsWith('http://') ||
-      normalized.startsWith('https://') ||
-      imgClassName.includes('object-cover');
+      !isEgyptianGeneratedSvg &&
+      (normalized.startsWith('data:image/') ||
+        normalized.startsWith('http://') ||
+        normalized.startsWith('https://') ||
+        imgClassName.includes('object-cover'));
     return (
       <img
         src={src}
@@ -89,4 +97,5 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
 
   return <span className={className}>{isImageIconPath(normalized) ? fallback : normalized}</span>;
 };
+
 

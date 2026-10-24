@@ -374,10 +374,29 @@ export const PyramidScreen: React.FC<PyramidScreenProps> = ({
                   ? Math.max(0, Number(hero.premiumUntil) - nowMs)
                   : 0;
               const isVipBonusActive = vipRemMs > 0;
+              const killerRemMs = Math.max(0, Number(hero.killerLicenseUntil || 0) - nowMs);
+              const isKillerActive = killerRemMs > 0;
 
               return (
                 <>
                   <div className="flex items-center justify-between gap-1.5 w-full leading-tight border-t border-slate-800/90 pt-0.5">
+                    <span className="text-red-300 font-bold" title="Лицензия киллера (разрешает убивать игроков в Пирамиде)">
+                      🗡️ Киллер:
+                    </span>
+                    {isKillerActive ? (
+                      <span className="font-mono font-extrabold text-emerald-400 tabular-nums">
+                        {formatTimerSec(killerRemMs)}
+                      </span>
+                    ) : (
+                      <span className="text-slate-500 font-semibold">
+                        {Number(hero.killerLicenses || 0) > 0
+                          ? `В запасе (${hero.killerLicenses}шт)`
+                          : 'Нет (10💎)'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1.5 w-full leading-tight">
                     <span className="text-purple-300 font-bold">
                       ✨ Опыт +25%:
                     </span>

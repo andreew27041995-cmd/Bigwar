@@ -70,6 +70,11 @@ import {
 } from './utils/shopConfig';
 import { ShopModal } from './components/modals/ShopModal';
 import {
+  KILLER_LICENSE_CONFIG,
+  getKillerAchievementInfo,
+  formatLicenseRemainingTime
+} from './utils/egyptianEquipment';
+import {
   playStepSound,
   playAttackSound,
   playLootSound,
@@ -891,7 +896,7 @@ export default function App() {
         return changed ? updated : prevInv;
       });
 
-      // 2. Check VIP expiration (12 hours exact) and Natural HP/Energy Regen
+      // 2. Check VIP expiration (12 hours exact), Killer License expiration (24 hours), and Natural HP/Energy Regen
       setHero((prevHero) => {
         if (
           prevHero.isPremium &&
@@ -901,6 +906,16 @@ export default function App() {
           const expiredHero = { ...prevHero, isPremium: false, premiumUntil: undefined };
           heroRef.current = expiredHero;
           return expiredHero;
+        }
+
+        if (
+          prevHero.killerLicenseUntil &&
+          now >= prevHero.killerLicenseUntil
+        ) {
+          showToast('📜 Срок действия «Лицензии киллера» (1 день) истёк! Продлите её в Магазине ➔ Лицензии.');
+          const expiredLicenseHero = { ...prevHero, killerLicenseUntil: undefined };
+          heroRef.current = expiredLicenseHero;
+          return expiredLicenseHero;
         }
 
         const isVipActive = Boolean(
@@ -2232,6 +2247,26 @@ export default function App() {
           : Boolean(cell.playerIsOnline ?? true);
       const energyCost = 3;
 
+      // Enforce active Killer License ("Рецензия киллера") to attack/kill other players in the Pyramid
+      const isKillerLicenseActive = Boolean(
+        hero.killerLicenseUntil && hero.killerLicenseUntil > Date.now()
+      );
+      if (!isKillerLicenseActive) {
+        const storedCount = Number(hero.killerLicenses || 0);
+        const hintMsg =
+          storedCount > 0
+            ? `У вас есть ${storedCount} шт. в запасе — нажмите «Использовать» в Персонаже или Магазине!`
+            : `Купите её в разделе «Магазин ➔ Лицензии» за ${KILLER_LICENSE_CONFIG.costCrystals} 💎 (срок 1 день).`;
+        showToast(
+          `📜 Для нападения на игрока ${enemyNick} в Пирамиде нужна активная «Лицензия киллера»! ${hintMsg}`
+        );
+        addCombatLog(
+          `📜 Нападение заблокировано: требуется активная «Лицензия киллера» (${hintMsg})`,
+          'pvp'
+        );
+        return;
+      }
+
       if (hero.energy < energyCost) {
         addCombatLog(
           `⚡ Недостаточно энергии для атаки игрока ${enemyNick}! Требуется ${energyCost}⚡.`,
@@ -2261,13 +2296,37 @@ export default function App() {
         const citySpawnRow = ROWS_COUNT - 1;
         const citySpawnCol = Math.floor((ROWS_COUNT - 1) / 2);
 
-        setHero((prev) => ({
-          ...prev,
-          energy: nextEnergy,
-          gold: prev.gold + stolenGold,
-          goldInCurrentRun: prev.goldInCurrentRun + stolenGold,
-          pvpKills: prev.pvpKills + 1
-        }));
+        const prevKills = Number(heroRef.current.pvpKills || 0);
+        const nextKills = prevKills + 1;
+        const prevKillerAch = getKillerAchievementInfo(prevKills);
+        const nextKillerAch = getKillerAchievementInfo(nextKills);
+        const leveledUpKiller = nextKillerAch.level > prevKillerAch.level;
+
+        setHero((prev) => {
+          const nextRaw: HeroState = {
+            ...prev,
+            energy: nextEnergy,
+            gold: prev.gold + stolenGold,
+            goldInCurrentRun: prev.goldInCurrentRun + stolenGold,
+            pvpKills: (prev.pvpKills || 0) + 1
+          };
+          const recalced = recalcGear(equippedRef.current, nextRaw);
+          if (leveledUpKiller) {
+            recalced.hp = Math.min(recalced.maxHp, recalced.hp + 100);
+          }
+          heroRef.current = recalced;
+          return recalced;
+        });
+
+        if (currentUser) {
+          flushPlayerUpdates(currentUser, {
+            pvp_kills: nextKills,
+            gold: heroRef.current.gold,
+            max_hp: heroRef.current.maxHp,
+            hp: heroRef.current.hp,
+            energy: nextEnergy
+          });
+        }
 
         // Update killed player in Supabase: send them to the City with 0 HP and 0 energy so they regenerate naturally (both online & offline)
         updatePlayerInDatabase(enemyNick, {
@@ -2313,7 +2372,7 @@ export default function App() {
             type: 'gold_transfer',
             description: `⚔️ Победа в PvP над ${enemyNick}${
               !enemyIsOnline ? ' (оффлайн)' : ''
-            }: конфисковано 50% ресурсов (+${stolenGold} 🪙)`,
+            }: конфисковано 50% ресурсов (+${stolenGold} 🪙) | Киллер: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5)`,
             amount: stolenGold,
             targetNick: enemyNick
           },
@@ -2327,7 +2386,7 @@ export default function App() {
           author: 'PvP Арена',
           text: `⚔️ [PvP] ${currentUser || 'Игрок'} убил игрока ${enemyNick}${
             !enemyIsOnline ? ' (оффлайн)' : ''
-          } в Пирамиде! ${enemyNick} отправлен на возрождение в Город (+${stolenGold} 🪙)!`,
+          } в Пирамиде по Лицензии киллера! ${enemyNick} отправлен на возрождение в Город (+${stolenGold} 🪙)!`,
           isSystem: true,
           channel: 'world'
         };
@@ -2337,9 +2396,32 @@ export default function App() {
         addCombatLog(
           `⚔️ УБИЙСТВО ИГРОКА: Вы убили ${enemyNick}${
             !enemyIsOnline ? ' (оффлайн)' : ''
-          } (урон: ${playerDmg}, -${energyCost}⚡)! Добыча: +${stolenGold} 🪙`,
+          } (урон: ${playerDmg}, -${energyCost}⚡)! Добыча: +${stolenGold} 🪙 | Достижение «Киллер»: ${nextKills} уб. (Ур. ${nextKillerAch.level}/5)`,
           'pvp'
         );
+
+        showToast(
+          leveledUpKiller
+            ? `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5! Здоровье увеличено на +100 ❤️ HP навсегда (всего +${nextKillerAch.totalHpBonus} HP)!`
+            : `⚔️ Вы убили ${enemyNick}${!enemyIsOnline ? ' (оффлайн)' : ''} в Пирамиде! +${stolenGold} 🪙 (Киллер: ${nextKills} уб.)`
+        );
+
+        if (leveledUpKiller) {
+          addCombatLog(
+            `🏆 ДОСТИЖЕНИЕ «КИЛЛЕР» УР. ${nextKillerAch.level}/5 ПОЛУЧЕНО (${nextKills} убийств)! Ваше макс. здоровье увеличено на +100 ❤️ HP навсегда (бонус: +${nextKillerAch.totalHpBonus} HP)!`,
+            'pvp'
+          );
+          const achChatMsg: ChatMessage = {
+            id: 'ach_killer_' + Date.now(),
+            time: msgTime,
+            author: 'Достижения',
+            text: `🏆 ${currentUser || 'Игрок'} достиг ${nextKillerAch.level} уровня достижения «Киллер» (${nextKills} убийств в Пирамиде) и получил +100 ❤️ HP навсегда (всего +${nextKillerAch.totalHpBonus} HP)!`,
+            isSystem: true,
+            channel: 'world'
+          };
+          setChatMessages((prev) => [...prev, achChatMsg]);
+          broadcastWorldChatMessageInSupabase(achChatMsg);
+        }
 
         // Defeated player leaves a gold sack on the cell (unless it's the Exit or Spawn cell)
         const newMap = pyramidMap.map((rowArr, rI) =>
@@ -4433,49 +4515,123 @@ export default function App() {
     [hero, currentUser, flushPlayerUpdates, showToast]
   );
 
-  const handleAttackPlayer = (targetNick: string) => {
-    if (screen !== 'pyramid' || !pyramidPlayersInPyramid.includes(targetNick)) {
-      showToast(`🛡️ Напасть на игрока нельзя: он в мирной зоне (городе)! Нападать разрешено только когда он бегает в Пирамиде.`);
-      return;
-    }
-    const won = Math.random() < 0.75;
-    const now = Date.now();
-    const dateStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Buy Killer License ("1. Лицензия киллера", 10 crystals, 1 day duration)
+  const handleBuyKillerLicense = useCallback(
+    (activateNow = true) => {
+      const curHero = heroRef.current || hero;
+      const cost = KILLER_LICENSE_CONFIG.costCrystals;
+      const curCrystals = Number(curHero.crystals || 0);
+      if (curCrystals < cost) {
+        showToast(`❌ Недостаточно кристаллов! Для покупки «Лицензии киллера» нужно ${cost} 💎 (у вас ${curCrystals} 💎).`);
+        return;
+      }
 
-    if (won) {
-      const stolenGold = Math.floor(180 + Math.random() * 220);
-      setHero((prev) => ({
-        ...prev,
-        gold: prev.gold + stolenGold,
-        pvpKills: prev.pvpKills + 1
-      }));
-      playLevelUpSound();
-      showToast(`⚔️ Победа над ${targetNick}! Забрано 50% добычи (+${stolenGold} 🪙)`);
+      const now = Date.now();
+      const nextCrystals = Math.max(0, curCrystals - cost);
+      let nextUntil = Number(curHero.killerLicenseUntil || 0);
+      let nextStored = Number(curHero.killerLicenses || 0);
+
+      if (activateNow) {
+        const baseTime = nextUntil > now ? nextUntil : now;
+        nextUntil = baseTime + KILLER_LICENSE_CONFIG.durationMs;
+      } else {
+        nextStored += 1;
+      }
+
+      const nextHero: HeroState = {
+        ...curHero,
+        crystals: nextCrystals,
+        killerLicenseUntil: nextUntil > now ? nextUntil : undefined,
+        killerLicenses: nextStored
+      };
+
+      heroRef.current = nextHero;
+      lastSyncedFinancialsRef.current = {
+        ...lastSyncedFinancialsRef.current,
+        crystals: nextCrystals,
+        updatedAt: now
+      };
+      setHero(nextHero);
+
+      if (currentUser) {
+        flushPlayerUpdates(currentUser, {
+          crystals: nextCrystals,
+          killer_license_until: nextUntil > now ? nextUntil : 0,
+          killer_licenses: nextStored
+        });
+      }
+
+      const dateStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       setTradeProtocol((prev) => [
         {
-          id: 'pvp_' + now,
+          id: 'lic_killer_' + now,
           timestamp: now,
           dateStr,
-          type: 'gold_transfer',
-          description: `⚔️ Победа в PvP над ${targetNick}: конфисковано 50% ресурсов (+${stolenGold} 🪙)`,
-          amount: stolenGold,
-          targetNick
+          type: 'shop_buy',
+          description: activateNow
+            ? `📜 Куплена и активирована «1. Лицензия киллера» на 1 день (24ч) за ${cost} 💎 (осталось: ${formatLicenseRemainingTime(nextUntil, now)})`
+            : `📜 Куплена в запас «1. Лицензия киллера» (1 дн.) за ${cost} 💎 (в запасе: ${nextStored} шт.)`,
+          amount: cost
         },
         ...prev
       ]);
-    } else {
-      const lostGold = Math.floor(hero.goldInCurrentRun * 0.5);
-      setHero((prev) => ({
-        ...prev,
-        deaths: prev.deaths + 1,
-        gold: Math.max(0, prev.gold - lostGold),
-        goldInCurrentRun: 0,
-        hp: prev.maxHp,
-        energy: 0
-      }));
-      handleExitToCity(true);
-      showToast(`💀 Вы пали в PvP от руки ${targetNick} и потеряли 50% добычи (-${lostGold} 🪙)! Вход в Пирамиду с 30⚡.`);
+
+      playLevelUpSound();
+      if (activateNow) {
+        showToast(
+          `🗡️ «Лицензия киллера» активирована на 1 день (24 часа)! Теперь вы можете атаковать и убивать игроков внутри Пирамиды.`
+        );
+      } else {
+        showToast(
+          `📜 «Лицензия киллера» куплена в запас (в наличии: ${nextStored} шт.)! Нажмите «Использовать», чтобы запустить таймер на 1 день.`
+        );
+      }
+    },
+    [hero, currentUser, flushPlayerUpdates, showToast]
+  );
+
+  // Activate a stored Killer License from reserve (adds 24 hours to active timer)
+  const handleUseKillerLicense = useCallback(() => {
+    const curHero = heroRef.current || hero;
+    const stored = Number(curHero.killerLicenses || 0);
+    if (stored <= 0) {
+      showToast('❌ У вас нет неактивированных «Лицензий киллера» в запасе! Купите лицензию в разделе «Магазин ➔ Лицензии».');
+      return;
     }
+
+    const now = Date.now();
+    const curUntil = Number(curHero.killerLicenseUntil || 0);
+    const baseTime = curUntil > now ? curUntil : now;
+    const nextUntil = baseTime + KILLER_LICENSE_CONFIG.durationMs;
+    const nextStored = Math.max(0, stored - 1);
+
+    const nextHero: HeroState = {
+      ...curHero,
+      killerLicenseUntil: nextUntil,
+      killerLicenses: nextStored
+    };
+
+    heroRef.current = nextHero;
+    setHero(nextHero);
+
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        killer_license_until: nextUntil,
+        killer_licenses: nextStored
+      });
+    }
+
+    playLevelUpSound();
+    showToast(
+      `🗡️ «Лицензия киллера» использована! Срок действия: ${formatLicenseRemainingTime(nextUntil, now)}. Охота в Пирамиде открыта!`
+    );
+  }, [hero, currentUser, flushPlayerUpdates, showToast]);
+
+  const handleAttackPlayer = (_targetNick: string) => {
+    // Strictly disallow attacking from main screen, online list, or leaderboard profile modal
+    showToast(
+      `🛡️ Убивать игроков через профиль на главной или в рейтинге запрещено! Нападать можно только внутри Пирамиды при наличии активной «Лицензии киллера».`
+    );
   };
 
   const handleClaimReferralReward = (refNick = '') => {
@@ -5270,6 +5426,11 @@ export default function App() {
       pvpWins: supaPlayer?.pvp_wins !== undefined ? Number(supaPlayer.pvp_wins) : 0,
       pvpLosses: supaPlayer?.pvp_losses !== undefined ? Number(supaPlayer.pvp_losses) : 0,
       pvpKills: supaPlayer?.pvp_kills !== undefined ? Number(supaPlayer.pvp_kills) : 0,
+      killerLicenseUntil:
+        Number(supaPlayer?.killer_license_until ?? supaPlayer?.killerLicenseUntil ?? 0) > Date.now()
+          ? Number(supaPlayer?.killer_license_until ?? supaPlayer?.killerLicenseUntil ?? 0)
+          : undefined,
+      killerLicenses: Math.max(0, Number(supaPlayer?.killer_licenses ?? supaPlayer?.killerLicenses ?? 0)),
       mobsKilled: Math.max(0, Number(supaPlayer?.mobs_killed ?? supaPlayer?.mobsKilled ?? supaPlayer?.mob_kills ?? 0)),
       totalGoldCollected: Math.max(
         Number(supaPlayer?.gold ?? 0),
@@ -5533,6 +5694,9 @@ export default function App() {
         en_potions: curHero.enPotions,
         exp_potions: curHero.expPotions || 0,
         exp_elixir_until: curHero.expElixirUntil || 0,
+        pvp_kills: curHero.pvpKills || 0,
+        killer_license_until: curHero.killerLicenseUntil || 0,
+        killer_licenses: curHero.killerLicenses || 0,
         mobs_killed: curHero.mobsKilled || 0,
         mob_kills: curHero.mobsKilled || 0,
         total_gold_collected: curHero.totalGoldCollected || curHero.gold || 0,
@@ -5636,6 +5800,11 @@ export default function App() {
           pvpWins: supaPlayer.pvp_wins !== undefined ? Number(supaPlayer.pvp_wins) : 0,
           pvpLosses: supaPlayer.pvp_losses !== undefined ? Number(supaPlayer.pvp_losses) : 0,
           pvpKills: supaPlayer.pvp_kills !== undefined ? Number(supaPlayer.pvp_kills) : 0,
+          killerLicenseUntil:
+            Number(supaPlayer.killer_license_until ?? supaPlayer.killerLicenseUntil ?? 0) > Date.now()
+              ? Number(supaPlayer.killer_license_until ?? supaPlayer.killerLicenseUntil ?? 0)
+              : undefined,
+          killerLicenses: Math.max(0, Number(supaPlayer.killer_licenses ?? supaPlayer.killerLicenses ?? 0)),
           mobsKilled: Math.max(0, Number(supaPlayer.mobs_killed ?? supaPlayer.mobsKilled ?? supaPlayer.mob_kills ?? 0)),
           totalGoldCollected: Math.max(
             Number(supaPlayer.gold ?? 0),
@@ -5844,6 +6013,8 @@ export default function App() {
       pvp_wins: hero.pvpWins,
       pvp_losses: hero.pvpLosses,
       pvp_kills: hero.pvpKills,
+      killer_license_until: hero.killerLicenseUntil || 0,
+      killer_licenses: hero.killerLicenses || 0,
       mobs_killed: hero.mobsKilled || 0,
       mob_kills: hero.mobsKilled || 0,
       total_gold_collected: hero.totalGoldCollected || hero.gold || 0,
@@ -6273,7 +6444,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.0.61</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.0.62</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">24.10.2026</strong></span>
         </div>
@@ -6293,6 +6464,7 @@ export default function App() {
             unreadMailCount={unreadMailCount}
             shopSkins={shopSkins}
             onEquipSkin={handleEquipSkin}
+            onUseKillerLicense={handleUseKillerLicense}
             knownPlayers={Array.from(
               new Set([
                 ...realtimePlayers.map((p) => p.nick),
@@ -6364,6 +6536,8 @@ export default function App() {
             onBuySkin={handleBuySkin}
             onEquipSkin={handleEquipSkin}
             onBuyElixir={handleBuyElixir}
+            onBuyKillerLicense={handleBuyKillerLicense}
+            onUseKillerLicense={handleUseKillerLicense}
             onOpenAuction={() => {
               if (checkBanRestriction('blockTradeAndAuction', 'Аукцион и торговля')) return;
               setActiveModal('auction');
