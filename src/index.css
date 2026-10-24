@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@keyframes goldSpin3D {
+  0% {
+    transform: perspective(220px) rotateY(0deg) scale(1);
+    filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.85)) brightness(1.08);
+  }
+  25% {
+    transform: perspective(220px) rotateY(90deg) scale(1.06);
+    filter: drop-shadow(0 0 8px rgba(253, 224, 71, 1)) brightness(1.3);
+  }
+  50% {
+    transform: perspective(220px) rotateY(180deg) scale(1);
+    filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.9)) brightness(1.12);
+  }
+  75% {
+    transform: perspective(220px) rotateY(270deg) scale(1.06);
+    filter: drop-shadow(0 0 8px rgba(253, 224, 71, 1)) brightness(1.3);
+  }
+  100% {
+    transform: perspective(220px) rotateY(360deg) scale(1);
+    filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.85)) brightness(1.08);
+  }
+}
+
+@keyframes crystalVividGlow {
+  0%, 100% {
+    transform: translateY(0px) scale(1) rotate(0deg);
+    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.95)) drop-shadow(0 0 12px rgba(56, 189, 248, 0.75)) brightness(1.2) saturate(1.4);
+  }
+  50% {
+    transform: translateY(-1.5px) scale(1.12) rotate(6deg);
+    filter: drop-shadow(0 0 10px rgba(103, 232, 249, 1)) drop-shadow(0 0 18px rgba(217, 70, 239, 0.85)) brightness(1.45) saturate(1.65);
+  }
+}
+
+@keyframes pumpkinFlicker {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(249, 115, 22, 0.9)) drop-shadow(0 0 16px rgba(234, 88, 12, 0.6)) brightness(1.05);
+  }
+  50% {
+    filter: drop-shadow(0 0 14px rgba(251, 146, 60, 1)) drop-shadow(0 0 24px rgba(220, 38, 38, 0.8)) brightness(1.22);
+  }
+}
+
+@keyframes batFloat {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-5px) translateX(4px) rotate(5deg);
+  }
+}
+
+.animate-gold-spin {
+  display: inline-block;
+  animation: goldSpin3D 2.4s linear infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-crystal-glow {
+  display: inline-block;
+  animation: crystalVividGlow 2s ease-in-out infinite;
+}
+
+.animate-pumpkin-glow {
+  display: inline-block;
+  animation: pumpkinFlicker 2.2s ease-in-out infinite;
+}
+
+.animate-bat-float {
+  display: inline-block;
+  animation: batFloat 3.2s ease-in-out infinite;
+}
