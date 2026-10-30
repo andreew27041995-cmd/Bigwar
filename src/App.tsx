@@ -382,13 +382,13 @@ export default function App() {
     getRuntimeBots(botSimulationConfig.targetOnlineCount)
   );
 
-  // Periodic Bot Movement & Online Simulation Loop (runs every 7.5s)
+  // Periodic Bot Movement & Online Simulation Loop (runs every 20s to preserve 60fps performance)
   useEffect(() => {
     if (!botSimulationConfig.enabled) return;
     const interval = setInterval(() => {
       const updated = tickBotSimulation(botSimulationConfig);
       setSimulatedBots([...updated]);
-    }, 7500);
+    }, 20000);
     return () => clearInterval(interval);
   }, [botSimulationConfig]);
 
@@ -397,8 +397,8 @@ export default function App() {
     if (!botSimulationConfig.enabled || !botSimulationConfig.chatEnabled) return;
     let timerId: number;
     const scheduleNext = () => {
-      const minMs = Math.max(5, botSimulationConfig.chatMinDelaySec) * 1000;
-      const maxMs = Math.max(minMs + 2000, botSimulationConfig.chatMaxDelaySec * 1000);
+      const minMs = Math.max(8, botSimulationConfig.chatMinDelaySec) * 1000;
+      const maxMs = Math.max(minMs + 3000, botSimulationConfig.chatMaxDelaySec * 1000);
       const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
       timerId = window.setTimeout(() => {
         const botMsg = getRandomBotChatMessage(botSimulationConfig);
@@ -413,7 +413,7 @@ export default function App() {
             channel: botMsg.channel,
             timestamp: Date.now()
           };
-          setChatMessages((prev) => [...prev, newChatMsg]);
+          setChatMessages((prev) => [...prev.slice(-90), newChatMsg]);
         }
         scheduleNext();
       }, delay);
@@ -1408,16 +1408,62 @@ export default function App() {
   // Realtime helper: Refresh and render all living players currently in this pyramid tier (both online and offline) on the map
   const refreshAllPlayersOnPyramidMap = useCallback(
     (players: RealtimePlayer[]) => {
-      const activeUser = currentUser || getCurrentUserNick();
       setPyramidMap((currentMap) => {
         if (!currentMap || !Array.isArray(currentMap) || currentMap.length === 0) return currentMap;
+        const activeUser = currentUser || getCurrentUserNick();
+        const activeTier = Number(pyramidTier);
+
+        // Pre-filter players destined for this pyramid tier
+        const targetPlayersOnTier: { row: number; col: number; nick: string; hp: number; maxHp: number; avatar: string; isOnline: boolean; lvl: number }[] = [];
+        if (players && players.length > 0) {
+          players.forEach((p) => {
+            if (activeUser && p.nick.toLowerCase() === activeUser.toLowerCase()) return;
+            if (p.location === 'pyramid' && Number(p.pyramidTier) === activeTier && (p.hp ?? 100) > 0) {
+              const targetR = Math.max(0, Math.min(currentMap.length - 1, p.row));
+              const targetC = Math.max(0, Math.min(currentMap[targetR].length - 1, p.col));
+              targetPlayersOnTier.push({
+                row: targetR,
+                col: targetC,
+                nick: p.nick,
+                hp: p.hp ?? 100,
+                maxHp: p.maxHp ?? 100,
+                avatar: p.avatar || '🧙‍♂️',
+                isOnline: Boolean(p.isOnline),
+                lvl: p.lvl || 1
+              });
+            }
+          });
+        }
+
+        // Fast bail-out: check if existing map already matches the exact player layout
+        let currentPlayersCount = 0;
+        let layoutIdentical = true;
+        for (let r = 0; r < currentMap.length; r++) {
+          for (let c = 0; c < currentMap[r].length; c++) {
+            const cell = currentMap[r][c];
+            if (cell.playerNick) {
+              currentPlayersCount++;
+              const match = targetPlayersOnTier.find(
+                (tp) => tp.row === r && tp.col === c && tp.nick === cell.playerNick
+              );
+              if (!match) {
+                layoutIdentical = false;
+                break;
+              }
+            }
+          }
+          if (!layoutIdentical) break;
+        }
+
+        if (layoutIdentical && currentPlayersCount === targetPlayersOnTier.length) {
+          return currentMap; // Skip map re-render entirely!
+        }
 
         let changed = false;
 
         // 1. Clear previous player info from all cells
         const newMap = currentMap.map((rowArr, rI) =>
           rowArr.map((cell, cI) => {
-            // Ensure no monster is on the local player's cell
             if (
               livePosRef.current.screen === 'pyramid' &&
               rI === livePosRef.current.row &&
@@ -1444,39 +1490,24 @@ export default function App() {
           })
         );
 
-        // 2. Place all living players (online AND offline) who are in this pyramid tier directly on their exact row/col coordinates
-        if (players && players.length > 0) {
-          players.forEach((p) => {
-            if (activeUser && p.nick.toLowerCase() === activeUser.toLowerCase()) {
-              return; // Skip current user
-            }
-            if (
-              p.location === 'pyramid' &&
-              Number(p.pyramidTier) === Number(pyramidTier) &&
-              (p.hp ?? 100) > 0
-            ) {
-              const targetR = Math.max(0, Math.min(newMap.length - 1, p.row));
-              const targetC = Math.max(0, Math.min(newMap[targetR].length - 1, p.col));
-
-              const targetCell = newMap[targetR][targetC];
-              // Monster cells must NEVER be overwritten or hijacked by other player coordinates
-              if (targetCell.type === 'mob' || (Number(targetCell.mobHp) > 0 && Boolean(targetCell.mobName))) {
-                return;
-              }
-              newMap[targetR][targetC] = {
-                ...targetCell,
-                type: targetCell.type === 'empty' ? 'player' : targetCell.type,
-                playerNick: p.nick,
-                playerLvl: p.lvl,
-                playerHp: p.hp,
-                playerMaxHp: p.maxHp,
-                playerAvatar: p.avatar || '🧙‍♂️',
-                playerIsOnline: Boolean(p.isOnline)
-              };
-              changed = true;
-            }
-          });
-        }
+        // 2. Place target players onto coordinates
+        targetPlayersOnTier.forEach((tp) => {
+          const targetCell = newMap[tp.row][tp.col];
+          if (targetCell.type === 'mob' || (Number(targetCell.mobHp) > 0 && Boolean(targetCell.mobName))) {
+            return;
+          }
+          newMap[tp.row][tp.col] = {
+            ...targetCell,
+            type: targetCell.type === 'empty' ? 'player' : targetCell.type,
+            playerNick: tp.nick,
+            playerLvl: tp.lvl,
+            playerHp: tp.hp,
+            playerMaxHp: tp.maxHp,
+            playerAvatar: tp.avatar,
+            playerIsOnline: tp.isOnline
+          };
+          changed = true;
+        });
 
         return changed ? newMap : currentMap;
       });
@@ -1948,7 +1979,7 @@ export default function App() {
       } catch (e) {
         // ignore
       }
-    }, 4000);
+    }, 15000);
 
     return () => {
       isSubscribed = false;

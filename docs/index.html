@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Пирамида: Войны</title>
     <meta name="description" content="Мобильная ролевая онлайн-игра: исследование пирамиды фараонов, сражения с монстрами и боссами, торговля, аренда и аукцион предметов." />
     <meta property="og:title" content="Пирамида: Войны" />
@@ -13,41 +13,20 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <!-- Telegram WebApp SDK -->
-    <script src="https://telegram.org/js/telegram-web-app.js?v=1.1.13"></script>
-    <script type="module" crossorigin src="/Bigwar/assets/index-v1.1.17-BYjsZnP7.js"></script>
-    <link rel="stylesheet" crossorigin href="/Bigwar/assets/index-v1.1.17-DvmpMMMa.css">
-  </head>
-  <body>
-    <div id="root"></div>
-
-    <!-- Библиотека Supabase JS v2 -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.min.js?v=1.1.13"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script>
-      window.APP_VERSION = '1.1.13';
-      try {
-        const savedVer = localStorage.getItem('pyramid_app_version');
-        if (savedVer !== window.APP_VERSION) {
-          localStorage.setItem('pyramid_app_version', window.APP_VERSION);
-          if (savedVer && !sessionStorage.getItem('pyramid_reloaded_' + window.APP_VERSION)) {
-            sessionStorage.setItem('pyramid_reloaded_' + window.APP_VERSION, '1');
-            window.location.reload();
-          }
-        }
-      } catch (e) {}
-
+      window.APP_VERSION = '1.1.17';
       // Инициализация Telegram Mini App (если игра запущена внутри Telegram)
       try {
         if (window.Telegram && window.Telegram.WebApp) {
           const tg = window.Telegram.WebApp;
           tg.ready();
           tg.expand();
-          if (typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast('6.1')) {
-            if (typeof tg.setHeaderColor === 'function') {
-              tg.setHeaderColor('#0b0d10');
-            }
-            if (typeof tg.setBackgroundColor === 'function') {
-              tg.setBackgroundColor('#0b0d10');
-            }
+          if (typeof tg.setHeaderColor === 'function') {
+            tg.setHeaderColor('#0b0d10');
+          }
+          if (typeof tg.setBackgroundColor === 'function') {
+            tg.setBackgroundColor('#0b0d10');
           }
           window.telegramWebApp = tg;
           window.telegramUser = tg.initDataUnsafe ? tg.initDataUnsafe.user : null;
@@ -55,126 +34,11 @@
       } catch (tgErr) {
         console.warn('Telegram WebApp init notice:', tgErr);
       }
-
-      // Принудительный сброс старого кеша браузера и Service Worker для Telegram Mini App (v1.0.13)
-      try {
-        if ('serviceWorker' in navigator && typeof navigator.serviceWorker.getRegistrations === 'function') {
-          navigator.serviceWorker.getRegistrations().then((registrations) => {
-            registrations.forEach((reg) => reg.unregister());
-          }).catch(() => {});
-        }
-        if (window.indexedDB && typeof window.indexedDB.databases === 'function') {
-          window.indexedDB.databases().then((dbs) => {
-            dbs.forEach((db) => {
-              if (db && db.name) window.indexedDB.deleteDatabase(db.name);
-            });
-          }).catch(() => {});
-        }
-        if (window.caches && typeof window.caches.keys === 'function') {
-          window.caches.keys().then((keys) => {
-            keys.forEach((key) => window.caches.delete(key));
-          }).catch(() => {});
-        }
-      } catch (clearErr) {
-        console.warn('Storage clear notice:', clearErr);
-      }
-
-      const SUPABASE_URL = 'https://lgbxbwzqckdnviygsghu.supabase.co';
-      const SUPABASE_ANON_KEY = 'sb_publishable_lGMAAuZELw2gPDZeuEx0VQ_DgPK7szm';
-
-      // Доступ к ключам для компонентов приложения
-      window.SUPABASE_URL = SUPABASE_URL;
-      window.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
-
-      const { createClient } = supabase;
-      window.supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false
-        },
-        realtime: {
-          params: {
-            eventsPerSecond: 10
-          }
-        }
-      });
-
-      // Список игроков онлайн из базы данных Supabase
-      window.realtimePlayers = [];
-
-      // -------------------------------------------------------------
-      // 3. Подписка на Supabase Realtime для таблицы "players"
-      //    (прослушивание событий INSERT, UPDATE, DELETE)
-      // -------------------------------------------------------------
-      const playersChannel = window.supabaseClient
-        .channel('realtime:public:players')
-        // INSERT: появление нового игрока
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'players' },
-          (payload) => {
-            const newPlayer = payload.new;
-            console.log('🟢 [Realtime INSERT] Новый игрок:', newPlayer);
-
-            const nick = newPlayer.nick || newPlayer['имя'] || newPlayer.name || ('Игрок_' + (newPlayer.id || Date.now()));
-            // Обновляем список в window
-            window.realtimePlayers = [
-              newPlayer,
-              ...window.realtimePlayers.filter(p => (p.nick || p['имя'] || p.name) !== nick)
-            ];
-
-            // Отправляем CustomEvent в React для мгновенного отображения на экране
-            window.dispatchEvent(new CustomEvent('supabase:player_insert', { detail: newPlayer }));
-          }
-        )
-        // UPDATE: мгновенное обновление координат, статуса или здоровья игрока без перезагрузки
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'players' },
-          (payload) => {
-            const updated = payload.new;
-            console.log('🔄 [Realtime UPDATE] Обновление данных/позиции игрока:', updated);
-
-            const nick = updated.nick || updated['имя'] || updated.name || ('Игрок_' + updated.id);
-            // Обновляем запись в локальном списке
-            window.realtimePlayers = window.realtimePlayers.map(p => {
-              const curNick = p.nick || p['имя'] || p.name;
-              return curNick === nick ? { ...p, ...updated } : p;
-            });
-
-            // Отправляем CustomEvent в React для обновления без перезагрузки
-            window.dispatchEvent(new CustomEvent('supabase:player_update', {
-              detail: { new: updated, old: payload.old }
-            }));
-          }
-        )
-        // DELETE: игрок вышел или удален из базы
-        .on(
-          'postgres_changes',
-          { event: 'DELETE', schema: 'public', table: 'players' },
-          (payload) => {
-            const oldRecord = payload.old;
-            console.log('🔴 [Realtime DELETE] Игрок вышел или удален:', oldRecord);
-
-            const nick = oldRecord?.nick || oldRecord?.['имя'] || oldRecord?.name;
-            if (nick) {
-              window.realtimePlayers = window.realtimePlayers.filter(p => (p.nick || p['имя'] || p.name) !== nick);
-            }
-
-            // Отправляем CustomEvent в React для удаления с экрана/карты
-            window.dispatchEvent(new CustomEvent('supabase:player_delete', { detail: oldRecord }));
-          }
-        )
-        .subscribe((status, error) => {
-          console.log('📡 [Realtime] Статус подписки на players:', status, error || '');
-          window.supabaseRealtimeStatus = status;
-          window.dispatchEvent(new CustomEvent('supabase:status_change', {
-            detail: { status, error }
-          }));
-        });
-
-      window.playersChannel = playersChannel;
     </script>
-
+    <script type="module" crossorigin src="/Bigwar/assets/index-v1.1.17-BgZC04QV.js"></script>
+    <link rel="stylesheet" crossorigin href="/Bigwar/assets/index-v1.1.17-BQZTNQz-.css">
+  </head>
+  <body class="bg-slate-950 text-slate-100 select-none overflow-hidden m-0 p-0">
+    <div id="root"></div>
   </body>
 </html>

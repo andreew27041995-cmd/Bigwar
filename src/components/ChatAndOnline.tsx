@@ -182,11 +182,11 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
     }
   }, [myPrivateMessages, myCleanNick, pmRecipient]);
 
-  // Re-evaluate heartbeat timeout every 3 seconds so disconnected players drop off "В игре" automatically
+  // Re-evaluate heartbeat timeout every 12 seconds so disconnected players drop off "В игре" smoothly without micro-stutter
   useEffect(() => {
     const timer = setInterval(() => {
       setNowTick(Date.now());
-    }, 3000);
+    }, 12000);
     return () => clearInterval(timer);
   }, []);
 
@@ -234,14 +234,25 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
     isPremium: Boolean(heroIsPremium)
   });
 
-  // 2. Add real players from Supabase Realtime whose Heartbeat (lastSeen) is fresh (<15s)
+  // Fast O(1) player lookup dictionary
+  const playersLookupMap = React.useMemo(() => {
+    const map = new Map<string, RealtimePlayer>();
+    if (realtimePlayers && realtimePlayers.length > 0) {
+      realtimePlayers.forEach((p) => {
+        map.set(p.nick.toLowerCase(), p);
+      });
+    }
+    return map;
+  }, [realtimePlayers]);
+
+  // 2. Add real players from Supabase Realtime whose Heartbeat (lastSeen) is fresh (<20s)
   if (realtimePlayers && realtimePlayers.length > 0) {
     realtimePlayers.forEach((rp) => {
       const lowerNick = rp.nick.toLowerCase();
       if (lowerNick === myNick.toLowerCase()) return;
       const isFreshOnline =
         rp.lastSeen !== undefined && rp.lastSeen > 0
-          ? isPlayerOnlineByHeartbeat(rp.isOnline, rp.lastSeen) && nowTick - rp.lastSeen < 15000
+          ? isPlayerOnlineByHeartbeat(rp.isOnline, rp.lastSeen) && nowTick - rp.lastSeen < 20000
           : false;
       if (isFreshOnline) {
         const inPyr = rp.location === 'pyramid' || playersInPyramid.includes(rp.nick);
@@ -267,14 +278,14 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
   const isPlayerVip = (name: string): boolean => {
     const clean = name.replace(/✉️.*для\s*/, '').trim().toLowerCase();
     if (clean === myNick.toLowerCase()) return Boolean(heroIsPremium);
-    const rp = realtimePlayers.find((p) => p.nick.toLowerCase() === clean);
+    const rp = playersLookupMap.get(clean);
     return Boolean(rp?.isPremium && (!rp.premiumUntil || rp.premiumUntil > nowTick));
   };
 
   const getPlayerPyramidTier = (name: string): 1 | 2 | 3 => {
     const clean = name.replace(/✉️.*для\s*/, '').trim().toLowerCase();
     if (clean === myNick.toLowerCase()) return myPyramidTier;
-    const rp = realtimePlayers.find((p) => p.nick.toLowerCase() === clean);
+    const rp = playersLookupMap.get(clean);
     return Math.max(1, Math.min(3, Number(rp?.pyramidTier || rp?.homePyramidTier || 1))) as 1 | 2 | 3;
   };
 
@@ -282,7 +293,7 @@ export const ChatAndOnline: React.FC<ChatAndOnlineProps> = ({
     const clean = name.replace(/✉️.*для\s*/, '').trim();
     const clan = getPlayerClan(clean);
     if (clan) return { tag: clan.tag, emblem: clan.emblem };
-    const rp = realtimePlayers.find((p) => p.nick.toLowerCase() === clean.toLowerCase());
+    const rp = playersLookupMap.get(clean.toLowerCase());
     if (rp && rp.clanTag) {
       return { tag: rp.clanTag, emblem: rp.clanEmblem || '🛡️' };
     }
