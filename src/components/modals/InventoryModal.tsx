@@ -33,6 +33,7 @@ interface InventoryModalProps {
   onSell?: (item: GameItem) => void;
   onQuickSellCommon?: () => void;
   onOpenCreateItem?: () => void;
+  onOpenAltar?: (item?: GameItem) => void;
   onOpenNpcBag?: () => void;
 }
 
@@ -54,6 +55,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   onSell,
   onQuickSellCommon,
   onOpenCreateItem,
+  onOpenAltar,
   onOpenNpcBag
 }) => {
   const [itemToSell, setItemToSell] = useState<GameItem | null>(null);
@@ -389,6 +391,15 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 🤖 Рюкзак NPC
               </button>
             )}
+            {onOpenAltar && (
+              <button
+                onClick={() => onOpenAltar()}
+                className="rounded border border-fuchsia-400 bg-fuchsia-950/90 hover:bg-fuchsia-900 px-2 py-0.5 text-[10px] font-extrabold text-fuchsia-200 cursor-pointer shadow-[0_0_8px_rgba(217,70,239,0.4)]"
+                title="Открыть Алтарь модификации предметов (Классы 1–10, до +50% к статам)"
+              >
+                🔮 Алтарь (+50%)
+              </button>
+            )}
             {onOpenCreateItem && (
               <button
                 onClick={onOpenCreateItem}
@@ -607,6 +618,11 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         <div className="text-xs font-bold flex items-center gap-1.5 flex-wrap" style={{ color: q.color }}>
                           <span>{item.name}</span>
                           <span className="text-[10px] text-amber-400">({item.lvl} ур.)</span>
+                          {Number(item.modificationClass || 0) > 0 && (
+                            <span className="rounded bg-fuchsia-950 border border-fuchsia-400/80 px-1.5 py-0.5 text-[9px] font-black text-fuchsia-200 shadow-[0_0_8px_rgba(217,70,239,0.45)]">
+                              🔮 М{item.modificationClass} (+{Number(item.modificationClass) * 5}%)
+                            </span>
+                          )}
                           {isCustom && (
                             <span className="rounded bg-cyan-950 border border-cyan-500/50 px-1.5 py-0.5 text-[9px] font-bold text-cyan-300">
                               ⚒️ Создано
@@ -747,6 +763,17 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         title={`Отремонтировать за ${REPAIR_COST_GOLD} золота (прочность станет ${maxDur - 1}/${maxDur - 1})`}
                       >
                         🔨 Ремонтировать ({REPAIR_COST_GOLD} 🪙 → {maxDur - 1}/{maxDur - 1})
+                      </button>
+                    )}
+
+                    {!permanentlyBroken && onOpenAltar && (
+                      <button
+                        onClick={() => onOpenAltar(item)}
+                        disabled={isRented}
+                        className="rounded bg-fuchsia-950/90 border border-fuchsia-400/60 px-2.5 py-1.5 text-[10px] font-black text-fuchsia-200 hover:bg-fuchsia-900 active:scale-95 disabled:opacity-30 shadow-[0_0_8px_rgba(217,70,239,0.25)] cursor-pointer"
+                        title="Поместить предмет на Алтарь модификации (повышение всех статов на +5% за класс, до +50%)"
+                      >
+                        🔮 В Алтарь {Number(item.modificationClass || 0) > 0 ? `(М${item.modificationClass})` : ''}
                       </button>
                     )}
 

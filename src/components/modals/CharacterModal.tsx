@@ -46,6 +46,7 @@ interface CharacterModalProps {
   onOpenInventory: () => void;
   onOpenShop?: () => void;
   onOpenCreateItem?: () => void;
+  onOpenAltar?: (item?: GameItem) => void;
   onOpenPremium?: () => void;
   onOpenLeaderboard?: () => void;
   onOpenAchievements?: () => void;
@@ -88,6 +89,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   onOpenInventory,
   onOpenShop,
   onOpenCreateItem,
+  onOpenAltar,
   onOpenPremium,
   onOpenLeaderboard,
   onOpenAchievements,
@@ -1940,9 +1942,16 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           {info.name}
                         </span>
                         {item && (
-                          <span className="shrink-0 rounded bg-slate-950/90 px-1 py-[0.5px] text-[7.5px] font-black text-amber-300 border border-amber-500/30">
-                            {item.lvl} ур.
-                          </span>
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            {Number(item.modificationClass || 0) > 0 && (
+                              <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[7px] font-black text-fuchsia-300 border border-fuchsia-400/60">
+                                М{item.modificationClass}
+                              </span>
+                            )}
+                            <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7.5px] font-black text-amber-300 border border-amber-500/30">
+                              {item.lvl} ур.
+                            </span>
+                          </div>
                         )}
                       </div>
                       {item ? (
@@ -2402,6 +2411,14 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       className="rounded-lg bg-cyan-900/50 p-2 text-[10px] font-extrabold text-cyan-200 border border-cyan-400/70 hover:bg-cyan-800/70 active:scale-95"
                     >
                       ⚒️ Создать оружие
+                    </button>
+                  )}
+                  {onOpenAltar && (
+                    <button
+                      onClick={() => onOpenAltar()}
+                      className="rounded-lg bg-fuchsia-950/80 p-2 text-[10px] font-extrabold text-fuchsia-200 border border-fuchsia-400/70 hover:bg-fuchsia-900/80 active:scale-95 shadow-[0_0_10px_rgba(217,70,239,0.25)]"
+                    >
+                      🔮 Алтарь (+50%)
                     </button>
                   )}
                   {onOpenLeaderboard && (

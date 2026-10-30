@@ -196,6 +196,19 @@ export interface GameItem {
   isElixirLot?: boolean;
   elixirType?: 'hp' | 'en' | 'exp';
   elixirQty?: number;
+  // Modification Altar Fields (Classes 1..10, +5% per class up to +50%)
+  modificationClass?: number;
+  baseStatsBeforeMod?: {
+    dmg: number;
+    hp: number;
+    dodgeBonus?: number;
+    energyBonus?: number;
+    goldBonusPct?: number;
+    expBonusPct?: number;
+    str?: number;
+    agi?: number;
+    vit?: number;
+  };
 }
 
 export type ClanRole = 'leader' | 'officer' | 'warrior' | 'recruit' | 'member';
@@ -627,7 +640,7 @@ export interface TradeProtocolEntry {
   id: string;
   timestamp: number;
   dateStr: string;
-  type: 'transfer_out' | 'transfer_in' | 'rent_out' | 'rent_return' | 'auction_list' | 'auction_sell' | 'auction_buy' | 'gold_transfer' | 'purchase' | 'referral_bonus' | 'forge' | 'clan_deposit' | 'clan_rent' | 'clan_return' | 'clan_recall';
+  type: 'transfer_out' | 'transfer_in' | 'rent_out' | 'rent_return' | 'auction_list' | 'auction_sell' | 'auction_buy' | 'gold_transfer' | 'purchase' | 'referral_bonus' | 'forge' | 'altar_modify' | 'clan_deposit' | 'clan_rent' | 'clan_return' | 'clan_recall';
   description: string;
   itemId?: string;
   reclaimed?: boolean;

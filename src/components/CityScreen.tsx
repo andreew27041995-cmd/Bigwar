@@ -25,6 +25,7 @@ interface CityScreenProps {
   onOpenAdmin: () => void;
   onOpenBank: () => void;
   onOpenShop?: () => void;
+  onOpenAltar?: () => void;
   onUsePotion: (type: 'hp' | 'en' | 'exp') => void;
   onOpenLeaderboard?: () => void;
   onOpenDailyReward?: () => void;
@@ -63,6 +64,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
   onOpenAdmin,
   onOpenBank,
   onOpenShop,
+  onOpenAltar,
   onOpenLeaderboard,
   onOpenDailyReward,
   onOpenDailyQuests,
@@ -506,8 +508,8 @@ export const CityScreen: React.FC<CityScreenProps> = ({
           </div>
         </button>
 
-        {/* 2. Core Player & City Facilities: Character, Shop, Bank */}
-        <div className="grid grid-cols-3 gap-1.5">
+        {/* 2. Core Player & City Facilities: Character, Shop, Altar, Bank */}
+        <div className="grid grid-cols-4 gap-1.5">
           {/* Character / Bag */}
           <button
             data-tutorial="btn-character"
@@ -536,6 +538,20 @@ export const CityScreen: React.FC<CityScreenProps> = ({
               <div className="text-base leading-none mb-0.5">🛒</div>
               <span className="text-[10px] font-black text-emerald-200 group-hover:text-emerald-100">Магазин</span>
               <span className="text-[7.5px] text-emerald-300/60 leading-none">Аукцион, крафт</span>
+            </button>
+          )}
+
+          {/* Modification Altar */}
+          {onOpenAltar && (
+            <button
+              data-tutorial="btn-altar"
+              onClick={onOpenAltar}
+              className="group relative flex flex-col items-center justify-center rounded-lg border border-fuchsia-500/80 bg-gradient-to-b from-fuchsia-950/90 via-slate-900/95 to-slate-950 px-1 py-2 text-center shadow-[0_0_12px_rgba(217,70,239,0.25)] transition-all active:scale-95 hover:border-fuchsia-400"
+              title="Алтарь модификации предметов (Классы 1–10, до +50% к статам)"
+            >
+              <div className="text-base leading-none mb-0.5">🔮</div>
+              <span className="text-[10px] font-black text-fuchsia-200 group-hover:text-fuchsia-100">Алтарь</span>
+              <span className="text-[7.5px] text-fuchsia-300/70 leading-none">Модиф. +50%</span>
             </button>
           )}
 

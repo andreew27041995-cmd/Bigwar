@@ -127,6 +127,7 @@ import { ClanPyramidModal } from './components/modals/ClanPyramidModal';
 import { ForumModal } from './components/modals/ForumModal';
 import { TutorialModal } from './components/modals/TutorialModal';
 import { AchievementsModal } from './components/modals/AchievementsModal';
+import { ModificationAltarModal } from './components/modals/ModificationAltarModal';
 import {
   evaluatePlayerAchievements,
   EvaluatedAchievement
@@ -287,7 +288,9 @@ export default function App() {
     | 'forum'
     | 'tutorial'
     | 'achievements'
+    | 'altar'
   >(null);
+  const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements'>('profile');
   const [dailyModalInitialTab, setDailyModalInitialTab] = useState<'quests' | 'login'>('quests');
   const [adminModalInitialTab, setAdminModalInitialTab] = useState<'ai' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip'>('ai');
@@ -9023,6 +9026,10 @@ export default function App() {
               }}
               onEnterPyramid={handleEnterPyramid}
               onOpenShop={() => setActiveModal('shop')}
+              onOpenAltar={() => {
+                setAltarInitialItemId(null);
+                setActiveModal('altar');
+              }}
               onOpenDailyReward={() => {
                 setDailyModalInitialTab('login');
                 setActiveModal('dailyReward');
@@ -9162,7 +9169,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.15</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.16</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">30.10.2026</strong></span>
         </div>
@@ -9215,6 +9222,10 @@ export default function App() {
             onOpenDirectTransfer={() => setActiveModal('directTransfer')}
             onOpenInventory={() => setActiveModal('inventory')}
             onOpenShop={() => setActiveModal('shop')}
+            onOpenAltar={(item) => {
+              setAltarInitialItemId(item?.id || null);
+              setActiveModal('altar');
+            }}
             onOpenCreateItem={() => setActiveModal('createItem')}
             onOpenPremium={() => setActiveModal('premium')}
             onOpenLeaderboard={() => setActiveModal('leaderboard')}
@@ -9242,6 +9253,10 @@ export default function App() {
             onRepairItem={handleRepairItem}
             onRepair={handleRepairItem}
             onRepairAll={handleRepairAllInventoryItems}
+            onOpenAltar={(item) => {
+              setAltarInitialItemId(item?.id || null);
+              setActiveModal('altar');
+            }}
             onOpenCreateItem={() => setActiveModal('createItem')}
             onOpenNpcBag={() => {
               setCharacterModalInitialTab('npcBag');
@@ -9864,6 +9879,164 @@ export default function App() {
             onClaimDailyReward={handleClaimDailyReward}
             onClaimQuestChest={handleClaimQuestChest}
             onClaimGrandCrystalChest={handleClaimGrandCrystalChest}
+          />
+        )}
+
+        {/* Modification Altar Modal (10 Classes, +5% per class up to +50%, Shop Item Sacrifice) */}
+        {activeModal === 'altar' && (
+          <ModificationAltarModal
+            hero={hero}
+            equipped={equipped}
+            inventory={inventory}
+            shopCatalog={shopCatalog}
+            initialTargetItemId={altarInitialItemId}
+            onClose={() => {
+              setAltarInitialItemId(null);
+              setActiveModal(null);
+            }}
+            showToast={showToast}
+            onQuickBuyShopSacrifice={(template) => {
+              const curHero = heroRef.current || hero;
+              const curInv = inventoryRef.current || inventory;
+              const itemPrice = Math.max(0, Number(template.price || 0));
+              const curGold = Number(curHero.gold || 0);
+              if (curGold < itemPrice) {
+                showToast(`❌ Недостаточно золота! Требуется ${itemPrice} 🪙 (у вас ${curGold} 🪙).`);
+                return null;
+              }
+              const isVip = Boolean(
+                curHero.isPremium && curHero.premiumUntil && curHero.premiumUntil > Date.now()
+              );
+              const effectiveBagCap =
+                Math.max(20, Number(curHero.bagCapacity || 100)) + (isVip ? 50 : 0);
+              if (curInv.length >= effectiveBagCap) {
+                showToast('🎒 Сумка заполнена! Освободите место для материала.');
+                return null;
+              }
+              const newItem = createGameItemFromShopItem(template);
+              const newGold = Math.max(0, curGold - itemPrice);
+              const nextInv = [newItem, ...curInv];
+              const nextHero: HeroState = {
+                ...curHero,
+                gold: newGold
+              };
+              heroRef.current = nextHero;
+              inventoryRef.current = nextInv;
+              lastSyncedFinancialsRef.current = {
+                ...lastSyncedFinancialsRef.current,
+                gold: newGold,
+                updatedAt: Date.now()
+              };
+              setHero(nextHero);
+              setInventory(nextInv);
+              saveGameToStorage({ hero: nextHero, inventory: nextInv });
+              if (currentUser) {
+                flushPlayerUpdates(currentUser, {
+                  gold: newGold,
+                  inventory: nextInv
+                });
+              }
+              playCoinSound();
+              return newItem;
+            }}
+            onExecuteModification={({
+              targetItemId,
+              isEquippedSlot,
+              sacrificeItemIds,
+              succeeded,
+              updatedItem,
+              chancePct,
+              rolledPct
+            }) => {
+              const curHero = heroRef.current || hero;
+              const curInv = inventoryRef.current || inventory;
+              const curEq = equippedRef.current || equipped;
+
+              const sacrificeSet = new Set(sacrificeItemIds);
+              // Burn sacrifice items unconditionally (both on success and failure)
+              let nextInv = curInv.filter((it) => !sacrificeSet.has(it.id));
+              let nextEq = { ...curEq };
+
+              if (succeeded && updatedItem) {
+                if (isEquippedSlot && nextEq[isEquippedSlot]?.id === targetItemId) {
+                  nextEq = {
+                    ...nextEq,
+                    [isEquippedSlot]: updatedItem
+                  };
+                } else {
+                  nextInv = nextInv.map((it) => (it.id === targetItemId ? updatedItem : it));
+                }
+                playLevelUpSound();
+              } else {
+                playAttackSound();
+              }
+
+              const nextHero = recalcGear(nextEq, curHero);
+              heroRef.current = nextHero;
+              inventoryRef.current = nextInv;
+              equippedRef.current = nextEq;
+
+              setHero(nextHero);
+              setInventory(nextInv);
+              setEquipped(nextEq);
+
+              const now = Date.now();
+              const dateStr = new Date(now).toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+              const targetRefItem =
+                updatedItem ||
+                (isEquippedSlot ? curEq[isEquippedSlot] : curInv.find((i) => i.id === targetItemId));
+              const modEntry: TradeProtocolEntry = {
+                id: `altar_${now}_${Math.random().toString(36).slice(2, 6)}`,
+                timestamp: now,
+                dateStr,
+                type: 'altar_modify',
+                description: succeeded && updatedItem
+                  ? `🔮 Алтарь Модификации (УСПЕХ — шанс ${chancePct}%, выпало ${rolledPct}%): «${updatedItem.name}» улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)! Сожжено материалов: ${sacrificeItemIds.length} шт.`
+                  : `🔥 Алтарь Модификации (НЕУДАЧА — шанс ${chancePct}%, выпало ${rolledPct}%): модификация «${targetRefItem?.name || 'Предмет'}» сорвалась. Жертвенные материалы (${sacrificeItemIds.length} шт.) сгорели.`,
+                itemSnapshot: targetRefItem
+                  ? {
+                      name: targetRefItem.name,
+                      icon: targetRefItem.icon,
+                      quality: targetRefItem.quality
+                    }
+                  : undefined
+              };
+              const nextProtocol = [modEntry, ...(tradeProtocolRef.current || tradeProtocol)].slice(
+                0,
+                100
+              );
+              tradeProtocolRef.current = nextProtocol;
+              setTradeProtocol(nextProtocol);
+
+              saveGameToStorage({
+                hero: nextHero,
+                inventory: nextInv,
+                equipped: nextEq,
+                tradeProtocol: nextProtocol
+              });
+
+              if (currentUser) {
+                flushPlayerUpdates(currentUser, {
+                  inventory: nextInv,
+                  equipped: nextEq,
+                  hp: nextHero.hp,
+                  max_hp: nextHero.maxHp,
+                  energy: nextHero.energy,
+                  max_energy: nextHero.maxEnergy,
+                  trade_protocol: nextProtocol
+                });
+              }
+
+              addCombatLog(
+                succeeded && updatedItem
+                  ? `🔮 Алтарь Модификации: «${updatedItem.name}» успешно улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)!`
+                  : `🔥 Алтарь Модификации: неудача (${rolledPct}% при шансе ${chancePct}%) — жертвенные материалы (${sacrificeItemIds.length} шт.) сгорели.`,
+                succeeded ? 'loot' : 'pvp'
+              );
+            }}
           />
         )}
 
