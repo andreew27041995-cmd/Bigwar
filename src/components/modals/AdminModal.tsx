@@ -314,6 +314,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [selectedShopItemToGrant, setSelectedShopItemToGrant] = useState<string>('shop_weapon_2_new');
   const [selectedSkinToGrant, setSelectedSkinToGrant] = useState<string>('');
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
+  const [playerOriginFilter, setPlayerOriginFilter] = useState<'all' | 'real' | 'bot'>('all');
 
   //Additive bonus fields
   const [addGoldDelta, setAddGoldDelta] = useState('');
@@ -3023,14 +3024,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     showToast(`📩 Подарок отправлен на почту игроку ${recipient}!`);
   };
 
-  // Build combined player list
+  // Build combined player list with explicit separation of Real registered players vs Mirror bots
   const combinedPlayersList = React.useMemo(() => {
     const map = new Map<string, any>();
+    const now = Date.now();
+
     dbPlayers.forEach((p) => {
       const nick = String(p.name || p.nick || '').trim();
       if (!nick) return;
-      const isOnline = Boolean(p.is_online) && Date.now() - Number(p.last_seen ?? 0) < 18000;
-      const isPrem = Boolean(p.is_premium) && Number(p.premium_until ?? 0) > Date.now();
+      const rawLastSeen = Number(p.last_seen ?? 0);
+      const isOnline = Boolean(p.is_online) && (rawLastSeen > 0 ? now - rawLastSeen < 20000 : false);
+      const isPrem = Boolean(p.is_premium) && Number(p.premium_until ?? 0) > now;
       const adminCode = Number(
         p.admin_level ?? p.is_admin ?? p.isAdmin ?? (p.role === 'admin' ? 1 : p.role === 'mod' ? 2 : 0)
       );
@@ -3040,6 +3044,18 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           : adminCode === 2 || p.role === 'mod'
           ? 'mod'
           : 'regular';
+
+      const rawAuth = String(p.auth_provider || '').trim().toLowerCase();
+      const rawEmail = String(p.real_email || p.email || '').trim().toLowerCase();
+      const regSource =
+        rawAuth === 'telegram' || rawEmail.includes('@telegram') || p.telegram_username
+          ? 'Telegram'
+          : rawAuth === 'google' || rawEmail.includes('@gmail.com')
+          ? 'Google'
+          : rawAuth === 'facebook'
+          ? 'Facebook'
+          : 'Логин / Пароль';
+
       map.set(nick.toLowerCase(), {
         ...p,
         nick,
@@ -3050,9 +3066,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         isOnline,
         isPremium: isPrem,
         is_admin: adminCode,
-        role: roleVal
+        role: roleVal,
+        isReal: true,
+        playerType: 'real' as const,
+        registrationSource: regSource,
+        realEmail: rawEmail || undefined
       });
     });
+
     onlinePlayers.forEach((p) => {
       const key = p.nick.trim().toLowerCase();
       if (!map.has(key)) {
@@ -3069,12 +3090,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           isOnline: Boolean(p.isOnline),
           isPremium: Boolean(p.isPremium),
           is_admin: adminCode,
-          role: adminCode === 1 ? 'admin' : adminCode === 2 ? 'mod' : p.role || 'regular'
+          role: adminCode === 1 ? 'admin' : adminCode === 2 ? 'mod' : p.role || 'regular',
+          isReal: false,
+          playerType: 'bot' as const,
+          registrationSource: 'Зеркальный (Бот / Имитация)',
+          realEmail: undefined
         });
       }
     });
+
     return Array.from(map.values());
   }, [dbPlayers, onlinePlayers]);
+
+  const realPlayersCount = React.useMemo(() => combinedPlayersList.filter((p) => p.isReal).length, [combinedPlayersList]);
+  const realOnlineCount = React.useMemo(() => combinedPlayersList.filter((p) => p.isReal && p.isOnline).length, [combinedPlayersList]);
+  const botPlayersCount = React.useMemo(() => combinedPlayersList.filter((p) => !p.isReal).length, [combinedPlayersList]);
+  const botOnlineCount = React.useMemo(() => combinedPlayersList.filter((p) => !p.isReal && p.isOnline).length, [combinedPlayersList]);
 
   const selectedVipActive =
     selectedPlayerStats &&
@@ -3615,13 +3646,59 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 </div>
 
-                <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                {/* Real vs Mirror (Bot) Origin Filter Bar */}
+                <div className="flex flex-wrap items-center gap-1.5 mb-2 pb-1 border-b border-slate-800 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setPlayerOriginFilter('all')}
+                    className={`rounded px-2 py-1 font-bold transition-all cursor-pointer ${
+                      playerOriginFilter === 'all'
+                        ? 'bg-emerald-500 text-slate-950 font-black'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    🌐 Все ({combinedPlayersList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlayerOriginFilter('real')}
+                    className={`rounded px-2 py-1 font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      playerOriginFilter === 'real'
+                        ? 'bg-cyan-500 text-slate-950 font-black shadow-[0_0_8px_rgba(6,182,212,0.5)]'
+                        : 'bg-cyan-950/80 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-900/60'
+                    }`}
+                  >
+                    <span>👤 Реальные люди (Регистрация)</span>
+                    <span className="rounded bg-black/40 px-1 py-0.2 text-[9px] text-cyan-300 font-mono font-black">
+                      {realPlayersCount} [Онлайн: {realOnlineCount}]
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPlayerOriginFilter('bot')}
+                    className={`rounded px-2 py-1 font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                      playerOriginFilter === 'bot'
+                        ? 'bg-purple-500 text-slate-950 font-black shadow-[0_0_8px_rgba(168,85,247,0.5)]'
+                        : 'bg-purple-950/80 border border-purple-500/40 text-purple-200 hover:bg-purple-900/60'
+                    }`}
+                  >
+                    <span>🪞 Зеркальные / Боты (Имитация)</span>
+                    <span className="rounded bg-black/40 px-1 py-0.2 text-[9px] text-purple-300 font-mono font-black">
+                      {botPlayersCount} [Онлайн: {botOnlineCount}]
+                    </span>
+                  </button>
+                </div>
+
+                <div className="max-h-48 space-y-1 overflow-y-auto pr-1">
                   {combinedPlayersList
-                    .filter((p) =>
-                      !playerSearchQuery.trim()
-                        ? true
-                        : p.nick.toLowerCase().includes(playerSearchQuery.trim().toLowerCase())
-                    )
+                    .filter((p) => {
+                      if (playerOriginFilter === 'real' && !p.isReal) return false;
+                      if (playerOriginFilter === 'bot' && p.isReal) return false;
+                      if (playerSearchQuery.trim() && !p.nick.toLowerCase().includes(playerSearchQuery.trim().toLowerCase())) {
+                        return false;
+                      }
+                      return true;
+                    })
                     .map((p) => {
                       const isSelected =
                         targetPlayerNick.trim().toLowerCase() === p.nick.toLowerCase();
@@ -3670,6 +3747,32 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                 </>
                               );
                             })()}
+                            {/* Real Registered Person vs Mirror Bot Badge */}
+                            {p.isReal ? (
+                              <span
+                                className="rounded bg-cyan-950/90 border border-cyan-400/60 px-1.5 py-0.5 text-[8.5px] font-black text-cyan-300 shadow"
+                                title={`Реальный человек из базы данных Supabase (${p.registrationSource || 'Регистрация'})${p.realEmail ? ` Email: ${p.realEmail}` : ''}`}
+                              >
+                                👤 Реальный ({p.registrationSource || 'Регистрация'})
+                              </span>
+                            ) : (
+                              <span
+                                className="rounded bg-purple-950/90 border border-purple-400/60 px-1.5 py-0.5 text-[8.5px] font-black text-purple-300 shadow"
+                                title="Зеркальный персонаж (Имитация / Бот, в БД не существует)"
+                              >
+                                🪞 Зеркальный (Бот)
+                              </span>
+                            )}
+                            {p.isOnline ? (
+                              <span className="rounded bg-emerald-950/90 border border-emerald-500/60 px-1.5 py-0.5 text-[8.5px] font-black text-emerald-300 flex items-center gap-1">
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                {p.isReal ? 'Онлайн' : 'В игре'}
+                              </span>
+                            ) : (
+                              <span className="rounded bg-slate-900 border border-slate-700 px-1.5 py-0.5 text-[8px] font-medium text-slate-400">
+                                Оффлайн
+                              </span>
+                            )}
                             <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold text-purple-300">
                               Ур.{p.lvl}
                             </span>
@@ -15454,6 +15557,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               onRefreshBots={() => {
                 if (onRefreshOnlinePlayers) onRefreshOnlinePlayers();
               }}
+              dbPlayers={dbPlayers}
             />
           )}
             </>

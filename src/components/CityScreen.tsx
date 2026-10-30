@@ -118,7 +118,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
     if (!isRegenNeeded) return;
     const timer = setInterval(() => {
       setRegenNowMs(Date.now());
-    }, 150);
+    }, 1000);
     return () => clearInterval(timer);
   }, [isRegenNeeded, regenStepMs]);
 

@@ -234,7 +234,7 @@ export const PyramidScreen: React.FC<PyramidScreenProps> = ({
         });
         return next;
       });
-    }, 4500);
+    }, 20000);
 
     return () => clearInterval(wanderTimer);
   }, [activePyramidNpcs]);

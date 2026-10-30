@@ -15,12 +15,14 @@ interface AdminBotsTabProps {
   showToast: (text: string) => void;
   onSendChatMessage?: (msg: ChatMessage) => void;
   onRefreshBots?: () => void;
+  dbPlayers?: any[];
 }
 
 export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
   showToast,
   onSendChatMessage,
-  onRefreshBots
+  onRefreshBots,
+  dbPlayers = []
 }) => {
   const [config, setConfig] = useState<BotSimulationConfig>(() => getBotSimulationConfig());
   const [runtimeBots, setRuntimeBots] = useState<BotCharacter[]>(() => getRuntimeBots());
@@ -30,6 +32,53 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
   const [editingText, setEditingText] = useState('');
   const [botFilterLocation, setBotFilterLocation] = useState<'all' | 'pyramid' | 'city'>('all');
   const [botFilterTier, setBotFilterTier] = useState<'all' | 1 | 2 | 3>('all');
+  const [rosterViewMode, setRosterViewMode] = useState<'all' | 'real' | 'bots'>('all');
+
+  const realPlayers = useMemo(() => {
+    if (!Array.isArray(dbPlayers)) return [];
+    const now = Date.now();
+    return dbPlayers
+      .map((p) => {
+        const nick = String(p.name || p.nick || '').trim();
+        if (!nick) return null;
+        const rawLastSeen = Number(p.last_seen ?? 0);
+        const isOnline = Boolean(p.is_online) && (rawLastSeen > 0 ? now - rawLastSeen < 20000 : false);
+        const rawAuth = String(p.auth_provider || '').trim().toLowerCase();
+        const rawEmail = String(p.real_email || p.email || '').trim().toLowerCase();
+        const regSource =
+          rawAuth === 'telegram' || rawEmail.includes('@telegram') || p.telegram_username
+            ? 'Telegram'
+            : rawAuth === 'google' || rawEmail.includes('@gmail.com')
+            ? 'Google'
+            : rawAuth === 'facebook'
+            ? 'Facebook'
+            : 'Логин / Пароль';
+
+        return {
+          id: String(p.id || nick),
+          nick,
+          lvl: Number(p.lvl ?? 1),
+          avatar: p.avatar || '🧙‍♂️',
+          isOnline,
+          registrationSource: regSource,
+          realEmail: rawEmail || undefined,
+          gold: Number(p.gold ?? 0),
+          crystals: Number(p.crystals ?? 0),
+          location: (p.location || 'city') as 'city' | 'pyramid',
+          pyramidTier: Number(p.pyramid_tier ?? p.pyramidTier ?? 1) as 1 | 2 | 3,
+          row: Number(p.row ?? 9),
+          col: Number(p.col ?? 1),
+          isPremium: Boolean(p.is_premium),
+          clanTag: p.clan_tag || p.clanTag,
+          isReal: true
+        };
+      })
+      .filter(Boolean) as unknown as (BotCharacter & { isReal: boolean; registrationSource: string; realEmail?: string })[];
+  }, [dbPlayers]);
+
+  const realOnlineCount = useMemo(() => {
+    return realPlayers.filter((p) => p.isOnline).length;
+  }, [realPlayers]);
 
   const onlineBotsCount = useMemo(() => {
     return runtimeBots.filter((b) => b.isOnline).length;
@@ -41,13 +90,28 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
     return config.customPhrases.filter((p) => p.toLowerCase().includes(q));
   }, [config.customPhrases, phraseSearch]);
 
-  const filteredBots = useMemo(() => {
-    return runtimeBots.filter((b) => {
+  const combinedRoster = useMemo(() => {
+    const realTagged = realPlayers.map((p) => ({ ...p, isReal: true }));
+    const botsTagged = runtimeBots.map((b) => ({
+      ...b,
+      isReal: false,
+      registrationSource: 'Зеркальный (Бот / Имитация)'
+    }));
+    let list: any[] = [];
+    if (rosterViewMode === 'real') {
+      list = realTagged;
+    } else if (rosterViewMode === 'bots') {
+      list = botsTagged;
+    } else {
+      list = [...realTagged, ...botsTagged];
+    }
+
+    return list.filter((b) => {
       if (botFilterLocation !== 'all' && b.location !== botFilterLocation) return false;
       if (botFilterTier !== 'all' && b.pyramidTier !== botFilterTier) return false;
       return true;
     });
-  }, [runtimeBots, botFilterLocation, botFilterTier]);
+  }, [realPlayers, runtimeBots, rosterViewMode, botFilterLocation, botFilterTier]);
 
   const handleToggleSimulation = (enabled: boolean) => {
     const nextCfg = { ...config, enabled };
@@ -169,14 +233,42 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
   return (
     <div className="space-y-3.5 text-xs">
       {/* Top Overview Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+        <div className="rounded-xl border border-sky-500/50 bg-slate-900/90 p-2.5 shadow">
+          <div className="text-[10px] font-black uppercase tracking-wider text-sky-400">
+            👤 Реальные люди (Регистрация)
+          </div>
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-sm font-black text-white">
+              {realOnlineCount} <span className="text-[11px] text-slate-400">онлайн</span>
+            </span>
+            <span className="text-[10px] font-black text-sky-300">
+              Всего: {realPlayers.length}
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-purple-500/50 bg-slate-900/90 p-2.5 shadow">
+          <div className="text-[10px] font-black uppercase tracking-wider text-purple-400">
+            🪞 Зеркальные (Боты)
+          </div>
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-sm font-black text-white">
+              {onlineBotsCount} <span className="text-[11px] text-slate-400">/ {config.targetOnlineCount} цель</span>
+            </span>
+            <span className="text-[10px] font-black text-purple-300">
+              База: {runtimeBots.length}
+            </span>
+          </div>
+        </div>
+
         <div className="rounded-xl border border-cyan-500/40 bg-slate-900/90 p-2.5 shadow">
           <div className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
             Имитация онлайна
           </div>
           <div className="mt-1 flex items-center justify-between">
-            <span className="text-sm font-black text-white">
-              {config.enabled ? '🟢 Активна' : '🔴 Выключена'}
+            <span className="text-xs font-black text-white">
+              {config.enabled ? '🟢 Активна' : '🔴 Выкл'}
             </span>
             <button
               type="button"
@@ -187,32 +279,18 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
                   : 'bg-emerald-600 border border-emerald-400 text-slate-950 hover:bg-emerald-500'
               }`}
             >
-              {config.enabled ? 'Выключить' : 'Включить'}
+              {config.enabled ? 'Выкл' : 'Вкл'}
             </button>
           </div>
         </div>
 
-        <div className="rounded-xl border border-emerald-500/40 bg-slate-900/90 p-2.5 shadow">
-          <div className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
-            Ботов «В игре»
-          </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-sm font-black text-white">
-              {onlineBotsCount} <span className="text-[11px] text-slate-400">/ {config.targetOnlineCount} цель</span>
-            </span>
-            <span className="text-[10px] font-black text-emerald-300">
-              База: {runtimeBots.length}
-            </span>
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-purple-500/40 bg-slate-900/90 p-2.5 shadow">
-          <div className="text-[10px] font-black uppercase tracking-wider text-purple-400">
+        <div className="rounded-xl border border-indigo-500/40 bg-slate-900/90 p-2.5 shadow">
+          <div className="text-[10px] font-black uppercase tracking-wider text-indigo-400">
             Авто-чат ботов
           </div>
           <div className="mt-1 flex items-center justify-between">
-            <span className="text-sm font-black text-white">
-              {config.chatEnabled ? '💬 Включен' : '🔇 Пауза'}
+            <span className="text-xs font-black text-white">
+              {config.chatEnabled ? '💬 Вкл' : '🔇 Пауза'}
             </span>
             <button
               type="button"
@@ -220,7 +298,7 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
               className={`rounded px-2 py-1 text-[9.5px] font-black transition-all cursor-pointer ${
                 config.chatEnabled
                   ? 'bg-rose-900/80 border border-rose-500/60 text-rose-200 hover:bg-rose-800'
-                  : 'bg-purple-600 border border-purple-400 text-white hover:bg-purple-500'
+                  : 'bg-indigo-600 border border-indigo-400 text-white hover:bg-indigo-500'
               }`}
             >
               {config.chatEnabled ? 'Пауза' : 'Пуск'}
@@ -228,13 +306,13 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
           </div>
         </div>
 
-        <div className="rounded-xl border border-amber-500/40 bg-slate-900/90 p-2.5 shadow">
+        <div className="rounded-xl border border-amber-500/40 bg-slate-900/90 p-2.5 shadow col-span-2 sm:col-span-1">
           <div className="text-[10px] font-black uppercase tracking-wider text-amber-400">
-            Пул реплик чата
+            Пул фраз чата
           </div>
           <div className="mt-1 flex items-center justify-between">
             <span className="text-sm font-black text-amber-300">
-              {config.customPhrases.length} фраз
+              {config.customPhrases.length}
             </span>
             <button
               type="button"
@@ -481,13 +559,48 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
       <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3 space-y-2.5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-black text-emerald-400">
-              👥 Персонажи-боты ({runtimeBots.length} всего, {onlineBotsCount} онлайн)
+            <span className="text-sm font-black text-amber-400">
+              👥 Игроки и Боты
             </span>
+            <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRosterViewMode('all')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                  rosterViewMode === 'all'
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Все ({combinedRoster.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRosterViewMode('real')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                  rosterViewMode === 'real'
+                    ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                👤 Реальные ({realOnlineCount}/{realPlayers.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setRosterViewMode('bots')}
+                className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                  rosterViewMode === 'bots'
+                    ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                🪞 Зеркальные ({onlineBotsCount}/{runtimeBots.length})
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-slate-400">Фильтр:</span>
+            <span className="text-[10px] text-slate-400">Локация:</span>
             <select
               value={botFilterLocation}
               onChange={(e) => setBotFilterLocation(e.target.value as any)}
@@ -510,62 +623,89 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
           </div>
         </div>
 
-        {/* Bots Grid */}
+        {/* Players / Bots Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto pr-1">
-          {filteredBots.map((bot) => (
-            <div
-              key={bot.id}
-              className={`rounded-lg border p-2 text-[10.5px] transition-all flex items-center justify-between gap-2 ${
-                bot.isOnline
-                  ? 'border-emerald-500/50 bg-emerald-950/20'
-                  : 'border-slate-800/80 bg-slate-950/60 opacity-60'
-              }`}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-base">
-                  {bot.avatar}
-                </span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1 flex-wrap">
-                    <span
-                      className={`h-1.5 w-1.5 rounded-full ${
-                        bot.isOnline ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-slate-600'
-                      }`}
-                    />
-                    <span className="font-black text-white truncate">{bot.nick}</span>
-                    <span className="rounded bg-slate-800 px-1 text-[8.5px] font-bold text-amber-300">
-                      {bot.lvl} ур.
-                    </span>
-                    {bot.isPremium && (
-                      <span className="text-[8.5px] text-yellow-400">👑VIP</span>
-                    )}
-                    {bot.clanTag && (
-                      <span className="rounded bg-amber-950 border border-amber-500/40 px-1 text-[7.5px] font-black text-amber-300">
-                        [{bot.clanTag}]
+          {combinedRoster.length === 0 ? (
+            <div className="col-span-full py-8 text-center text-slate-500 text-xs">
+              Нет персонажей под выбранный фильтр
+            </div>
+          ) : (
+            combinedRoster.map((item: any) => (
+              <div
+                key={item.id}
+                className={`rounded-lg border p-2 text-[10.5px] transition-all flex items-center justify-between gap-2 ${
+                  item.isReal
+                    ? item.isOnline
+                      ? 'border-sky-500/50 bg-sky-950/20'
+                      : 'border-slate-800/80 bg-slate-950/60 opacity-70'
+                    : item.isOnline
+                    ? 'border-purple-500/40 bg-purple-950/20'
+                    : 'border-slate-800/60 bg-slate-950/40 opacity-50'
+                }`}
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 text-base">
+                    {item.avatar || '🧙‍♂️'}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${
+                          item.isOnline
+                            ? item.isReal
+                              ? 'bg-sky-400 shadow-[0_0_6px_#38bdf8]'
+                              : 'bg-emerald-400 shadow-[0_0_6px_#34d399]'
+                            : 'bg-slate-600'
+                        }`}
+                      />
+                      <span className="font-black text-white truncate">{item.nick}</span>
+                      <span className="rounded bg-slate-800 px-1 text-[8.5px] font-bold text-amber-300">
+                        {item.lvl} ур.
                       </span>
-                    )}
-                  </div>
-                  <div className="text-[9px] text-slate-400 mt-0.5">
-                    {bot.location === 'pyramid'
-                      ? `🏛️ Пирамида ${bot.pyramidTier} [Ряд ${bot.row}, Кол ${bot.col}]`
-                      : '🏙️ Город Луксор'}
+                      {item.isPremium && (
+                        <span className="text-[8.5px] text-yellow-400">👑VIP</span>
+                      )}
+                      {item.clanTag && (
+                        <span className="rounded bg-amber-950 border border-amber-500/40 px-1 text-[7.5px] font-black text-amber-300">
+                          [{item.clanTag}]
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      {item.isReal ? (
+                        <span className="rounded bg-sky-950/90 border border-sky-500/40 px-1 py-0.2 text-[8px] font-bold text-sky-300">
+                          👤 {item.registrationSource || 'Регистрация'}
+                        </span>
+                      ) : (
+                        <span className="rounded bg-purple-950/90 border border-purple-500/40 px-1 py-0.2 text-[8px] font-bold text-purple-300">
+                          🪞 Зеркальный (Бот)
+                        </span>
+                      )}
+                      <span className="text-[9px] text-slate-400">
+                        {item.location === 'pyramid'
+                          ? `🏛️ Пирамида ${item.pyramidTier ?? 1} [${item.row ?? 9}, ${item.col ?? 1}]`
+                          : '🏙️ Город'}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div className="text-right shrink-0">
-                <span
-                  className={`rounded px-1.5 py-0.5 text-[8.5px] font-black ${
-                    bot.isOnline
-                      ? 'bg-emerald-900/80 border border-emerald-500/50 text-emerald-200'
-                      : 'bg-slate-900 border border-slate-800 text-slate-500'
-                  }`}
-                >
-                  {bot.isOnline ? 'В сети' : 'Оффлайн'}
-                </span>
+                <div className="text-right shrink-0">
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[8.5px] font-black ${
+                      item.isOnline
+                        ? item.isReal
+                          ? 'bg-sky-900/80 border border-sky-500/50 text-sky-200'
+                          : 'bg-purple-900/80 border border-purple-500/50 text-purple-200'
+                        : 'bg-slate-900 border border-slate-800 text-slate-500'
+                    }`}
+                  >
+                    {item.isOnline ? 'В сети' : 'Оффлайн'}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
     </div>

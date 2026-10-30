@@ -200,6 +200,32 @@ import {
 const ROWS_COUNT = 10;
 const MOVE_DELAY = 700;
 
+// Isolated self-ticking ServerClock component to prevent re-rendering the root App component every 1 second
+const ServerClock = React.memo(() => {
+  const [timeStr, setTimeStr] = useState(() =>
+    new Date().toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  );
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeStr(
+        new Date().toLocaleTimeString('ru-RU', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        })
+      );
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return <span>🕒 {timeStr}</span>;
+});
+
 export default function App() {
   const currentUserNick = getCurrentUserNick();
   const [currentUser, setCurrentUser] = useState<string | null>(currentUserNick);
@@ -433,14 +459,6 @@ export default function App() {
     return [...realtimePlayers, ...filteredBots];
   }, [realtimePlayers, simulatedBots, botSimulationConfig.enabled]);
 
-  // Server clock
-  const [serverTimeStr, setServerTimeStr] = useState<string>(() =>
-    new Date().toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit'
-    })
-  );
   const [pyramidPlayersInPyramid, setPyramidPlayersInPyramid] = useState<string[]>([]);
   const [rareBossTimers, setRareBossTimers] = useState<RareBossTimerState[]>(() =>
     createDefaultRareBossTimers(Date.now())
@@ -1023,22 +1041,6 @@ export default function App() {
       savedMapTier: pyramidTier
     });
   }, [hero, equipped, inventory, market, tradeProtocol, friends, pyramidMap, playerPos, pyramidTier]);
-
-  // Live Server clock interval (1s interval, formatted HH:MM:SS)
-  useEffect(() => {
-    const updateClock = () => {
-      setServerTimeStr(
-        new Date().toLocaleTimeString('ru-RU', {
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit'
-        })
-      );
-    };
-    updateClock();
-    const clockTimer = setInterval(updateClock, 1000);
-    return () => clearInterval(clockTimer);
-  }, []);
 
   // Rent check timer & Natural HP/Energy Regen (timestamp-based so it works identically across tab switches and re-renders)
   const lastRegenTickAtRef = useRef<number>(Date.now());
@@ -2186,7 +2188,7 @@ export default function App() {
         });
 
         rareBossTimersRef.current = nextTimers;
-        if (livePosRef.current.screen === 'pyramid' || mapChanged) {
+        if (mapChanged || (livePosRef.current.screen === 'pyramid' && Math.floor(now / 1000) % 5 === 0)) {
           setRareBossTimers(nextTimers);
         }
 
@@ -8927,7 +8929,7 @@ export default function App() {
                   : 'bg-emerald-400'
               }`}
             />
-            <span>🕒 {serverTimeStr}</span>
+            <ServerClock />
           </div>
         </div>
 
@@ -9277,7 +9279,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.17</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.18</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">30.10.2026</strong></span>
         </div>
