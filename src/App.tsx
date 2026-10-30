@@ -8798,80 +8798,6 @@ export default function App() {
                 <span>🛡️ Модер</span>
               </button>
             )}
-
-            {/* Daily Login Reward Gift Button */}
-            <button
-              onClick={() => setActiveModal('dailyReward')}
-              className={`flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[8px] font-extrabold shadow transition-all active:scale-95 shrink-0 ${
-                dailyRewardStatus.canClaimToday
-                  ? 'border border-amber-400 bg-gradient-to-r from-amber-500 to-yellow-500 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.6)] animate-bounce'
-                  : 'border border-amber-500/40 bg-slate-900 text-amber-300 hover:border-amber-400'
-              }`}
-              title="Ежедневный вход: 7-дневный календарь наград"
-            >
-              <span>🎁</span>
-              <span>Подарок</span>
-              {dailyRewardStatus.canClaimToday && (
-                <span className="h-1.5 w-1.5 rounded-full bg-red-600 animate-ping" />
-              )}
-            </button>
-
-            {/* Tutorial Button — visible for all characters below Level 5 */}
-            {(hero.level || 1) < 5 && (
-              <button
-                onClick={() => setActiveModal('tutorial')}
-                className="flex items-center gap-0.5 rounded border border-cyan-400/80 bg-gradient-to-r from-cyan-950 via-teal-900/90 to-cyan-950 px-1.5 py-0.5 text-[8px] font-extrabold text-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.35)] hover:border-cyan-300 active:scale-95 cursor-pointer shrink-0"
-                title="Обучение игре (доступно в любой момент до 5-го уровня)"
-              >
-                <span>🎓</span>
-                <span>Урок</span>
-              </button>
-            )}
-
-            {/* Player AI Tactical Advisor Button */}
-            <button
-              onClick={async () => {
-                const aiCfg = loadAiMonitoringState().config;
-                if (!aiCfg.enabled) {
-                  showToast('ℹ️ ИИ-Советник временно отключён администратором');
-                  return;
-                }
-                if (isAiAdvisorBusy) return;
-                setIsAiAdvisorBusy(true);
-                try {
-                  const adv = await generateSmartPlayerAdviceWithServer({
-                    nick: currentUser || hero.nick || 'Игрок',
-                    lvl: hero.level || hero.lvl || 1,
-                    exp: hero.exp,
-                    hp: hero.hp,
-                    maxHp: getHeroTotalMaxHp(hero, equipped),
-                    energy: hero.energy,
-                    maxEnergy: getHeroTotalMaxEnergy(hero, equipped),
-                    gold: hero.gold,
-                    crystals: hero.crystals,
-                    str: hero.str,
-                    agi: hero.agi,
-                    vit: hero.vit,
-                    statPoints: hero.statPoints,
-                    hpPotions: hero.hpPotions,
-                    enPotions: hero.enPotions,
-                    expPotions: hero.expPotions,
-                    equipped,
-                    inventory,
-                    isPremium: hero.isPremium,
-                    pyramidTier
-                  });
-                  setActiveAiAdviceCard(adv);
-                } finally {
-                  setIsAiAdvisorBusy(false);
-                }
-              }}
-              className="flex items-center gap-0.5 rounded border border-indigo-400/80 bg-gradient-to-r from-indigo-950 via-purple-900/90 to-indigo-950 px-1.5 py-0.5 text-[8px] font-extrabold text-indigo-200 shadow-[0_0_10px_rgba(99,102,241,0.35)] hover:border-indigo-300 active:scale-95 cursor-pointer shrink-0"
-              title="Получить тактический совет от ИИ-помощника по вашей экипировке, статам и боссам"
-            >
-              <span>🧠</span>
-              <span>{isAiAdvisorBusy ? 'ИИ...' : 'ИИ-Совет'}</span>
-            </button>
           </div>
 
           {/* Realtime Status Dot + Live Server Clock on the right of the top strip (never clipped) */}
@@ -9236,7 +9162,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.11</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.15</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">30.10.2026</strong></span>
         </div>
@@ -9928,19 +9854,56 @@ export default function App() {
           />
         )}
 
-        {/* Achievements Modal */}
+        {/* Achievements, Daily Quests & Daily Login Gift Modal */}
         {activeModal === 'achievements' && (
           <AchievementsModal
             hero={hero}
             onClose={() => setActiveModal(null)}
             onClaimAchievement={handleClaimAchievement}
             onClaimAllAchievements={handleClaimAllAchievements}
+            onClaimDailyReward={handleClaimDailyReward}
+            onClaimQuestChest={handleClaimQuestChest}
+            onClaimGrandCrystalChest={handleClaimGrandCrystalChest}
           />
         )}
 
-        {/* Forum Modal (Updates & Game Encyclopedia) */}
+        {/* Forum Modal (Updates, Game Encyclopedia, Lesson & AI Advice) */}
         {activeModal === 'forum' && (
-          <ForumModal onClose={() => setActiveModal(null)} />
+          <ForumModal
+            onClose={() => setActiveModal(null)}
+            hero={{
+              ...hero,
+              maxHp: getHeroTotalMaxHp(hero, equipped),
+              maxEnergy: getHeroTotalMaxEnergy(hero, equipped)
+            }}
+            currentUser={currentUser}
+            equipped={equipped}
+            inventory={inventory}
+            pyramidTier={pyramidTier}
+            onStartInteractiveTutorial={() => setActiveModal('tutorial')}
+            showToast={showToast}
+            onApplyAiAction={(act) => {
+              if (act === 'repair_gear') {
+                setActiveModal('inventory');
+                showToast('🔨 Открыта Сумка — нажмите «Починить всё» для ремонта снаряжения!');
+              } else if (act === 'distribute_stats') {
+                setActiveModal('character');
+                showToast('📈 Открыто окно Персонажа для распределения свободных очков статов!');
+              } else if (act === 'buy_equipment') {
+                setActiveModal('shop');
+                showToast('🛒 Открыт Магазин для усиления экипировки!');
+              } else if (act === 'upgrade_vip') {
+                setActiveModal('premium');
+                showToast('👑 Открыто окно VIP-бонусов!');
+              } else if (act === 'exchange_currency') {
+                setActiveModal('bank');
+                showToast('🏦 Открыт Банк для обмена валюты!');
+              } else {
+                setActiveModal(null);
+                showToast('⚡ Тактическая рекомендация ИИ принята к исполнению!');
+              }
+            }}
+          />
         )}
 
         {/* Interactive Tutorial Modal (Available up to Level 5) */}

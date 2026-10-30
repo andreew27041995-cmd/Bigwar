@@ -72,3 +72,31 @@
   display: inline-block;
   animation: batFloat 3.2s ease-in-out infinite;
 }
+
+@keyframes criticalDurabilityBlink {
+  0%, 100% {
+    background-color: #ef4444;
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.95), 0 0 14px rgba(220, 38, 38, 0.75);
+    opacity: 1;
+    filter: brightness(1.3);
+  }
+  50% {
+    background-color: #7f1d1d;
+    box-shadow: 0 0 2px rgba(239, 68, 68, 0.25);
+    opacity: 0.35;
+    filter: brightness(0.7);
+  }
+}
+
+.durability-progress-fill {
+  transition:
+    width 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.45s ease-in-out,
+    box-shadow 0.45s ease-in-out,
+    opacity 0.35s ease-in-out;
+}
+
+.animate-critical-durability {
+  animation: criticalDurabilityBlink 0.85s ease-in-out infinite;
+}
+

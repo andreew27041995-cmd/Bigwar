@@ -232,15 +232,16 @@ export const CityScreen: React.FC<CityScreenProps> = ({
         </span>
       </div>
 
-      {/* Top Player HUD — compact, responsive layout so left controls & potions are never clipped */}
-      <div className="relative z-10 flex flex-col gap-1.5 px-2 pt-1.5 pb-1 shrink-0">
-        <div className="flex items-start justify-between gap-1.5">
-          {/* Left: Player Status & Regeneration Card */}
-          <div
-            data-tutorial="hud-bars"
-            className="flex flex-col gap-1 rounded-xl border border-orange-500/55 bg-slate-950/95 px-2 py-1.5 shadow-[0_0_15px_rgba(249,115,22,0.25)] min-w-0 flex-1 max-w-[265px]"
-          >
-            <div className="flex items-center gap-2">
+      {/* Top Player HUD + Vertical Elixirs Column — spacious full-width HP & Energy bars */}
+      <div className="relative z-10 flex items-stretch justify-between gap-1.5 px-2 pt-1.5 pb-1 shrink-0">
+        {/* Left: Wide Player Status & Regeneration Card (HP & Energy never truncated) */}
+        <div
+          data-tutorial="hud-bars"
+          className="flex flex-1 min-w-0 flex-col justify-between gap-1 rounded-xl border border-orange-500/55 bg-slate-950/95 px-2.5 py-1.5 shadow-[0_0_15px_rgba(249,115,22,0.25)]"
+        >
+          {/* Header Row: Avatar + Nick/Level + Gold/Crystals + Sound */}
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <div
                 onClick={unreadMailCount > 0 && onOpenMailModal ? onOpenMailModal : onOpenCharModal}
                 className="relative flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-md border border-orange-400 bg-slate-900 text-lg shadow p-0.5"
@@ -259,11 +260,15 @@ export const CityScreen: React.FC<CityScreenProps> = ({
                 )}
               </div>
 
-              <div className="flex flex-1 min-w-0 flex-col gap-0.5">
-                {/* Nickname & Level header inside HUD */}
-                <div className="flex items-center justify-between gap-1 text-[8.5px] font-extrabold leading-tight mb-0.5">
+              <div className="flex flex-col min-w-0">
+                <div className="flex items-center gap-1 text-[9.5px] font-extrabold leading-tight">
+                  {hero.clanTag && (
+                    <span className="shrink-0 rounded bg-amber-500/25 border border-amber-400/60 px-1 text-[7px] font-black text-amber-300">
+                      [{hero.clanTag}]
+                    </span>
+                  )}
                   <span
-                    className={`truncate flex items-center gap-0.5 min-w-0 ${
+                    className={`truncate ${
                       isModeratorRole
                         ? 'text-emerald-400'
                         : isAdmin || hero.role === 'admin' || Number((hero as any).is_admin) === 1
@@ -271,48 +276,23 @@ export const CityScreen: React.FC<CityScreenProps> = ({
                         : 'text-amber-300'
                     }`}
                   >
-                    {hero.clanTag && (
-                      <span className="shrink-0 rounded bg-amber-500/25 border border-amber-400/60 px-0.5 text-[6.5px] font-black text-amber-300">
-                        [{hero.clanTag}]
-                      </span>
-                    )}
-                    <span className="truncate">{currentUser || 'Игрок'}</span>
-                  </span>
-                  <span className="flex items-center gap-0.5 shrink-0">
-                    <span className="rounded bg-orange-500/20 border border-orange-500/40 px-1 text-[7px] font-black text-orange-300">
-                      🔺П{hero.homePyramidTier || hero.pyramidTier || 1}
-                    </span>
-                    <span className="text-purple-300">Ур.{hero.level}</span>
+                    {currentUser || 'Игрок'}
                   </span>
                 </div>
-
-                {/* HP */}
-                <div className="relative h-2.5 w-full overflow-hidden rounded bg-slate-800 border border-slate-700">
-                  <div className="h-full bg-red-600 transition-all" style={{ width: `${hpPercent}%` }} />
-                  <div className="absolute inset-0 flex items-center justify-center text-[7px] font-bold text-white drop-shadow tabular-nums">
-                    ❤️ {hero.hp}/{hero.maxHp}
-                  </div>
-                </div>
-
-                {/* Energy */}
-                <div className="relative h-2.5 w-full overflow-hidden rounded bg-slate-800 border border-slate-700">
-                  <div className="h-full bg-sky-600 transition-all" style={{ width: `${enPercent}%` }} />
-                  <div className="absolute inset-0 flex items-center justify-center text-[7px] font-bold text-white drop-shadow tabular-nums">
-                    ⚡ {hero.energy}/{hero.maxEnergy}
-                  </div>
-                </div>
-
-                {/* EXP */}
-                <div className="relative h-2 w-full overflow-hidden rounded bg-slate-800 border border-slate-700">
-                  <div className="h-full bg-purple-600 transition-all" style={{ width: `${expPercent}%` }} />
-                  <div className="absolute inset-0 flex items-center justify-center text-[6px] font-bold text-white drop-shadow tabular-nums">
-                    EXP: {hero.exp}/{nextExp}
-                  </div>
+                <div className="flex items-center gap-1 mt-0.5">
+                  <span className="rounded bg-orange-500/20 border border-orange-500/40 px-1 py-0.2 text-[7.5px] font-black text-orange-300">
+                    🔺 Пирамида {hero.homePyramidTier || hero.pyramidTier || 1}
+                  </span>
+                  <span className="rounded bg-purple-950/80 border border-purple-500/40 px-1.5 py-0.2 text-[7.5px] font-black text-purple-200">
+                    Ур. {hero.level}
+                  </span>
                 </div>
               </div>
+            </div>
 
-              {/* Animated 3D Spinning Gold & Ultra-Bright Glowing Crystal */}
-              <div className="flex flex-col items-end justify-center gap-1 text-[9px] font-black border-l border-slate-800 pl-2 shrink-0 tabular-nums">
+            {/* Gold, Crystals & Sound */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex flex-col items-end justify-center gap-0.5 text-[9.5px] font-black border-l border-slate-800 pl-2 tabular-nums">
                 <span className="flex items-center gap-1 text-amber-300 drop-shadow-[0_0_6px_rgba(250,204,21,0.5)]">
                   <GoldCoinIcon size="sm" />
                   <span>{hero.gold}</span>
@@ -322,128 +302,107 @@ export const CityScreen: React.FC<CityScreenProps> = ({
                   <span>{hero.crystals}</span>
                 </span>
               </div>
-            </div>
-
-            {/* Visual HP & Energy Regeneration Progress Bar */}
-            <div
-              className="mt-0.5 pt-1 border-t border-slate-800/90"
-              title="Автоматическое восстановление здоровья и энергии в городе"
-            >
-              <div className="flex items-center justify-between text-[7.5px] font-extrabold leading-none mb-1">
-                <span className="flex items-center gap-1 text-emerald-300">
-                  <span className={isRegenNeeded ? 'animate-spin' : ''}>♻️</span>
-                  <span>
-                    {isRegenNeeded
-                      ? `Восст. +${regenAmountPerTick}❤️/+${regenAmountPerTick}⚡${isPremActive ? ' (VIP 2x)' : ''}`
-                      : 'Здоровье и ⚡ 100%'}
-                  </span>
-                </span>
-                <span className="font-mono text-[7.5px] text-cyan-200 tabular-nums">
-                  {isRegenNeeded
-                    ? `через ${secToNextRegenTick}с • полн: ${formatShortDuration(totalSecToFullRecovery)}`
-                    : 'Готов к походу'}
-                </span>
-              </div>
-              <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-900 border border-emerald-500/40 shadow-inner">
-                <div
-                  className={`h-full transition-all duration-150 ${
-                    isRegenNeeded
-                      ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-300'
-                      : 'bg-gradient-to-r from-emerald-500 to-cyan-500'
-                  }`}
-                  style={{ width: `${regenTickProgressPct}%` }}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Right: Compact Achievements, Daily Reward Gift & Sound toggle */}
-          <div className="flex flex-col items-end gap-1 shrink-0">
-            <div className="flex items-center gap-1">
-              {onOpenAchievements && (
-                <button
-                  onClick={onOpenAchievements}
-                  className={`relative flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-black shadow-lg transition-transform active:scale-95 ${
-                    claimableAchievementsCount > 0
-                      ? 'border-cyan-300 bg-gradient-to-r from-cyan-500 to-teal-400 text-slate-950 animate-bounce shadow-[0_0_15px_rgba(34,211,238,0.7)]'
-                      : 'border-amber-500/50 bg-slate-950/90 text-amber-300 hover:border-amber-400'
-                  }`}
-                  title="Достижения игрока и награды в кристаллах"
-                >
-                  <span className="text-xs">🏅</span>
-                  <span className="uppercase tracking-tight font-extrabold">Подвиги</span>
-                  {claimableAchievementsCount > 0 && (
-                    <span className="ml-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-red-600 px-1 text-[7px] font-black text-white ring-1 ring-slate-950">
-                      {claimableAchievementsCount}
-                    </span>
-                  )}
-                </button>
-              )}
 
               <button
                 onClick={onToggleSound}
-                className="rounded-lg border border-purple-500/40 bg-slate-950/90 px-2 py-1 text-[10px] text-slate-300 hover:text-white"
+                className="rounded-lg border border-purple-500/40 bg-slate-900/90 px-1.5 py-1 text-[10px] text-slate-300 hover:text-white active:scale-95 cursor-pointer"
                 title={soundMuted ? 'Включить звук' : 'Выключить звук'}
               >
                 {soundMuted ? '🔇' : '🔊'}
               </button>
             </div>
+          </div>
 
-            <div className="flex items-center gap-1">
-              {(onOpenDailyQuests || onOpenDailyReward) && (
-                <button
-                  onClick={onOpenDailyQuests || onOpenDailyReward}
-                  className={`relative flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-black shadow-lg transition-transform active:scale-95 ${
-                    readyQuestChests > 0
-                      ? 'border-cyan-300 bg-gradient-to-r from-cyan-400 to-emerald-400 text-slate-950 animate-bounce shadow-[0_0_15px_rgba(34,211,238,0.75)]'
-                      : 'border-cyan-500/50 bg-slate-950/90 text-cyan-300 hover:border-cyan-400'
-                  }`}
-                  title="Ежедневные задания и Сундук с кристаллами"
-                >
-                  <span className="text-xs">🧰</span>
-                  <span className="uppercase tracking-tight font-extrabold">Задания</span>
-                  <span className="rounded bg-slate-900/80 px-1 text-[7.5px] font-black text-amber-300 border border-slate-700">
-                    {dailyQuestsSummary.completedCount}/{dailyQuestsSummary.totalQuests}
-                  </span>
-                  {readyQuestChests > 0 && (
-                    <span className="ml-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-red-600 px-1 text-[7px] font-black text-white ring-1 ring-slate-950">
-                      {readyQuestChests}
-                    </span>
-                  )}
-                </button>
-              )}
+          {/* Full-width HP, Energy & EXP Bars — crystal-clear numbers */}
+          <div className="flex flex-col gap-1 mt-0.5">
+            {/* HP */}
+            <div className="relative h-3.5 w-full overflow-hidden rounded-md bg-slate-900 border border-red-500/50 shadow-inner">
+              <div
+                className="h-full bg-gradient-to-r from-red-700 via-red-600 to-rose-500 transition-all duration-300"
+                style={{ width: `${hpPercent}%` }}
+              />
+              <div className="absolute inset-0 flex items-center justify-between px-2 text-[8.5px] font-black text-white drop-shadow tabular-nums">
+                <span>❤️ Здоровье</span>
+                <span>
+                  {hero.hp} / {hero.maxHp}
+                </span>
+              </div>
+            </div>
 
-              {onOpenDailyReward && (
-                <button
-                  data-tutorial="btn-daily-gift"
-                  onClick={onOpenDailyReward}
-                  className={`relative flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] font-black shadow-lg transition-transform active:scale-95 ${
-                    canClaimDailyReward
-                      ? 'border-orange-400 bg-gradient-to-r from-orange-600 to-amber-500 text-slate-950 animate-bounce shadow-[0_0_15px_rgba(249,115,22,0.7)]'
-                      : 'border-orange-500/40 bg-slate-950/90 text-orange-300 hover:border-orange-400'
-                  }`}
-                  title="Ежедневный вход (Календарь наград)"
-                >
-                  <span className="text-xs">🎃</span>
-                  <span className="uppercase tracking-tight font-extrabold">Подарок</span>
-                  {canClaimDailyReward && (
-                    <span className="ml-0.5 flex h-2.5 w-2.5 items-center justify-center rounded-full bg-red-600 ring-1 ring-slate-950 animate-ping" />
-                  )}
-                </button>
-              )}
+            {/* Energy */}
+            <div className="relative h-3.5 w-full overflow-hidden rounded-md bg-slate-900 border border-sky-500/50 shadow-inner">
+              <div
+                className="h-full bg-gradient-to-r from-sky-700 via-sky-600 to-cyan-500 transition-all duration-300"
+                style={{ width: `${enPercent}%` }}
+              />
+              <div className="absolute inset-0 flex items-center justify-between px-2 text-[8.5px] font-black text-white drop-shadow tabular-nums">
+                <span>⚡ Энергия</span>
+                <span>
+                  {hero.energy} / {hero.maxEnergy}
+                </span>
+              </div>
+            </div>
+
+            {/* EXP */}
+            <div className="relative h-2.5 w-full overflow-hidden rounded bg-slate-900 border border-purple-500/40">
+              <div
+                className="h-full bg-gradient-to-r from-purple-700 to-fuchsia-500 transition-all duration-300"
+                style={{ width: `${expPercent}%` }}
+              />
+              <div className="absolute inset-0 flex items-center justify-between px-2 text-[7px] font-bold text-white drop-shadow tabular-nums">
+                <span>✨ Опыт</span>
+                <span>
+                  {hero.exp} / {nextExp}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual HP & Energy Regeneration Progress Bar */}
+          <div
+            className="pt-1 border-t border-slate-800/90"
+            title="Автоматическое восстановление здоровья и энергии в городе"
+          >
+            <div className="flex items-center justify-between text-[7.5px] font-extrabold leading-none mb-1">
+              <span className="flex items-center gap-1 text-emerald-300">
+                <span className={isRegenNeeded ? 'animate-spin' : ''}>♻️</span>
+                <span>
+                  {isRegenNeeded
+                    ? `Восст. +${regenAmountPerTick}❤️/+${regenAmountPerTick}⚡${isPremActive ? ' (VIP 2x)' : ''}`
+                    : 'Здоровье и ⚡ 100%'}
+                </span>
+              </span>
+              <span className="font-mono text-[7.5px] text-cyan-200 tabular-nums">
+                {isRegenNeeded
+                  ? `через ${secToNextRegenTick}с • полн: ${formatShortDuration(totalSecToFullRecovery)}`
+                  : 'Готов к походу'}
+              </span>
+            </div>
+            <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-slate-900 border border-emerald-500/40 shadow-inner">
+              <div
+                className={`h-full transition-all duration-150 ${
+                  isRegenNeeded
+                    ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-300'
+                    : 'bg-gradient-to-r from-emerald-500 to-cyan-500'
+                }`}
+                style={{ width: `${regenTickProgressPct}%` }}
+              />
             </div>
           </div>
         </div>
 
-        {/* Compact Horizontal Quick Potion Bar (never clipped on the left) */}
-        <div data-tutorial="potions-bar" className="flex items-center gap-1.5 pl-0.5 w-fit">
+        {/* Right: Vertical Quick Potion Bar (HP, EN, EXP stacked vertically) */}
+        <div
+          data-tutorial="potions-bar"
+          className="flex flex-col justify-between gap-1 shrink-0 w-[68px]"
+        >
           <button
             onClick={() => onUsePotion('hp')}
             disabled={hero.hpPotions <= 0 || hero.hp >= hero.maxHp}
-            className="group relative flex items-center gap-1 rounded-lg border border-red-400/80 bg-gradient-to-b from-red-800/90 via-red-950 to-slate-950 px-2 py-1 shadow-[0_0_10px_rgba(239,68,68,0.3)] transition-transform active:scale-95 disabled:opacity-40 hover:border-red-300"
+            className="group relative flex flex-1 items-center justify-between gap-1 rounded-lg border border-red-400/80 bg-gradient-to-b from-red-800/90 via-red-950 to-slate-950 px-1.5 py-1 shadow-[0_0_10px_rgba(239,68,68,0.3)] transition-transform active:scale-95 disabled:opacity-40 hover:border-red-300 cursor-pointer"
             title="Эликсир жизни (+50 HP)"
           >
-            <img src={ELIXIR_HP_IMG} alt="HP" className="h-4 w-4 object-contain drop-shadow" />
+            <img src={ELIXIR_HP_IMG} alt="HP" className="h-4 w-4 object-contain drop-shadow shrink-0" />
             <span className="text-[8px] font-black uppercase text-red-100">HP</span>
             <span className="rounded-full border border-red-200/70 bg-red-600 px-1.5 py-0.2 text-[7.5px] font-black text-white tabular-nums">
               {hero.hpPotions}
@@ -453,10 +412,10 @@ export const CityScreen: React.FC<CityScreenProps> = ({
           <button
             onClick={() => onUsePotion('en')}
             disabled={hero.enPotions <= 0 || hero.energy >= hero.maxEnergy}
-            className="group relative flex items-center gap-1 rounded-lg border border-sky-400/80 bg-gradient-to-b from-sky-800/90 via-sky-950 to-slate-950 px-2 py-1 shadow-[0_0_10px_rgba(56,189,248,0.3)] transition-transform active:scale-95 disabled:opacity-40 hover:border-sky-300"
+            className="group relative flex flex-1 items-center justify-between gap-1 rounded-lg border border-sky-400/80 bg-gradient-to-b from-sky-800/90 via-sky-950 to-slate-950 px-1.5 py-1 shadow-[0_0_10px_rgba(56,189,248,0.3)] transition-transform active:scale-95 disabled:opacity-40 hover:border-sky-300 cursor-pointer"
             title="Эликсир энергии (+20 EN)"
           >
-            <img src={ELIXIR_EN_IMG} alt="EN" className="h-4 w-4 object-contain drop-shadow" />
+            <img src={ELIXIR_EN_IMG} alt="EN" className="h-4 w-4 object-contain drop-shadow shrink-0" />
             <span className="text-[8px] font-black uppercase text-sky-100">EN</span>
             <span className="rounded-full border border-sky-200/70 bg-sky-600 px-1.5 py-0.2 text-[7.5px] font-black text-white tabular-nums">
               {hero.enPotions}
@@ -466,14 +425,14 @@ export const CityScreen: React.FC<CityScreenProps> = ({
           <button
             onClick={() => onUsePotion('exp')}
             disabled={Number(hero.expPotions || 0) <= 0}
-            className={`group relative flex items-center gap-1 rounded-lg border bg-gradient-to-b from-purple-800/90 via-purple-950 to-slate-950 px-2 py-1 shadow-[0_0_10px_rgba(168,85,247,0.35)] transition-transform active:scale-95 disabled:opacity-40 hover:border-purple-300 ${
+            className={`group relative flex flex-1 items-center justify-between gap-1 rounded-lg border bg-gradient-to-b from-purple-800/90 via-purple-950 to-slate-950 px-1.5 py-1 shadow-[0_0_10px_rgba(168,85,247,0.35)] transition-transform active:scale-95 disabled:opacity-40 hover:border-purple-300 cursor-pointer ${
               hero.expElixirUntil && hero.expElixirUntil > Date.now()
                 ? 'border-emerald-400 ring-1 ring-emerald-400/60'
                 : 'border-purple-400/80'
             }`}
             title="Ячейка Эликсира Опыта (+25% к опыту на 30 мин)"
           >
-            <img src={ELIXIR_EXP_IMG} alt="EXP" className="h-4 w-4 object-contain drop-shadow" />
+            <img src={ELIXIR_EXP_IMG} alt="EXP" className="h-4 w-4 object-contain drop-shadow shrink-0" />
             <span className="text-[8px] font-black uppercase text-purple-100">EXP</span>
             <span className="rounded-full border border-purple-200/70 bg-purple-600 px-1.5 py-0.2 text-[7.5px] font-black text-white tabular-nums">
               {hero.expPotions || 0}
@@ -666,16 +625,21 @@ export const CityScreen: React.FC<CityScreenProps> = ({
             <span className="text-[8.5px] font-black leading-tight">Премиум</span>
           </button>
 
-          {/* Achievements */}
+          {/* Single Unified Achievements + Daily Quests + Daily Gift Tab */}
           {onOpenAchievements && (
             <button
+              data-tutorial="btn-daily-gift"
               onClick={onOpenAchievements}
-              className="relative flex flex-col items-center justify-center rounded-lg border border-cyan-500/70 bg-gradient-to-b from-cyan-950/80 to-slate-950 px-1 py-1.5 text-center text-cyan-200 shadow transition-all active:scale-95 hover:border-cyan-400"
-              title="Система достижений игрока с наградами в кристаллах"
+              className={`relative flex flex-col items-center justify-center rounded-lg border px-1 py-1.5 text-center shadow transition-all active:scale-95 ${
+                claimableAchievementsCount + readyQuestChests + (canClaimDailyReward ? 1 : 0) > 0
+                  ? 'border-cyan-400 bg-gradient-to-b from-cyan-900/90 to-slate-950 text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.45)]'
+                  : 'border-cyan-500/70 bg-gradient-to-b from-cyan-950/80 to-slate-950 text-cyan-200 hover:border-cyan-400'
+              }`}
+              title="Подвиги, Ежедневные задания и Календарь подарков"
             >
-              {claimableAchievementsCount > 0 && (
+              {claimableAchievementsCount + readyQuestChests + (canClaimDailyReward ? 1 : 0) > 0 && (
                 <span className="absolute -top-1.5 -right-1 flex h-4 min-w-[15px] items-center justify-center rounded-full bg-red-600 px-1 text-[7.5px] font-black text-white ring-1 ring-slate-950 animate-bounce">
-                  {claimableAchievementsCount}
+                  {claimableAchievementsCount + readyQuestChests + (canClaimDailyReward ? 1 : 0)}
                 </span>
               )}
               <span className="text-xs leading-none mb-0.5">🏅</span>
@@ -695,13 +659,13 @@ export const CityScreen: React.FC<CityScreenProps> = ({
             </button>
           )}
 
-          {/* Forum */}
+          {/* Forum (with Lesson & AI Advisor inside) */}
           {onOpenForum && (
             <button
               data-tutorial="btn-forum"
               onClick={onOpenForum}
               className="flex flex-col items-center justify-center rounded-lg border border-indigo-500/70 bg-gradient-to-b from-indigo-950/80 to-slate-950 px-1 py-1.5 text-center text-indigo-200 shadow transition-all active:scale-95 hover:border-indigo-400"
-              title="Форум: обновления игры и энциклопедия"
+              title="Форум: Обновления, Энциклопедия, Урок и ИИ-Советник"
             >
               <span className="text-xs leading-none mb-0.5">📖</span>
               <span className="text-[8.5px] font-black leading-tight">Форум</span>

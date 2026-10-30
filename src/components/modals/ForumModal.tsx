@@ -1,6 +1,15 @@
 import React, { useState, useMemo } from 'react';
 import { EXP_TABLE, LEVEL_UP_REWARDS } from '../../utils/gameData';
 import { getMonsterConfigs, DEFAULT_MONSTERS, MonsterConfig } from '../../utils/monsterConfig';
+import { HeroState, EquippedGear, GameItem } from '../../types/game';
+import {
+  AiPlayerAdviceEntry,
+  AI_CATEGORY_META,
+  analyzePlayerAndGenerateAdvices,
+  generateSmartPlayerAdviceWithServer,
+  loadAiMonitoringState,
+  updatePlayerAdviceStatus
+} from '../../utils/aiMonitoring';
 
 export interface ForumUpdateEntry {
   version: string;
@@ -16,10 +25,22 @@ export interface ForumUpdateEntry {
  */
 export const FORUM_UPDATES: ForumUpdateEntry[] = [
   {
+    version: 'v1.1.15',
+    date: '30.10.2026',
+    title: 'Анимация критической прочности (<15%), Объединённый центр «Подвиги + Задания + Подарок», Вертикальные Эликсиры и «Урок + ИИ Советы» в Форуме',
+    isLatest: true,
+    changes: [
+      '🚨 CSS-анимация плавного изменения цвета и мигания шкалы прочности в Инвентаре: при падении прочности ниже 15% (критический износ) полоска плавно переходит в красный цвет и начинает тревожно мигать.',
+      '🏅 Единая вкладка «Подвиги» на главном экране: разделы «🏅 Подвиги», «🧰 Задания» (с сундуками кристаллов) и «🎁 Подарок» (7-дневный календарь входа) объединены в одно удобное окно с общим индикатором наград.',
+      '📖 Разделы «🎓 Урок» и «🧠 ИИ Советы» перенесены в «Форум»: теперь пошаговое обучение новичка, запуск интерактивной указки и персональный тактический ИИ-советник Argon 4 доступны прямо внутри Форума.',
+      '🧪 Вертикальная колонка Эликсиров (HP, EN, EXP) на главном экране: зелья выстроены вертикально справа от карточки героя, благодаря чему шкалы Здоровья ❤️ и Энергии ⚡ получили полную ширину и цифры больше не обрезаются.'
+    ]
+  },
+  {
     version: 'v1.1.14',
     date: '30.10.2026',
     title: 'Индикатор прочности предметов в Инвентаре, Ежемесячный Турнир Скарабеев, Усиленные Соперники-Титаны и Полный Админ-контроль',
-    isLatest: true,
+    isLatest: false,
     changes: [
       '🛡️ Цветная шкала прочности под иконкой каждого предмета в Инвентаре: теперь состояние износа экипировки видно мгновенно — зелёная полоска (высокая прочность >60%), жёлтая (средний износ 26–60%) и красная (критический износ ≤25% или сломано 0/макс).',
       '⚡ Быстрая продажа обычных вещей («Продать все Обычные»): добавлена кнопка мгновенной очистки инвентаря от всех не надетых предметов обычного качества с окном подтверждения.',
@@ -496,11 +517,19 @@ export const FORUM_UPDATES: ForumUpdateEntry[] = [
   }
 ];
 
-export type ForumTab = 'all' | 'updates' | 'guide';
+export type ForumTab = 'all' | 'updates' | 'guide' | 'lesson' | 'ai_advice';
 
 interface ForumModalProps {
   onClose: () => void;
   initialTab?: ForumTab;
+  hero?: HeroState;
+  currentUser?: string | null;
+  equipped?: EquippedGear;
+  inventory?: GameItem[];
+  pyramidTier?: number;
+  onStartInteractiveTutorial?: () => void;
+  onApplyAiAction?: (action: AiPlayerAdviceEntry['recommendedAction']) => void;
+  showToast?: (msg: string) => void;
 }
 
 type GuideCategory =
@@ -515,13 +544,143 @@ type GuideCategory =
   | 'clans'
   | 'economy';
 
-export const ForumModal: React.FC<ForumModalProps> = ({ onClose, initialTab = 'all' }) => {
+const LESSON_STEPS = [
+  {
+    step: 1,
+    icon: '❤️',
+    title: 'Панель Героя: Здоровье, Энергия и Валюта',
+    badge: 'ШАГ 1 • СТАТУС ГЕРОЯ',
+    desc: 'В верхней карточке Города отображаются широкие шкалы Здоровья (❤️ HP), Энергии (⚡ EN) и Опыта (✨ EXP), а также баланс Золота (🪙) и Кристаллов (💎). В Городе и оффлайн здоровье и энергия восстанавливаются сами (+1 каждые 3 сек, с VIP — каждую 1 сек).'
+  },
+  {
+    step: 2,
+    icon: '🧪',
+    title: 'Вертикальная колонка быстрых Эликсиров',
+    badge: 'ШАГ 2 • БЫСТРЫЕ ЗЕЛЬЯ',
+    desc: 'Справа от карточки героя расположена вертикальная колонка из 3 зелий: 🧪 HP (+50 здоровья), ⚗️ EN (+20 энергии) и ✨ EXP (+25% к опыту на 30 минут). Нажмите на любую бутылочку для мгновенного приёма!'
+  },
+  {
+    step: 3,
+    icon: '👤',
+    title: 'Персонаж, Сумка и Магазин',
+    badge: 'ШАГ 3 • СНАРЯЖЕНИЕ И СТАТЫ',
+    desc: 'В разделе «👤 Персонаж» распределяйте свободные очки (+Сила, +Ловкость, +Живучесть) и управляйте автономным Стражем NPC. В «🎒 Сумке» следите за цветной шкалой прочности под иконками вещей (при износе ниже 15% шкала мигает красным — вовремя чините экипировку!).'
+  },
+  {
+    step: 4,
+    icon: '🏅',
+    title: 'Единый центр «Подвиги»: Задания и Подарок',
+    badge: 'ШАГ 4 • ЕЖЕДНЕВНЫЕ НАГРАДЫ',
+    desc: 'Нажмите кнопку «🏅 Подвиги» в нижнем ряду Города — внутри собраны 3 вкладки: «🏅 Подвиги» (достижения с кристаллами и золотом), «🧰 Задания» (ежедневные поручения с Сундуками кристаллов) и «🎁 Подарок» (7-дневный календарь входа).'
+  },
+  {
+    step: 5,
+    icon: '🏛️',
+    title: 'Поход в Пирамиду и Правило Выхода с 1-й линии',
+    badge: 'ШАГ 5 • ПИРАМИДА И БОССЫ',
+    desc: 'Пирамида состоит из 10 ступеней. Шаг стоит 1⚡, атака монстра — 3⚡. Важно: кнопка «❖ ВЫХОД ❖» в Город работает ТОЛЬКО когда вы стоите на 1-й линии (нижний ряд пирамиды у входа). Всегда оставляйте запас энергии на обратный путь!'
+  },
+  {
+    step: 6,
+    icon: '🎰',
+    title: 'Азартные игры и Ежемесячный Турнир Скарабеев',
+    badge: 'ШАГ 6 • РУЛЕТКА И СКАРАБЕИ',
+    desc: 'В разделе «🎰 Азартные» доступны бесплатный ежедневный прокрут Колеса Фортуны, Кости, Напёрстки и главный Ежемесячный Турнир Скарабеев с прокачкой боевого жука и таблицей лидеров.'
+  }
+];
+
+export const ForumModal: React.FC<ForumModalProps> = ({
+  onClose,
+  initialTab = 'all',
+  hero,
+  currentUser,
+  equipped,
+  inventory,
+  pyramidTier = 1,
+  onStartInteractiveTutorial,
+  onApplyAiAction,
+  showToast
+}) => {
   const [activeTab, setActiveTab] = useState<ForumTab>(initialTab);
   const [guideCategory, setGuideCategory] = useState<GuideCategory>('all');
   const [selectedBossTier, setSelectedBossTier] = useState<1 | 2 | 3>(1);
   const [simHeroDmg, setSimHeroDmg] = useState<number>(65);
   const [simHeroHp, setSimHeroHp] = useState<number>(450);
   const [simHeroDodge, setSimHeroDodge] = useState<number>(15);
+  const [lessonStepIdx, setLessonStepIdx] = useState<number>(0);
+  const [isGeneratingAiAdvice, setIsGeneratingAiAdvice] = useState<boolean>(false);
+  const [currentAiAdvice, setCurrentAiAdvice] = useState<AiPlayerAdviceEntry | null>(null);
+
+  const localAiDiagnostics = useMemo(() => {
+    if (!hero) return [];
+    try {
+      const state = loadAiMonitoringState();
+      return analyzePlayerAndGenerateAdvices(
+        {
+          nick: currentUser || hero.nick || 'Герой',
+          lvl: hero.level || 1,
+          exp: hero.exp,
+          hp: hero.hp,
+          maxHp: hero.maxHp,
+          energy: hero.energy,
+          maxEnergy: hero.maxEnergy,
+          gold: hero.gold,
+          crystals: hero.crystals,
+          str: hero.str,
+          agi: hero.agi,
+          vit: hero.vit,
+          statPoints: hero.statPoints,
+          hpPotions: hero.hpPotions,
+          enPotions: hero.enPotions,
+          expPotions: hero.expPotions,
+          equipped,
+          inventory,
+          isPremium: hero.isPremium,
+          pyramidTier
+        },
+        state.config
+      );
+    } catch {
+      return [];
+    }
+  }, [hero, currentUser, equipped, inventory, pyramidTier]);
+
+  const handleRequestServerAiAdvice = async () => {
+    if (!hero || isGeneratingAiAdvice) return;
+    const aiCfg = loadAiMonitoringState().config;
+    if (!aiCfg.enabled) {
+      showToast?.('ℹ️ ИИ-Советник временно отключён администратором');
+      return;
+    }
+    setIsGeneratingAiAdvice(true);
+    try {
+      const adv = await generateSmartPlayerAdviceWithServer({
+        nick: currentUser || hero.nick || 'Игрок',
+        lvl: hero.level || 1,
+        exp: hero.exp,
+        hp: hero.hp,
+        maxHp: hero.maxHp,
+        energy: hero.energy,
+        maxEnergy: hero.maxEnergy,
+        gold: hero.gold,
+        crystals: hero.crystals,
+        str: hero.str,
+        agi: hero.agi,
+        vit: hero.vit,
+        statPoints: hero.statPoints,
+        hpPotions: hero.hpPotions,
+        enPotions: hero.enPotions,
+        expPotions: hero.expPotions,
+        equipped,
+        inventory,
+        isPremium: hero.isPremium,
+        pyramidTier
+      });
+      setCurrentAiAdvice(adv);
+    } finally {
+      setIsGeneratingAiAdvice(false);
+    }
+  };
 
   const liveMonsters = useMemo<MonsterConfig[]>(() => {
     try {
@@ -704,45 +863,66 @@ export const ForumModal: React.FC<ForumModalProps> = ({ onClose, initialTab = 'a
           </button>
         </div>
 
-        {/* Main 3 Filter Tabs: Все | Обновления | Об игре */}
-        <div className="grid grid-cols-3 gap-1.5 border-b border-slate-800 bg-slate-950/90 px-3 py-2 shrink-0">
+        {/* Main 5 Filter Tabs: Все | Обновления | Об игре | Урок | ИИ Советы */}
+        <div className="grid grid-cols-5 gap-1 border-b border-slate-800 bg-slate-950/90 px-2.5 py-2 shrink-0">
           <button
             onClick={() => setActiveTab('all')}
-            className={`flex items-center justify-center gap-1 rounded-lg border py-2 px-1.5 text-[11px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 ${
+            className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 px-1 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
               activeTab === 'all'
                 ? 'border-purple-400 bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.5)]'
                 : 'border-slate-700 bg-slate-900/90 text-slate-300 hover:border-purple-500/50 hover:text-purple-200'
             }`}
           >
             <span>🗂️</span>
-            <span>Все</span>
+            <span className="truncate">Все</span>
           </button>
 
           <button
             onClick={() => setActiveTab('updates')}
-            className={`flex items-center justify-center gap-1 rounded-lg border py-2 px-1.5 text-[11px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 ${
+            className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 px-1 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
               activeTab === 'updates'
                 ? 'border-amber-400 bg-gradient-to-r from-amber-600 to-orange-600 text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.5)]'
                 : 'border-slate-700 bg-slate-900/90 text-slate-300 hover:border-amber-500/50 hover:text-amber-200'
             }`}
           >
             <span>📢</span>
-            <span className="truncate">Обновления</span>
-            <span className="hidden sm:inline-block rounded-full bg-black/30 px-1.5 py-0.2 text-[9px] font-extrabold text-amber-200">
-              {FORUM_UPDATES[0]?.version}
-            </span>
+            <span className="truncate">Обновы</span>
           </button>
 
           <button
             onClick={() => setActiveTab('guide')}
-            className={`flex items-center justify-center gap-1 rounded-lg border py-2 px-1.5 text-[11px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 ${
+            className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 px-1 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
               activeTab === 'guide'
                 ? 'border-emerald-400 bg-gradient-to-r from-emerald-600 to-teal-600 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
                 : 'border-slate-700 bg-slate-900/90 text-slate-300 hover:border-emerald-500/50 hover:text-emerald-200'
             }`}
           >
             <span>📖</span>
-            <span>Об игре</span>
+            <span className="truncate">Об игре</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('lesson')}
+            className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 px-1 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
+              activeTab === 'lesson'
+                ? 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-sky-500 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
+                : 'border-slate-700 bg-slate-900/90 text-cyan-200 hover:border-cyan-500/50'
+            }`}
+          >
+            <span>🎓</span>
+            <span className="truncate">Урок</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ai_advice')}
+            className={`flex items-center justify-center gap-1 rounded-lg border py-1.5 px-1 text-[10px] sm:text-xs font-black uppercase tracking-wider transition-all active:scale-95 cursor-pointer ${
+              activeTab === 'ai_advice'
+                ? 'border-indigo-400 bg-gradient-to-r from-indigo-500 to-fuchsia-600 text-white shadow-[0_0_12px_rgba(99,102,241,0.5)]'
+                : 'border-slate-700 bg-slate-900/90 text-indigo-200 hover:border-indigo-500/50'
+            }`}
+          >
+            <span>🧠</span>
+            <span className="truncate">ИИ Советы</span>
           </button>
         </div>
 
@@ -1806,6 +1986,237 @@ export const ForumModal: React.FC<ForumModalProps> = ({ onClose, initialTab = 'a
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ==================== БЛОК 3: УРОК (ОБУЧЕНИЕ) ==================== */}
+          {activeTab === 'lesson' && (
+            <div className="space-y-3">
+              <div className="rounded-xl border-2 border-cyan-500/60 bg-gradient-to-r from-cyan-950/70 via-slate-900 to-teal-950/70 p-3 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                      <span>🎓</span>
+                      <span>Интерактивный Урок и Пошаговое Обучение</span>
+                    </div>
+                    <p className="text-[10.5px] text-slate-300 mt-0.5">
+                      Изучите ключевые механики Города Луксора и Пирамиды или запустите интерактивную указку по кнопкам экрана.
+                    </p>
+                  </div>
+                  {onStartInteractiveTutorial && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onStartInteractiveTutorial();
+                      }}
+                      className="rounded-xl border border-cyan-300 bg-gradient-to-r from-cyan-500 to-teal-500 px-3 py-2 text-[11px] font-black text-slate-950 shadow-lg hover:brightness-110 active:scale-95 cursor-pointer shrink-0"
+                    >
+                      👆 Запустить интерактивный урок на экране
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Step selector pills */}
+              <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                {LESSON_STEPS.map((ls, idx) => (
+                  <button
+                    key={ls.step}
+                    onClick={() => setLessonStepIdx(idx)}
+                    className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-black whitespace-nowrap transition-all cursor-pointer ${
+                      lessonStepIdx === idx
+                        ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200 shadow'
+                        : 'border-slate-800 bg-slate-900/80 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {ls.icon} Шаг {ls.step}
+                  </button>
+                ))}
+              </div>
+
+              {/* Active Step Card */}
+              {LESSON_STEPS[lessonStepIdx] && (
+                <div className="rounded-xl border border-cyan-500/50 bg-slate-900/90 p-3.5 space-y-2.5 shadow-inner">
+                  <div className="flex items-center justify-between">
+                    <span className="rounded-md border border-cyan-500/40 bg-cyan-950/70 px-2 py-0.5 text-[9.5px] font-black text-cyan-300">
+                      {LESSON_STEPS[lessonStepIdx].badge}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-400">
+                      {lessonStepIdx + 1} из {LESSON_STEPS.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-cyan-500/40 bg-slate-950 text-2xl shadow">
+                      {LESSON_STEPS[lessonStepIdx].icon}
+                    </div>
+                    <div className="text-sm font-black text-white leading-snug">
+                      {LESSON_STEPS[lessonStepIdx].title}
+                    </div>
+                  </div>
+                  <p className="text-[11.5px] text-slate-200 leading-relaxed bg-black/40 rounded-lg border border-slate-800 p-2.5">
+                    {LESSON_STEPS[lessonStepIdx].desc}
+                  </p>
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      disabled={lessonStepIdx === 0}
+                      onClick={() => setLessonStepIdx((i) => Math.max(0, i - 1))}
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[10.5px] font-bold text-slate-200 disabled:opacity-40 cursor-pointer"
+                    >
+                      ← Предыдущий шаг
+                    </button>
+                    <button
+                      disabled={lessonStepIdx === LESSON_STEPS.length - 1}
+                      onClick={() => setLessonStepIdx((i) => Math.min(LESSON_STEPS.length - 1, i + 1))}
+                      className="rounded-lg border border-cyan-400/60 bg-cyan-600 hover:bg-cyan-500 px-3 py-1.5 text-[10.5px] font-black text-slate-950 disabled:opacity-40 cursor-pointer"
+                    >
+                      Следующий шаг →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* All steps quick list */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {LESSON_STEPS.map((ls, idx) => (
+                  <div
+                    key={ls.step}
+                    onClick={() => setLessonStepIdx(idx)}
+                    className={`rounded-xl border p-2.5 transition-all cursor-pointer ${
+                      lessonStepIdx === idx
+                        ? 'border-cyan-400/70 bg-cyan-950/30'
+                        : 'border-slate-800 bg-slate-900/60 hover:border-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 font-black text-cyan-300 text-[11px]">
+                      <span>{ls.icon}</span>
+                      <span>{ls.step}. {ls.title}</span>
+                    </div>
+                    <p className="mt-1 text-[10px] text-slate-400 line-clamp-2">{ls.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ==================== БЛОК 4: ИИ СОВЕТЫ (ARGON 4 ADVISOR) ==================== */}
+          {activeTab === 'ai_advice' && (
+            <div className="space-y-3">
+              <div className="rounded-xl border-2 border-indigo-500/70 bg-gradient-to-r from-indigo-950/85 via-slate-900 to-purple-950/85 p-3.5 shadow-lg space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">🧠</span>
+                    <div>
+                      <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-indigo-200 flex items-center gap-1.5">
+                        <span>Тактический ИИ-Советник Argon 4</span>
+                        <span className="rounded border border-emerald-500/50 bg-emerald-950/80 px-1.5 py-0.5 text-[9px] font-black text-emerald-300">
+                          ONLINE
+                        </span>
+                      </div>
+                      <p className="text-[10.5px] text-slate-300">
+                        Персональный анализ вашего героя, прочности брони, статов, запаса зелий и готовности к боссам Пирамиды
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleRequestServerAiAdvice}
+                    disabled={isGeneratingAiAdvice || !hero}
+                    className="rounded-xl border border-indigo-300/80 bg-gradient-to-r from-indigo-500 via-purple-500 to-fuchsia-500 px-3.5 py-2 text-[11px] font-black text-white shadow-lg hover:brightness-110 active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
+                  >
+                    {isGeneratingAiAdvice ? '⏳ Анализ Argon 4...' : '⚡ Запросить глубокий ИИ-Совет'}
+                  </button>
+                </div>
+
+                {/* Generated Deep AI Advice Card */}
+                {currentAiAdvice && (
+                  <div className="mt-2 rounded-xl border-2 border-amber-400/80 bg-slate-950/95 p-3 space-y-2 shadow-xl">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-slate-800 pb-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm">✨</span>
+                        <span className="font-black text-amber-300 text-xs">
+                          {currentAiAdvice.title}
+                        </span>
+                      </div>
+                      <span className="rounded border border-emerald-500/50 bg-emerald-950/80 px-1.5 py-0.5 text-[9.5px] font-black text-emerald-300">
+                        Точность {currentAiAdvice.confidenceScore}% • {AI_CATEGORY_META[currentAiAdvice.category]?.label || 'Тактика'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-200 leading-relaxed">
+                      {currentAiAdvice.adviceText}
+                    </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <span className="text-[10px] font-bold text-emerald-300">
+                        📈 Ожидаемый эффект: {currentAiAdvice.expectedImpact}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            updatePlayerAdviceStatus(currentAiAdvice.id, 'accepted', 5);
+                            showToast?.('👍 Спасибо за оценку! Совет сохранён в статистике ИИ.');
+                          }}
+                          className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 hover:bg-cyan-800 px-2.5 py-1 text-[10px] font-black text-cyan-200 cursor-pointer"
+                        >
+                          👍 Полезно
+                        </button>
+                        {onApplyAiAction && (
+                          <button
+                            onClick={() => {
+                              updatePlayerAdviceStatus(currentAiAdvice.id, 'applied', 5);
+                              onApplyAiAction(currentAiAdvice.recommendedAction);
+                            }}
+                            className="rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 px-3 py-1 text-[10px] font-black text-slate-950 shadow cursor-pointer"
+                          >
+                            ⚡ Применить совет
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Automatic Live Diagnostics List */}
+              <div className="space-y-2">
+                <div className="text-[11px] font-black uppercase tracking-wider text-indigo-300 px-1">
+                  📊 Текущая диагностика вашего персонажа ({localAiDiagnostics.length} рек.)
+                </div>
+                {localAiDiagnostics.length === 0 ? (
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 text-center text-slate-400 text-xs">
+                    Нажмите «⚡ Запросить глубокий ИИ-Совет», чтобы получить персональную рекомендацию по вашему герою.
+                  </div>
+                ) : (
+                  localAiDiagnostics.map((diag, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-indigo-500/40 bg-slate-900/85 p-3 space-y-1.5 shadow"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <div className="font-black text-amber-300 text-xs flex items-center gap-1.5">
+                          <span>{AI_CATEGORY_META[diag.category]?.icon || '🧠'}</span>
+                          <span>{diag.title}</span>
+                        </div>
+                        <span className="rounded border border-indigo-500/40 bg-indigo-950/70 px-1.5 py-0.5 text-[9px] font-bold text-indigo-200">
+                          Точность {diag.confidenceScore}%
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-200 leading-relaxed">{diag.adviceText}</p>
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                        <span className="text-[10px] font-bold text-emerald-300">
+                          📈 {diag.expectedImpact}
+                        </span>
+                        {onApplyAiAction && (
+                          <button
+                            onClick={() => onApplyAiAction(diag.recommendedAction)}
+                            className="rounded-lg border border-emerald-400/60 bg-emerald-600/90 hover:bg-emerald-500 px-2.5 py-1 text-[10px] font-black text-slate-950 shadow cursor-pointer"
+                          >
+                            ⚡ Перейти к действию
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
         </div>

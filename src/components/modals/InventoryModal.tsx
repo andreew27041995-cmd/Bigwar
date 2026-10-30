@@ -228,28 +228,32 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               >
                 {(() => {
                   const durPct = Math.max(0, Math.min(100, Math.round((curDur / maxDur) * 100)));
-                  const isLow = curDur <= 0 || durPct <= 25;
-                  const isMid = !isLow && durPct <= 60;
+                  const isCritical = curDur <= 0 || durPct < 15;
+                  const isLow = !isCritical && durPct <= 30;
+                  const isMid = !isCritical && !isLow && durPct <= 60;
+                  const barColor = isCritical || isLow ? '#ef4444' : isMid ? '#f59e0b' : '#10b981';
                   return (
                     <div
                       className="flex flex-col items-center gap-1 shrink-0"
-                      title={`Прочность: ${curDur}/${maxDur} (${durPct}%)`}
+                      title={`Прочность: ${curDur}/${maxDur} (${durPct}%)${isCritical ? ' — КРИТИЧЕСКИЙ ИЗНОС!' : ''}`}
                     >
                       <div className="w-12 h-12 rounded-lg border border-amber-500/40 bg-slate-900 flex items-center justify-center p-1 shrink-0 overflow-hidden">
                         <ItemIcon icon={itemToSell.icon} alt={itemToSell.name} slot={slotKey as any} />
                       </div>
-                      <div className="w-12 h-1.5 rounded-full bg-slate-950 border border-slate-700/90 overflow-hidden p-[1px]">
+                      <div className={`w-12 h-1.5 rounded-full bg-slate-950 border overflow-hidden p-[1px] transition-colors duration-300 ${isCritical ? 'border-red-500/90' : 'border-slate-700/90'}`}>
                         <div
-                          className={`h-full rounded-full transition-all duration-300 ${
-                            isLow
-                              ? 'bg-gradient-to-r from-red-600 to-rose-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]'
+                          className={`h-full rounded-full durability-progress-fill ${
+                            isCritical
+                              ? 'animate-critical-durability'
+                              : isLow
+                              ? 'shadow-[0_0_5px_rgba(239,68,68,0.85)]'
                               : isMid
-                              ? 'bg-gradient-to-r from-amber-500 to-yellow-400 shadow-[0_0_4px_rgba(245,158,11,0.6)]'
-                              : 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_4px_rgba(16,185,129,0.6)]'
+                              ? 'shadow-[0_0_4px_rgba(245,158,11,0.65)]'
+                              : 'shadow-[0_0_4px_rgba(16,185,129,0.65)]'
                           }`}
                           style={{
-                            width: `${curDur <= 0 ? 100 : Math.max(10, durPct)}%`,
-                            opacity: curDur <= 0 ? 0.55 : 1
+                            width: `${curDur <= 0 ? 100 : Math.max(12, durPct)}%`,
+                            backgroundColor: barColor
                           }}
                         />
                       </div>
@@ -541,8 +545,10 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
               const canAuction = canAuctionItem(item) && !isClanRented;
 
               const durPct = Math.max(0, Math.min(100, Math.round((curDur / maxDur) * 100)));
-              const isDurLow = permanentlyBroken || curDur <= 0 || durPct <= 25;
-              const isDurMid = !isDurLow && durPct <= 60;
+              const isDurCritical = permanentlyBroken || curDur <= 0 || durPct < 15;
+              const isDurLow = !isDurCritical && durPct <= 30;
+              const isDurMid = !isDurCritical && !isDurLow && durPct <= 60;
+              const durBarColor = isDurCritical || isDurLow ? '#ef4444' : isDurMid ? '#f59e0b' : '#10b981';
 
               return (
                 <div
@@ -560,30 +566,34 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                     <div className="flex items-center gap-2.5">
                       <div
                         className="flex flex-col items-center gap-1 shrink-0"
-                        title={`Прочность: ${curDur}/${maxDur} (${durPct}%)`}
+                        title={`Прочность: ${curDur}/${maxDur} (${durPct}%)${isDurCritical ? ' — КРИТИЧЕСКАЯ ПРОЧНОСТЬ (<15%)!' : ''}`}
                       >
                         <span className="text-2xl bg-slate-950/80 w-10 h-10 rounded-lg flex items-center justify-center border border-amber-500/40 shrink-0 overflow-hidden p-0.5">
                           <ItemIcon icon={item.icon} alt={item.name} slot={slotKey as any} />
                         </span>
-                        {/* Small colored durability progress bar below item icon */}
-                        <div className="w-10 h-1.5 rounded-full bg-slate-950 border border-slate-700/90 overflow-hidden p-[1px]">
+                        {/* Small colored durability progress bar below item icon with smooth color transition & critical <15% red blink */}
+                        <div className={`w-10 h-1.5 rounded-full bg-slate-950 border overflow-hidden p-[1px] transition-colors duration-300 ${isDurCritical ? 'border-red-500/90' : 'border-slate-700/90'}`}>
                           <div
-                            className={`h-full rounded-full transition-all duration-300 ${
-                              isDurLow
-                                ? 'bg-gradient-to-r from-red-600 to-rose-500 shadow-[0_0_5px_rgba(239,68,68,0.85)]'
+                            className={`h-full rounded-full durability-progress-fill ${
+                              isDurCritical
+                                ? 'animate-critical-durability'
+                                : isDurLow
+                                ? 'shadow-[0_0_5px_rgba(239,68,68,0.85)]'
                                 : isDurMid
-                                ? 'bg-gradient-to-r from-amber-500 to-yellow-400 shadow-[0_0_4px_rgba(245,158,11,0.65)]'
-                                : 'bg-gradient-to-r from-emerald-500 to-green-400 shadow-[0_0_4px_rgba(16,185,129,0.65)]'
+                                ? 'shadow-[0_0_4px_rgba(245,158,11,0.65)]'
+                                : 'shadow-[0_0_4px_rgba(16,185,129,0.65)]'
                             }`}
                             style={{
                               width: `${curDur <= 0 ? 100 : Math.max(12, durPct)}%`,
-                              opacity: curDur <= 0 ? 0.55 : 1
+                              backgroundColor: durBarColor
                             }}
                           />
                         </div>
                         <span
-                          className={`text-[8px] font-black leading-none tabular-nums ${
-                            isDurLow
+                          className={`text-[8px] font-black leading-none tabular-nums transition-colors duration-300 ${
+                            isDurCritical
+                              ? 'text-red-400 animate-pulse'
+                              : isDurLow
                               ? 'text-red-400'
                               : isDurMid
                               ? 'text-amber-300'
