@@ -129,6 +129,15 @@ import { TutorialModal } from './components/modals/TutorialModal';
 import { AchievementsModal } from './components/modals/AchievementsModal';
 import { ModificationAltarModal } from './components/modals/ModificationAltarModal';
 import {
+  BotSimulationConfig,
+  BotCharacter,
+  getBotSimulationConfig,
+  getRuntimeBots,
+  tickBotSimulation,
+  convertBotsToRealtimePlayers,
+  getRandomBotChatMessage
+} from './utils/botSimulation';
+import {
   evaluatePlayerAchievements,
   EvaluatedAchievement
 } from './utils/achievements';
@@ -293,7 +302,9 @@ export default function App() {
   const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements'>('profile');
   const [dailyModalInitialTab, setDailyModalInitialTab] = useState<'quests' | 'login'>('quests');
-  const [adminModalInitialTab, setAdminModalInitialTab] = useState<'ai' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip'>('ai');
+  const [adminModalInitialTab, setAdminModalInitialTab] = useState<
+    'ai' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
+  >('ai');
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
   const lastNpcSyncRef = useRef<number>(0);
@@ -363,6 +374,65 @@ export default function App() {
   >([]);
   const [reconnectTrigger, setReconnectTrigger] = useState<number>(0);
 
+  // Fake Online & Bot Chat Simulation State
+  const [botSimulationConfig, setBotSimulationConfig] = useState<BotSimulationConfig>(() =>
+    getBotSimulationConfig()
+  );
+  const [simulatedBots, setSimulatedBots] = useState<BotCharacter[]>(() =>
+    getRuntimeBots(botSimulationConfig.targetOnlineCount)
+  );
+
+  // Periodic Bot Movement & Online Simulation Loop (runs every 7.5s)
+  useEffect(() => {
+    if (!botSimulationConfig.enabled) return;
+    const interval = setInterval(() => {
+      const updated = tickBotSimulation(botSimulationConfig);
+      setSimulatedBots([...updated]);
+    }, 7500);
+    return () => clearInterval(interval);
+  }, [botSimulationConfig]);
+
+  // Periodic Bot Auto-Chat Loop (natural conversational delays)
+  useEffect(() => {
+    if (!botSimulationConfig.enabled || !botSimulationConfig.chatEnabled) return;
+    let timerId: number;
+    const scheduleNext = () => {
+      const minMs = Math.max(5, botSimulationConfig.chatMinDelaySec) * 1000;
+      const maxMs = Math.max(minMs + 2000, botSimulationConfig.chatMaxDelaySec * 1000);
+      const delay = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
+      timerId = window.setTimeout(() => {
+        const botMsg = getRandomBotChatMessage(botSimulationConfig);
+        if (botMsg) {
+          const now = new Date();
+          const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          const newChatMsg: ChatMessage = {
+            id: `bot_chat_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            time: timeStr,
+            author: botMsg.author,
+            text: botMsg.text,
+            channel: botMsg.channel,
+            timestamp: Date.now()
+          };
+          setChatMessages((prev) => [...prev, newChatMsg]);
+        }
+        scheduleNext();
+      }, delay);
+    };
+    scheduleNext();
+    return () => window.clearTimeout(timerId);
+  }, [botSimulationConfig]);
+
+  // Effective Realtime Players blending real connected users with simulated online bots
+  const effectiveRealtimePlayers = useMemo(() => {
+    if (!botSimulationConfig.enabled) {
+      return realtimePlayers;
+    }
+    const botRealtime = convertBotsToRealtimePlayers(simulatedBots);
+    const realNicks = new Set(realtimePlayers.map((p) => p.nick.toLowerCase()));
+    const filteredBots = botRealtime.filter((b) => !realNicks.has(b.nick.toLowerCase()));
+    return [...realtimePlayers, ...filteredBots];
+  }, [realtimePlayers, simulatedBots, botSimulationConfig.enabled]);
+
   // Server clock
   const [serverTimeStr, setServerTimeStr] = useState<string>(() =>
     new Date().toLocaleTimeString('ru-RU', {
@@ -381,10 +451,10 @@ export default function App() {
   }, [rareBossTimers]);
 
   // Refs for stable 1-second timer loop without tearing down interval on player/map updates
-  const realtimePlayersRef = useRef<RealtimePlayer[]>(realtimePlayers);
+  const realtimePlayersRef = useRef<RealtimePlayer[]>(effectiveRealtimePlayers);
   useEffect(() => {
-    realtimePlayersRef.current = realtimePlayers;
-  }, [realtimePlayers]);
+    realtimePlayersRef.current = effectiveRealtimePlayers;
+  }, [effectiveRealtimePlayers]);
 
   const pyramidTierRef = useRef<number>(pyramidTier);
   useEffect(() => {
@@ -1890,6 +1960,13 @@ export default function App() {
   useEffect(() => {
     applyCompensationBonusToAllPlayers();
   }, []);
+
+  // Synchronize simulated online bots with Pyramid map cells
+  useEffect(() => {
+    if (screen === 'pyramid' && effectiveRealtimePlayers.length > 0) {
+      refreshAllPlayersOnPyramidMap(effectiveRealtimePlayers);
+    }
+  }, [screen, effectiveRealtimePlayers, refreshAllPlayersOnPyramidMap]);
 
   // Respawn monsters and sacks every 1 minute deterministically and sync with Supabase (including offline tiers)
   const respawnPyramidMonstersAndSacks = useCallback(() => {
@@ -9090,7 +9167,7 @@ export default function App() {
               activeSack={activeSackAdjacent}
               damagePopups={damagePopups}
               rareBossTimers={rareBossTimers}
-              realtimePlayers={realtimePlayers}
+              realtimePlayers={effectiveRealtimePlayers}
               currentUser={currentUser}
               unreadMailCount={unreadMailCount}
               onPickUpSack={handlePickUpSack}
@@ -9150,7 +9227,7 @@ export default function App() {
             setActiveModal('character');
           }}
           onOpenTradeProtocol={() => setActiveModal('protocol')}
-          realtimePlayers={realtimePlayers}
+          realtimePlayers={effectiveRealtimePlayers}
           realtimeStatus={realtimeStatus}
           isAdmin={isAdmin}
           isModerator={isModerator}
@@ -9169,7 +9246,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.16</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.17</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">30.10.2026</strong></span>
         </div>
@@ -9209,8 +9286,8 @@ export default function App() {
             }}
             knownPlayers={Array.from(
               new Set([
-                ...realtimePlayers.map((p) => p.nick),
-                ...friends.map((f) => f.nick)
+                ...effectiveRealtimePlayers.map((p: RealtimePlayer) => p.nick),
+                ...friends.map((f: FriendEntry) => f.nick)
               ])
             )}
             onClose={() => setActiveModal(null)}
@@ -9646,7 +9723,7 @@ export default function App() {
             setEquipped={setEquipped}
             inventory={inventory}
             setInventory={setInventory}
-            onlinePlayers={realtimePlayers}
+            onlinePlayers={effectiveRealtimePlayers}
             setChatMessages={setChatMessages}
             setPrivateMessages={setMailMessages}
             showToast={showToast}

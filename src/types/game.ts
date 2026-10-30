@@ -150,6 +150,17 @@ export interface GameFeatureFlags {
   premiumLootBonusPct?: number;
   premiumGoldWheelEnabled?: boolean;
   premiumCrownEnabled?: boolean;
+  // Roulette (Колесо Фортуны) Settings
+  rouletteTitle?: string;
+  rouletteSpinCurrency?: 'crystals' | 'gold' | 'both';
+  rouletteSpinCostGold?: number;
+  rouletteVipSpinCostGold?: number;
+  rouletteVipSpinCostCrystals?: number;
+  rouletteGoldVipOnly?: boolean;
+  rouletteFreeSpinsPerDay?: number;
+  rouletteDailyGoldSpinsLimit?: number;
+  rouletteDailyCrystalSpinsLimit?: number;
+  rouletteVipUnlimitedSpins?: boolean;
 }
 
 export interface GameItem {

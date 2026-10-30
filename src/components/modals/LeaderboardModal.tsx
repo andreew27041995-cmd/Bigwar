@@ -41,6 +41,7 @@ export const LeaderboardModal: React.FC<LeaderboardModalProps> = ({
             p._rawIsOnlineInDb ?? p.is_online ?? p.isOnline,
             p.last_seen ?? p.lastSeen
           );
+          const adminLvl = Number(p.admin_level ?? p.is_admin ?? 0);
           const roleVal: 'admin' | 'mod' | 'regular' =
             adminLvl === 2 || p.role === 'mod'
               ? 'mod'

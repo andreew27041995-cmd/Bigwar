@@ -825,6 +825,38 @@ app.post('/api/admin/code/typecheck', async (req, res) => {
   }
 });
 
+// ==================== BOTS SIMULATION & AUTO-CHAT SERVER API ====================
+const BOTS_DATA_FILE = path.join(__dirname, 'bot-simulation.json');
+
+app.get('/api/bots/config', (req, res) => {
+  try {
+    if (fs.existsSync(BOTS_DATA_FILE)) {
+      const raw = fs.readFileSync(BOTS_DATA_FILE, 'utf-8');
+      return res.json(JSON.parse(raw));
+    }
+    return res.json({
+      enabled: true,
+      targetOnlineCount: 28,
+      chatEnabled: true,
+      chatMinDelaySec: 18,
+      chatMaxDelaySec: 42,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Ошибка загрузки конфигурации ботов' });
+  }
+});
+
+app.post('/api/bots/config', (req, res) => {
+  try {
+    const { config, isAdmin } = req.body;
+    if (!isAdmin) return res.status(403).json({ error: 'Требуются права Администратора' });
+    fs.writeFileSync(BOTS_DATA_FILE, JSON.stringify(config, null, 2), 'utf-8');
+    return res.json({ success: true, config });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || 'Ошибка сохранения конфигурации ботов' });
+  }
+});
+
 // POST /api/admin/ai-assistant
 app.post('/api/admin/ai-assistant', async (req, res) => {
   try {

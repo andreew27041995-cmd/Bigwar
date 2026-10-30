@@ -9,6 +9,7 @@ import {
 } from '../../utils/audio';
 import {
   getScarabTournamentConfig,
+  saveScarabTournamentConfigLocal,
   syncScarabTournamentConfigFromSupabase,
   saveScarabTournamentConfigToSupabase,
   ScarabTournamentGlobalConfig,
@@ -2478,7 +2479,7 @@ export const ScarabTournamentGameView: React.FC<SubGameCommonProps> = ({
   onGamblingTransaction
 }) => {
   const [subTab, setSubTab] = useState<'arena' | 'training' | 'leaderboard'>('arena');
-  const trainerKey = currentUser || hero.name || 'player';
+  const trainerKey = currentUser || hero.nick || (hero as any).name || 'player';
 
   // Global Admin Config for Scarab Tournament (cups, training costs, difficulty, reward schedule)
   const [tournamentConfig, setTournamentConfig] = useState<ScarabTournamentGlobalConfig>(() =>

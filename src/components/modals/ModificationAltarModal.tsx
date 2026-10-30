@@ -122,7 +122,7 @@ export function applyModificationClassToItem(item: GameItem, newClass: number): 
  */
 export function isShopMaterialEligible(
   item: GameItem,
-  shopCatalog: ShopItemTemplate[],
+  shopCatalog: ShopItemTemplate[] = [],
   targetItemId?: string | null
 ): boolean {
   if (!item) return false;
@@ -130,14 +130,16 @@ export function isShopMaterialEligible(
   if (item.rent || item.isClanRented || item.isElixirLot) return false;
   if (isCustomCreatedItem(item)) return false;
 
+  const safeCatalog = Array.isArray(shopCatalog) ? shopCatalog : [];
   // Check if item originates from or matches any item sold in the shop catalog
   if (item.shopTemplateId || item.origin === 'shop') return true;
   const cleanName = String(item.name || '').trim().toLowerCase();
-  const matchesCatalog = shopCatalog.some(
+  const matchesCatalog = safeCatalog.some(
     (tmpl) =>
-      tmpl.id === item.shopTemplateId ||
-      String(tmpl.name || '').trim().toLowerCase() === cleanName ||
-      tmpl.slot === item.slot
+      tmpl &&
+      (tmpl.id === item.shopTemplateId ||
+        String(tmpl.name || '').trim().toLowerCase() === cleanName ||
+        tmpl.slot === item.slot)
   );
   return matchesCatalog;
 }
@@ -149,18 +151,20 @@ export function isShopMaterialEligible(
 export function calculateSingleSacrificeChanceContribution(
   targetItem: GameItem,
   sacrificeItem: GameItem,
-  shopCatalog: ShopItemTemplate[]
+  shopCatalog: ShopItemTemplate[] = []
 ): number {
   const curClass = getItemModClass(targetItem);
   if (curClass >= MAX_MODIFICATION_CLASS) return 0;
   const nextClass = curClass + 1; // 1..10
+  const safeCatalog = Array.isArray(shopCatalog) ? shopCatalog : [];
 
   const findPrice = (it: GameItem) => {
     if (it.price && it.price > 0) return Number(it.price);
-    const match = shopCatalog.find(
+    const match = safeCatalog.find(
       (s) =>
-        s.id === it.shopTemplateId ||
-        s.name.trim().toLowerCase() === String(it.name || '').trim().toLowerCase()
+        s &&
+        (s.id === it.shopTemplateId ||
+          String(s.name || '').trim().toLowerCase() === String(it.name || '').trim().toLowerCase())
     );
     if (match && match.price > 0) return Number(match.price);
     return Math.max(30, Number(it.lvl || 1) * 28);
@@ -202,9 +206,11 @@ interface ModificationAltarModalProps {
   hero: HeroState;
   equipped: EquippedGear;
   inventory: GameItem[];
-  shopItems: ShopItemTemplate[];
+  shopItems?: ShopItemTemplate[];
+  shopCatalog?: ShopItemTemplate[];
   initialTargetItemId?: string | null;
   onClose: () => void;
+  showToast?: (msg: string) => void;
   onExecuteModification: (payload: {
     targetItemId: string;
     isEquippedSlot?: ItemSlot | null;
@@ -223,27 +229,39 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
   equipped,
   inventory,
   shopItems,
+  shopCatalog,
   initialTargetItemId = null,
   onClose,
   onExecuteModification,
   onQuickBuyShopSacrifice
 }) => {
+  const resolvedShopItems = useMemo<ShopItemTemplate[]>(() => {
+    if (Array.isArray(shopItems)) return shopItems;
+    if (Array.isArray(shopCatalog)) return shopCatalog;
+    return [];
+  }, [shopItems, shopCatalog]);
+
+  const safeInventory = useMemo<GameItem[]>(() => {
+    return Array.isArray(inventory) ? inventory : [];
+  }, [inventory]);
+
   // All player items eligible to be placed on the Top Altar (equipped + inventory)
   const allTargetCandidates = useMemo(() => {
     const list: { item: GameItem; isEquipped: boolean; equippedSlot?: ItemSlot }[] = [];
-    (Object.keys(equipped) as ItemSlot[]).forEach((slot) => {
-      const eqItem = equipped[slot];
+    const safeEq = equipped || ({} as EquippedGear);
+    (Object.keys(safeEq) as ItemSlot[]).forEach((slot) => {
+      const eqItem = safeEq[slot];
       if (eqItem && !eqItem.rent && !eqItem.isClanRented) {
         list.push({ item: eqItem, isEquipped: true, equippedSlot: slot });
       }
     });
-    inventory.forEach((invItem) => {
+    safeInventory.forEach((invItem) => {
       if (invItem && !invItem.rent && !invItem.isClanRented && !invItem.isElixirLot) {
         list.push({ item: invItem, isEquipped: false });
       }
     });
     return list;
-  }, [equipped, inventory]);
+  }, [equipped, safeInventory]);
 
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(() => {
     if (initialTargetItemId && allTargetCandidates.some((c) => c.item.id === initialTargetItemId)) {
@@ -291,13 +309,13 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
 
   // Eligible Sacrifice Items from Inventory (Sold in Game Shop, not currently selected as target)
   const eligibleSacrificeInventory = useMemo(() => {
-    return inventory.filter((it) => isShopMaterialEligible(it, shopItems, selectedTargetId));
-  }, [inventory, shopItems, selectedTargetId]);
+    return safeInventory.filter((it) => isShopMaterialEligible(it, resolvedShopItems, selectedTargetId));
+  }, [safeInventory, resolvedShopItems, selectedTargetId]);
 
   // Keep sacrificeIds valid if inventory changes
   useEffect(() => {
     setSacrificeIds((prev) =>
-      prev.filter(
+      (Array.isArray(prev) ? prev : []).filter(
         (id) =>
           id !== selectedTargetId &&
           eligibleSacrificeInventory.some((it) => it.id === id)
@@ -306,7 +324,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
   }, [selectedTargetId, eligibleSacrificeInventory]);
 
   const selectedSacrificeItems = useMemo(() => {
-    return sacrificeIds
+    return (Array.isArray(sacrificeIds) ? sacrificeIds : [])
       .map((id) => eligibleSacrificeInventory.find((it) => it.id === id))
       .filter((it): it is GameItem => Boolean(it));
   }, [sacrificeIds, eligibleSacrificeInventory]);
@@ -315,11 +333,11 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
   const totalChancePct = useMemo(() => {
     if (!targetItem || isMaxClass || selectedSacrificeItems.length === 0) return 0;
     const sum = selectedSacrificeItems.reduce(
-      (acc, sac) => acc + calculateSingleSacrificeChanceContribution(targetItem, sac, shopItems),
+      (acc, sac) => acc + calculateSingleSacrificeChanceContribution(targetItem, sac, resolvedShopItems),
       0
     );
     return Math.max(1, Math.min(100, sum));
-  }, [targetItem, isMaxClass, selectedSacrificeItems, shopItems]);
+  }, [targetItem, isMaxClass, selectedSacrificeItems, resolvedShopItems]);
 
   // Current vs Next Class Stats Preview
   const statsPreview = useMemo(() => {
@@ -412,7 +430,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
       if (picked.length >= MAX_SACRIFICE_SLOTS) break;
       if (runningChance >= 100) break;
       picked.push(candidate.id);
-      runningChance += calculateSingleSacrificeChanceContribution(targetItem, candidate, shopItems);
+      runningChance += calculateSingleSacrificeChanceContribution(targetItem, candidate, resolvedShopItems);
     }
     setSacrificeIds(picked);
   };
@@ -967,7 +985,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                 const sacItem = selectedSacrificeItems[slotIdx] || null;
                 const contribPct =
                   sacItem && targetItem
-                    ? calculateSingleSacrificeChanceContribution(targetItem, sacItem, shopItems)
+                    ? calculateSingleSacrificeChanceContribution(targetItem, sacItem, resolvedShopItems)
                     : 0;
                 return (
                   <div
@@ -1059,7 +1077,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                   eligibleSacrificeInventory.map((sacItem) => {
                     const isPicked = sacrificeIds.includes(sacItem.id);
                     const contrib = targetItem
-                      ? calculateSingleSacrificeChanceContribution(targetItem, sacItem, shopItems)
+                      ? calculateSingleSacrificeChanceContribution(targetItem, sacItem, resolvedShopItems)
                       : 0;
                     const q = getQualityConfig(sacItem.quality || 'common');
                     return (
@@ -1114,8 +1132,8 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                     Баланс: {hero.gold.toLocaleString('ru-RU')} 🪙
                   </span>
                 </div>
-                {shopItems
-                  .filter((s) => s.enabled !== false)
+                {resolvedShopItems
+                  .filter((s) => s && s.enabled !== false)
                   .sort((a, b) => Number(a.price || 0) - Number(b.price || 0))
                   .map((tmpl) => {
                     const tempItem: GameItem = {
@@ -1132,7 +1150,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                       origin: 'shop'
                     };
                     const contrib = targetItem
-                      ? calculateSingleSacrificeChanceContribution(targetItem, tempItem, shopItems)
+                      ? calculateSingleSacrificeChanceContribution(targetItem, tempItem, resolvedShopItems)
                       : 0;
                     const canAfford = hero.gold >= tmpl.price;
                     return (

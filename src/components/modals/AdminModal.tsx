@@ -104,6 +104,7 @@ import {
 import { CrystalOrdersMailbox } from './CrystalOrdersMailbox';
 import { AdminAiAssistantTab } from './AdminAiAssistantTab';
 import { AdminAiMonitoringTab } from './AdminAiMonitoringTab';
+import { AdminBotsTab } from './AdminBotsTab';
 import {
   ScarabTournamentGlobalConfig,
   getScarabTournamentConfig,
@@ -114,7 +115,7 @@ import {
 
 interface AdminModalProps {
   onClose: () => void;
-  initialTab?: 'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament';
+  initialTab?: 'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots';
   hero: HeroState;
   setHero: React.Dispatch<React.SetStateAction<HeroState>>;
   equipped?: EquippedGear;
@@ -169,7 +170,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onShopAndFeaturesUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament'
+    'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
   >(initialTab);
   const [scarabTourneyCfg, setScarabTourneyCfg] = useState<ScarabTournamentGlobalConfig>(() =>
     getScarabTournamentConfig()
@@ -3341,6 +3342,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             🏆 14. Турнир Скарабеев
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('bots')}
+            className={`rounded-lg py-1.5 px-2 transition-all ${
+              activeTab === 'bots'
+                ? 'bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-slate-950 font-black shadow-[0_0_14px_rgba(20,184,166,0.65)]'
+                : 'bg-gradient-to-r from-teal-950/80 via-slate-900 to-emerald-950/80 text-teal-300 border border-teal-500/50 hover:bg-teal-900/50'
+            }`}
+          >
+            👥 15. Онлайн & Чат-боты
           </button>
         </div>
         )}
@@ -15430,6 +15442,19 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* ==================== TAB 15: BOTS SIMULATION & AUTO-CHAT ==================== */}
+          {activeTab === 'bots' && (
+            <AdminBotsTab
+              showToast={showToast}
+              onSendChatMessage={(msg) => {
+                setChatMessages((prev) => [...prev, msg]);
+              }}
+              onRefreshBots={() => {
+                if (onRefreshOnlinePlayers) onRefreshOnlinePlayers();
+              }}
+            />
           )}
             </>
           )}
