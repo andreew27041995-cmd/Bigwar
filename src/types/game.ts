@@ -102,7 +102,8 @@ export interface TransportTemplate {
   travelTimeSec: number; // e.g., 600 (10m), 360 (6m), 240 (4m), 180 (3m)
   priceGold: number;
   priceCrystals?: number;
-  currency?: 'gold' | 'crystals';
+  price?: number;
+  currency?: 'gold' | 'crystals' | 'both';
   maxDurability: number;
   quality: ItemQualityKey;
   description?: string;
@@ -113,10 +114,11 @@ export interface TransportTemplate {
 
 export interface PortTravelState {
   status: 'idle' | 'to_port' | 'in_port' | 'from_port';
-  departureTime: number;
-  arrivalTime: number;
-  travelDurationSec: number;
-  transportId?: string;
+  departureTime?: number;
+  startTime?: number;
+  arrivalTime?: number;
+  travelDurationSec?: number;
+  transportId?: string | null;
   transportName?: string;
   transportIcon?: string;
 }
@@ -194,6 +196,7 @@ export interface GameFeatureFlags {
   altarBonusPerClassPct?: number; // Default +5% per class (10 classes = +50%)
   altarClassChancePerRelic?: number[]; // 10 values for Class 1..10 chance per 1 relic
   transportsCatalog?: TransportTemplate[];
+  transportsPriceMigratedV2?: boolean;
   namedTransportEnabled?: boolean;
   namedTransportDefaultDurability?: number; // Default 500/500
   namedTransportTimeReductionPct?: number; // Default 35% time reduction

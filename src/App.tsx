@@ -7452,7 +7452,7 @@ export default function App() {
   };
 
   // ================= PORT & TRANSPORT HANDLERS =================
-  const handleBuyTransport = (template: TransportTemplate, payCurrency: 'gold' | 'crystals') => {
+  const handleBuyTransport = (template: TransportTemplate, _payCurrency?: 'gold' | 'crystals' | 'both') => {
     const curHero = heroRef.current || hero;
     const curInv = inventoryRef.current || inventory;
 
@@ -7461,15 +7461,15 @@ export default function App() {
       return;
     }
 
-    const goldCost = payCurrency === 'gold' ? Math.max(0, Number(template.priceGold || 0)) : 0;
-    const crystalCost = payCurrency === 'crystals' ? Math.max(0, Number(template.priceCrystals || 0)) : 0;
+    const goldCost = Math.max(0, Number(template.priceGold ?? template.price ?? 0));
+    const crystalCost = Math.max(0, Number(template.priceCrystals ?? 0));
 
-    if (payCurrency === 'gold' && curHero.gold < goldCost) {
-      showToast(`❌ Недостаточно золота! Нужно ${goldCost.toLocaleString()} 🪙.`);
+    if (goldCost > 0 && curHero.gold < goldCost) {
+      showToast(`❌ Недостаточно золота! Нужно ${goldCost.toLocaleString('ru-RU')} 🪙.`);
       return;
     }
-    if (payCurrency === 'crystals' && curHero.crystals < crystalCost) {
-      showToast(`❌ Недостаточно кристаллов! Нужно ${crystalCost} 💎.`);
+    if (crystalCost > 0 && curHero.crystals < crystalCost) {
+      showToast(`❌ Недостаточно кристаллов! Нужно ${crystalCost.toLocaleString('ru-RU')} 💎.`);
       return;
     }
 
@@ -7508,7 +7508,7 @@ export default function App() {
 
     playCoinSound();
     showToast(
-      `🚤 Куплен транспорт «${template.name}» (время до Порта: ${formatTravelTimeText(template.travelTimeSec)})! Теперь вы можете отправиться в Порт.`
+      `🚤 Куплен транспорт «${template.name}» (прочность ${transportItem.maxDurability}/${transportItem.maxDurability}, время до Порта: ${formatTravelTimeText(template.travelTimeSec)})!`
     );
   };
 
@@ -7529,10 +7529,10 @@ export default function App() {
     showToast('⚓ Активный транспорт для путешествий в Порт выбран!');
   };
 
-  const handleStartTravelToPort = (transport: GameItem, durationSec: number) => {
+  const handleStartTravelToPort = (transport: GameItem, durationSec?: number) => {
     const curHero = heroRef.current || hero;
     const curInv = inventoryRef.current || inventory;
-    const maxDur = Math.max(1, Number(transport.maxDurability ?? 100));
+    const maxDur = Math.max(1, Number(transport.maxDurability ?? 10));
     const curDur = Math.max(0, Number(transport.durability ?? maxDur));
     if (curDur <= 0) {
       showToast('⛔ Ваш транспорт сломан (0 прочности)! Почините его в Сумке или выберите другой.');
@@ -7540,13 +7540,14 @@ export default function App() {
     }
 
     const now = Date.now();
-    const safeSec = Math.max(5, Math.round(durationSec));
+    const safeSec = Math.max(5, Math.round(Number(durationSec || transport.travelTimeSec || 600)));
     const nextPortTravel: PortTravelState = {
       status: 'to_port',
       transportId: transport.id,
       transportName: transport.name,
       transportIcon: transport.icon,
       travelDurationSec: safeSec,
+      departureTime: now,
       startTime: now,
       arrivalTime: now + safeSec * 1000
     };
@@ -7584,11 +7585,11 @@ export default function App() {
     );
   };
 
-  const handleStartReturnFromPort = (transport: GameItem | null, durationSec: number) => {
+  const handleStartReturnFromPort = (transport?: GameItem | null, durationSec?: number) => {
     const curHero = heroRef.current || hero;
     const now = Date.now();
     // Return journey takes the exact same time as the trip to the Port
-    const tripThereSec = Number(curHero.portTravel?.travelDurationSec || durationSec || 180);
+    const tripThereSec = Number(curHero.portTravel?.travelDurationSec || durationSec || transport?.travelTimeSec || 180);
     const safeSec = Math.max(5, Math.round(tripThereSec));
 
     const nextPortTravel: PortTravelState = {
@@ -7597,6 +7598,7 @@ export default function App() {
       transportName: transport?.name || curHero.portTravel?.transportName || 'Транспорт',
       transportIcon: transport?.icon || curHero.portTravel?.transportIcon || '🚤',
       travelDurationSec: safeSec,
+      departureTime: now,
       startTime: now,
       arrivalTime: now + safeSec * 1000
     };
@@ -9605,7 +9607,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.20</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.21</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>

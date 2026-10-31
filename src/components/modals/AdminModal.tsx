@@ -9003,6 +9003,152 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </button>
               </div>
 
+              {/* 2.5. Управление Транспортом в Магазине (Лодка, Катер, Апач, М-8) */}
+              <div className="rounded-xl border-2 border-cyan-500/50 bg-slate-900/95 p-3 space-y-2.5 shadow-md">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                  <div>
+                    <div className="text-xs sm:text-sm font-black text-cyan-300">
+                      🚤 Управление ценами и прочностью Транспорта в Магазине
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      Лодка (3000 🪙, 10/10), Катер (5000 🪙, 20/20), Апач (10000 🪙 + 100 💎, 30/30), М-8 (1000 💎, 60/60)
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={isSavingShop}
+                      onClick={async () => {
+                        const nextFlags: GameFeatureFlags = {
+                          ...featureFlags,
+                          transportsCatalog: DEFAULT_TRANSPORTS.map((t) => ({ ...t })),
+                          transportsPriceMigratedV2: true
+                        };
+                        setFeatureFlags(nextFlags);
+                        setIsSavingShop(true);
+                        try {
+                          await saveShopAndFeaturesToSupabase(shopCatalog, nextFlags, shopSkins);
+                          if (onShopAndFeaturesUpdated) {
+                            onShopAndFeaturesUpdated(shopCatalog, nextFlags, shopSkins);
+                          }
+                          showToast('↺ Стандартные цены и прочность транспорта восстановлены и сохранены!');
+                        } finally {
+                          setIsSavingShop(false);
+                        }
+                      }}
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-700 cursor-pointer"
+                    >
+                      ↺ Сбросить цены транспорта
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSavingShop}
+                      onClick={handleSaveShopCatalog}
+                      className="rounded-lg bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-[10px] font-black text-white shadow cursor-pointer"
+                    >
+                      💾 Сохранить цены транспорта
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {getTransportsCatalog(featureFlags).map((tr, idx) => {
+                    const updateShopTransport = (patch: Partial<TransportTemplate>) => {
+                      const currentList = getTransportsCatalog(featureFlags);
+                      const nextList = currentList.map((item, i) => {
+                        if (i !== idx) return item;
+                        const merged = { ...item, ...patch };
+                        const g = Math.max(0, Number(merged.priceGold ?? 0));
+                        const c = Math.max(0, Number(merged.priceCrystals ?? 0));
+                        const cur: 'gold' | 'crystals' | 'both' =
+                          g > 0 && c > 0 ? 'both' : c > 0 ? 'crystals' : 'gold';
+                        return {
+                          ...merged,
+                          priceGold: g,
+                          priceCrystals: c,
+                          price: g,
+                          currency: cur
+                        };
+                      });
+                      const nextFlags: GameFeatureFlags = {
+                        ...featureFlags,
+                        transportsCatalog: nextList,
+                        transportsPriceMigratedV2: true
+                      };
+                      setFeatureFlags(nextFlags);
+                      if (onShopAndFeaturesUpdated) {
+                        onShopAndFeaturesUpdated(shopCatalog, nextFlags, shopSkins);
+                      }
+                    };
+
+                    return (
+                      <div
+                        key={tr.id}
+                        className="rounded-lg border border-slate-700 bg-slate-950 p-2.5 space-y-2 text-[10px]"
+                      >
+                        <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-base">{tr.icon}</span>
+                            <span className="font-black text-amber-300 text-xs">{tr.name}</span>
+                            <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] text-purple-300 font-bold">
+                              {tr.lvl} ур. • {formatTravelTimeText(tr.travelTimeSec)}
+                            </span>
+                          </div>
+                          <span className="text-[9.5px] font-bold text-emerald-400">
+                            🔧 {tr.maxDurability}/{tr.maxDurability}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          <div>
+                            <label className="text-amber-300 font-bold block">Золото (🪙):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={tr.priceGold}
+                              onChange={(e) =>
+                                updateShopTransport({
+                                  priceGold: Math.max(0, parseInt(e.target.value, 10) || 0)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-bold text-amber-300"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-cyan-300 font-bold block">Кристаллы (💎):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={tr.priceCrystals ?? 0}
+                              onChange={(e) =>
+                                updateShopTransport({
+                                  priceCrystals: Math.max(0, parseInt(e.target.value, 10) || 0)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-bold text-cyan-300"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-emerald-300 font-bold block">Прочность:</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={5000}
+                              value={tr.maxDurability}
+                              onChange={(e) =>
+                                updateShopTransport({
+                                  maxDurability: Math.max(1, parseInt(e.target.value, 10) || 10)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 font-bold text-emerald-300"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* 3. Редактирование существующих предметов в Магазине */}
               <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-3">
                 <div className="mb-2.5 flex flex-wrap items-center justify-between gap-1.5">
@@ -16786,12 +16932,25 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() =>
-                        setFeatureFlags((prev) => ({
-                          ...prev,
-                          transportsCatalog: [...DEFAULT_TRANSPORTS]
-                        }))
-                      }
+                      disabled={isSavingShop}
+                      onClick={async () => {
+                        const nextFlags: GameFeatureFlags = {
+                          ...featureFlags,
+                          transportsCatalog: DEFAULT_TRANSPORTS.map((t) => ({ ...t })),
+                          transportsPriceMigratedV2: true
+                        };
+                        setFeatureFlags(nextFlags);
+                        setIsSavingShop(true);
+                        try {
+                          await saveShopAndFeaturesToSupabase(shopCatalog, nextFlags, shopSkins);
+                          if (onShopAndFeaturesUpdated) {
+                            onShopAndFeaturesUpdated(shopCatalog, nextFlags, shopSkins);
+                          }
+                          showToast('↺ Транспорт сброшен к стандартным ценам и прочности!');
+                        } finally {
+                          setIsSavingShop(false);
+                        }
+                      }}
                       className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-700 cursor-pointer"
                     >
                       ↺ Сбросить транспорт к стандартным
@@ -16803,13 +16962,30 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   {getTransportsCatalog(featureFlags).map((tr, idx) => {
                     const updateTransportField = (patch: Partial<TransportTemplate>) => {
                       const currentList = getTransportsCatalog(featureFlags);
-                      const nextList = currentList.map((item, i) =>
-                        i === idx ? { ...item, ...patch } : item
-                      );
-                      setFeatureFlags((prev) => ({
-                        ...prev,
-                        transportsCatalog: nextList
-                      }));
+                      const nextList = currentList.map((item, i) => {
+                        if (i !== idx) return item;
+                        const merged = { ...item, ...patch };
+                        const g = Math.max(0, Number(merged.priceGold ?? 0));
+                        const c = Math.max(0, Number(merged.priceCrystals ?? 0));
+                        const cur: 'gold' | 'crystals' | 'both' =
+                          g > 0 && c > 0 ? 'both' : c > 0 ? 'crystals' : 'gold';
+                        return {
+                          ...merged,
+                          priceGold: g,
+                          priceCrystals: c,
+                          price: g,
+                          currency: cur
+                        };
+                      });
+                      const nextFlags: GameFeatureFlags = {
+                        ...featureFlags,
+                        transportsCatalog: nextList,
+                        transportsPriceMigratedV2: true
+                      };
+                      setFeatureFlags(nextFlags);
+                      if (onShopAndFeaturesUpdated) {
+                        onShopAndFeaturesUpdated(shopCatalog, nextFlags, shopSkins);
+                      }
                     };
 
                     return (
@@ -16936,12 +17112,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                             <label className="text-emerald-300 font-bold">Прочность:</label>
                             <input
                               type="number"
-                              min={10}
+                              min={1}
                               max={5000}
                               value={tr.maxDurability}
                               onChange={(e) =>
                                 updateTransportField({
-                                  maxDurability: Math.max(10, parseInt(e.target.value, 10) || 100)
+                                  maxDurability: Math.max(1, parseInt(e.target.value, 10) || 10)
                                 })
                               }
                               className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-emerald-200"

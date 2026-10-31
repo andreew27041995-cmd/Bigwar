@@ -364,14 +364,30 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {transportsList.map((tr) => {
                 const meetsLevel = heroLvl >= Number(tr.lvl || 1);
-                const isCrystals = tr.currency === 'crystals';
-                const priceVal = isCrystals
-                  ? Math.max(0, Number(tr.priceCrystals || tr.price || 0))
-                  : Math.max(0, Number(tr.price || 0));
-                const canAfford = isCrystals ? heroCrystals >= priceVal : heroGold >= priceVal;
+                const goldPrice = Math.max(0, Number(tr.priceGold ?? tr.price ?? 0));
+                const crystalPrice = Math.max(0, Number(tr.priceCrystals ?? 0));
+                const hasGold = goldPrice > 0;
+                const hasCrystals = crystalPrice > 0;
+                const canAffordGold = heroGold >= goldPrice;
+                const canAffordCrystals = heroCrystals >= crystalPrice;
+                const canAfford = canAffordGold && canAffordCrystals;
                 const ownedMatching = ownedTransports.filter(
                   (it: GameItem) => it.transportTemplateId === tr.id || it.name === tr.name
                 );
+
+                const priceLabelText =
+                  hasGold && hasCrystals
+                    ? `${goldPrice.toLocaleString('ru-RU')} 🪙 золота и ${crystalPrice.toLocaleString('ru-RU')} 💎 кристаллов`
+                    : hasCrystals
+                    ? `${crystalPrice.toLocaleString('ru-RU')} 💎 кристаллов`
+                    : `${goldPrice.toLocaleString('ru-RU')} 🪙 золота`;
+
+                const buyBtnPriceText =
+                  hasGold && hasCrystals
+                    ? `${goldPrice.toLocaleString('ru-RU')} 🪙 + ${crystalPrice.toLocaleString('ru-RU')} 💎`
+                    : hasCrystals
+                    ? `${crystalPrice.toLocaleString('ru-RU')} 💎`
+                    : `${goldPrice.toLocaleString('ru-RU')} 🪙`;
 
                 return (
                   <div
@@ -412,7 +428,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                     <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-2">
                       <div>
                         <div className="text-xs font-black text-yellow-400">
-                          {priceVal.toLocaleString()} {isCrystals ? '💎 кристаллов' : '🪙 золота'}
+                          {priceLabelText}
                         </div>
                         {ownedMatching.length > 0 && (
                           <div className="text-[9px] font-bold text-emerald-400">
@@ -434,8 +450,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                         {isBagFull
                           ? 'Сумка полна'
                           : canAfford
-                          ? `Купить (${priceVal} ${isCrystals ? '💎' : '🪙'})`
-                          : isCrystals
+                          ? `Купить (${buyBtnPriceText})`
+                          : !canAffordGold && !canAffordCrystals
+                          ? 'Мало 🪙 и 💎'
+                          : !canAffordCrystals
                           ? 'Мало кристаллов'
                           : 'Мало золота'}
                       </button>

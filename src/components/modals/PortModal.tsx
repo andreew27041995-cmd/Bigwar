@@ -18,12 +18,16 @@ interface PortModalProps {
   inventory: GameItem[];
   featureFlags?: GameFeatureFlags;
   onSelectTransport: (transportId: string) => void;
-  onStartTravelToPort: (transport: GameItem) => void;
-  onStartReturnFromPort: () => void;
-  onCompletePortTravelStep: (nextState: PortTravelState) => void;
-  onOpenCreateItem: () => void;
+  onStartTravelToPort: (transport: GameItem, durationSec?: number) => void;
+  onStartReturnFromPort: (transport?: GameItem | null, durationSec?: number) => void;
+  onCompletePortTravelStep?: (nextStateOrStatus: any) => void;
+  onCompleteTravelStep?: (nextStatus: 'in_port' | 'idle') => void;
+  onOpenCreateItem?: () => void;
+  onOpenForgeWeapon?: () => void;
   onOpenAltar: () => void;
-  onOpenTransportShop: () => void;
+  onOpenTransportShop?: () => void;
+  onOpenShopTransport?: () => void;
+  showToast?: (msg: string) => void;
   onClose: () => void;
 }
 
@@ -35,11 +39,16 @@ export const PortModal: React.FC<PortModalProps> = ({
   onStartTravelToPort,
   onStartReturnFromPort,
   onCompletePortTravelStep,
+  onCompleteTravelStep,
   onOpenCreateItem,
+  onOpenForgeWeapon,
   onOpenAltar,
   onOpenTransportShop,
+  onOpenShopTransport,
   onClose
 }) => {
+  const handleOpenTransportShop = onOpenTransportShop || onOpenShopTransport || (() => {});
+  const handleOpenForge = onOpenCreateItem || onOpenForgeWeapon || (() => {});
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
@@ -71,20 +80,24 @@ export const PortModal: React.FC<PortModalProps> = ({
 
   const portTravel: PortTravelState = hero.portTravel || { status: 'idle' };
   const travelStatus = portTravel.status || 'idle';
+  const startMs = portTravel.departureTime || portTravel.startTime || 0;
 
   // Auto-transition when travel timer finishes
   useEffect(() => {
     if (travelStatus === 'to_port' && portTravel.arrivalTime && nowMs >= portTravel.arrivalTime) {
-      onCompletePortTravelStep({
-        ...portTravel,
-        status: 'in_port'
-      });
+      if (onCompleteTravelStep) {
+        onCompleteTravelStep('in_port');
+      } else if (onCompletePortTravelStep) {
+        onCompletePortTravelStep('in_port');
+      }
     } else if (travelStatus === 'from_port' && portTravel.arrivalTime && nowMs >= portTravel.arrivalTime) {
-      onCompletePortTravelStep({
-        status: 'idle'
-      });
+      if (onCompleteTravelStep) {
+        onCompleteTravelStep('idle');
+      } else if (onCompletePortTravelStep) {
+        onCompletePortTravelStep('idle');
+      }
     }
-  }, [travelStatus, portTravel, nowMs, onCompletePortTravelStep]);
+  }, [travelStatus, portTravel, nowMs, onCompletePortTravelStep, onCompleteTravelStep]);
 
   const remainingSec = useMemo(() => {
     if ((travelStatus === 'to_port' || travelStatus === 'from_port') && portTravel.arrivalTime) {
@@ -96,16 +109,16 @@ export const PortModal: React.FC<PortModalProps> = ({
   const progressPct = useMemo(() => {
     if (
       (travelStatus === 'to_port' || travelStatus === 'from_port') &&
-      portTravel.departureTime &&
+      startMs > 0 &&
       portTravel.arrivalTime &&
-      portTravel.arrivalTime > portTravel.departureTime
+      portTravel.arrivalTime > startMs
     ) {
-      const totalMs = portTravel.arrivalTime - portTravel.departureTime;
-      const elapsedMs = Math.max(0, Math.min(totalMs, nowMs - portTravel.departureTime));
+      const totalMs = portTravel.arrivalTime - startMs;
+      const elapsedMs = Math.max(0, Math.min(totalMs, nowMs - startMs));
       return Math.max(2, Math.min(100, Math.round((elapsedMs / totalMs) * 100)));
     }
     return 0;
-  }, [travelStatus, portTravel.departureTime, portTravel.arrivalTime, nowMs]);
+  }, [travelStatus, startMs, portTravel.arrivalTime, nowMs]);
 
   const formatCountdown = (sec: number) => {
     const m = Math.floor(sec / 60);
@@ -262,7 +275,7 @@ export const PortModal: React.FC<PortModalProps> = ({
               <button
                 type="button"
                 disabled={travelStatus !== 'in_port'}
-                onClick={onOpenCreateItem}
+                onClick={handleOpenForge}
                 className={`group flex flex-col justify-between rounded-xl border-2 p-3 text-left transition-all ${
                   travelStatus === 'in_port'
                     ? 'border-amber-400/80 bg-gradient-to-br from-amber-950/70 via-slate-900 to-slate-950 hover:border-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.25)] active:scale-98 cursor-pointer'
@@ -328,7 +341,12 @@ export const PortModal: React.FC<PortModalProps> = ({
               <div className="pt-1">
                 <button
                   type="button"
-                  onClick={onStartReturnFromPort}
+                  onClick={() =>
+                    onStartReturnFromPort(
+                      activeTransport,
+                      portTravel.travelDurationSec || activeTransport?.travelTimeSec || 600
+                    )
+                  }
                   className="w-full rounded-xl border-2 border-emerald-400 bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 py-2.5 px-3 text-xs font-black uppercase tracking-wider text-white shadow-[0_0_20px_rgba(16,185,129,0.45)] hover:brightness-110 active:scale-98 cursor-pointer"
                 >
                   ⚓ Отправиться обратно в Город / Пирамиду (путь назад:{' '}
@@ -351,7 +369,7 @@ export const PortModal: React.FC<PortModalProps> = ({
               </div>
               <button
                 type="button"
-                onClick={onOpenTransportShop}
+                onClick={handleOpenTransportShop}
                 className="rounded-lg border border-emerald-400/70 bg-emerald-950/80 hover:bg-emerald-900 px-2.5 py-1 text-[10px] font-black text-emerald-200 shadow active:scale-95 cursor-pointer"
               >
                 🛒 Купить Транспорт в Магазине
@@ -368,7 +386,7 @@ export const PortModal: React.FC<PortModalProps> = ({
                 </p>
                 <button
                   type="button"
-                  onClick={onOpenTransportShop}
+                  onClick={handleOpenTransportShop}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-2 text-xs font-black text-slate-950 shadow-lg hover:brightness-110 active:scale-95 cursor-pointer"
                 >
                   <span>🚤 Перейти в Магазин («Транспорт»)</span>
@@ -457,7 +475,7 @@ export const PortModal: React.FC<PortModalProps> = ({
               <button
                 type="button"
                 disabled={!canUseSelectedTransport}
-                onClick={() => onStartTravelToPort(activeTransport)}
+                onClick={() => onStartTravelToPort(activeTransport, activeTransport.travelTimeSec || 600)}
                 className="w-full rounded-xl border-2 border-cyan-300 bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 py-2.5 px-3 text-xs sm:text-sm font-black uppercase tracking-wider text-white shadow-[0_0_25px_rgba(34,211,238,0.45)] hover:brightness-110 active:scale-98 disabled:opacity-40 cursor-pointer"
               >
                 {!canUseSelectedTransport

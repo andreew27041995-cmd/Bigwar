@@ -117,12 +117,13 @@ export const DEFAULT_TRANSPORTS: TransportTemplate[] = [
     icon: '🚣',
     lvl: 1,
     travelTimeSec: 600, // 10 минут
-    priceGold: 300,
+    priceGold: 3000,
     priceCrystals: 0,
+    price: 3000,
     currency: 'gold',
-    maxDurability: 30,
+    maxDurability: 10,
     quality: 'common',
-    description: 'Деревянная лодка Нила (1 уровень). Время в пути до Порта и обратно — 10 минут.',
+    description: 'Деревянная лодка Нила (1 уровень). Время в пути до Порта и обратно — 10 минут. Прочность 10/10.',
     enabled: true
   },
   {
@@ -131,12 +132,13 @@ export const DEFAULT_TRANSPORTS: TransportTemplate[] = [
     icon: '🚤',
     lvl: 3,
     travelTimeSec: 360, // 6 минут
-    priceGold: 900,
+    priceGold: 5000,
     priceCrystals: 0,
+    price: 5000,
     currency: 'gold',
-    maxDurability: 50,
+    maxDurability: 20,
     quality: 'rare',
-    description: 'Скоростной моторный катер (3 уровень). Время в пути до Порта и обратно — 6 минут.',
+    description: 'Скоростной моторный катер (3 уровень). Время в пути до Порта и обратно — 6 минут. Прочность 20/20.',
     enabled: true
   },
   {
@@ -145,12 +147,13 @@ export const DEFAULT_TRANSPORTS: TransportTemplate[] = [
     icon: '🚁',
     lvl: 5,
     travelTimeSec: 240, // 4 минуты
-    priceGold: 2500,
-    priceCrystals: 0,
-    currency: 'gold',
-    maxDurability: 80,
+    priceGold: 10000,
+    priceCrystals: 100,
+    price: 10000,
+    currency: 'both',
+    maxDurability: 30,
     quality: 'epic',
-    description: 'Боевой вертолёт «Апач» (5 уровень). Время в пути до Порта и обратно — 4 минуты.',
+    description: 'Боевой вертолёт «Апач» (5 уровень). Время в пути до Порта и обратно — 4 минуты. Прочность 30/30.',
     enabled: true
   },
   {
@@ -159,12 +162,13 @@ export const DEFAULT_TRANSPORTS: TransportTemplate[] = [
     icon: '🛩️',
     lvl: 9,
     travelTimeSec: 180, // 3 минуты
-    priceGold: 6000,
-    priceCrystals: 0,
-    currency: 'gold',
-    maxDurability: 120,
+    priceGold: 0,
+    priceCrystals: 1000,
+    price: 0,
+    currency: 'crystals',
+    maxDurability: 60,
     quality: 'legendary',
-    description: 'Тяжёлый штурмовой транспорт «М-8» (9 уровень). Время в пути до Порта и обратно — 3 минуты.',
+    description: 'Тяжёлый штурмовой транспорт «М-8» (9 уровень). Время в пути до Порта и обратно — 3 минуты. Прочность 60/60.',
     enabled: true
   }
 ];
@@ -255,6 +259,7 @@ export interface GlobalFeatureFlags {
   altarBonusPerClassPct?: number;
   altarClassChancePerRelic?: number[];
   transportsCatalog?: TransportTemplate[];
+  transportsPriceMigratedV2?: boolean;
   namedTransportEnabled?: boolean;
   namedTransportDefaultDurability?: number;
   namedTransportTimeReductionPct?: number;
@@ -335,6 +340,7 @@ export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
   altarBonusPerClassPct: 5,
   altarClassChancePerRelic: [...DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC],
   transportsCatalog: DEFAULT_TRANSPORTS.map((t) => ({ ...t })),
+  transportsPriceMigratedV2: true,
   namedTransportEnabled: true,
   namedTransportDefaultDurability: 500,
   namedTransportTimeReductionPct: 35,
@@ -1549,6 +1555,36 @@ export function resolvePlayerOwnedSkins(
   });
 }
 
+function migrateTransportsCatalogIfNeeded(flagsObj: any): boolean {
+  if (!flagsObj || typeof flagsObj !== 'object') return false;
+  if (flagsObj.transportsPriceMigratedV2 === true && Array.isArray(flagsObj.transportsCatalog) && flagsObj.transportsCatalog.length > 0) {
+    return false;
+  }
+  const defaultMap = new Map<string, TransportTemplate>();
+  DEFAULT_TRANSPORTS.forEach((d) => defaultMap.set(d.id, { ...d }));
+
+  if (!Array.isArray(flagsObj.transportsCatalog) || flagsObj.transportsCatalog.length === 0) {
+    flagsObj.transportsCatalog = DEFAULT_TRANSPORTS.map((t) => ({ ...t }));
+  } else {
+    flagsObj.transportsCatalog = flagsObj.transportsCatalog.map((t: any) => {
+      const def = defaultMap.get(t?.id);
+      if (!def) return t;
+      return {
+        ...def,
+        ...t,
+        priceGold: def.priceGold,
+        priceCrystals: def.priceCrystals,
+        price: def.priceGold,
+        currency: def.currency,
+        maxDurability: def.maxDurability,
+        description: def.description
+      };
+    });
+  }
+  flagsObj.transportsPriceMigratedV2 = true;
+  return true;
+}
+
 export function getFeatureFlags(): GlobalFeatureFlags {
   if (typeof window !== 'undefined') {
     try {
@@ -1559,7 +1595,11 @@ export function getFeatureFlags(): GlobalFeatureFlags {
           if (parsed.customDefaultDurability === 25) {
             parsed.customDefaultDurability = 100;
           }
+          const migrated = migrateTransportsCatalogIfNeeded(parsed);
           memoryFeatureFlags = { ...DEFAULT_FEATURE_FLAGS, ...parsed };
+          if (migrated) {
+            localStorage.setItem(FLAGS_STORAGE_KEY, JSON.stringify(memoryFeatureFlags));
+          }
         }
       }
     } catch (e) {
@@ -1595,10 +1635,12 @@ export async function syncShopAndFlagsFromSupabase(): Promise<{
               localStorage.setItem(SHOP_STORAGE_KEY, JSON.stringify(memoryShopCatalog));
             }
           }
+          let migratedRemoteFlags = false;
           if (parsed.flags && typeof parsed.flags === 'object') {
             if (parsed.flags.customDefaultDurability === 25) {
               parsed.flags.customDefaultDurability = 100;
             }
+            migratedRemoteFlags = migrateTransportsCatalogIfNeeded(parsed.flags);
             memoryFeatureFlags = { ...DEFAULT_FEATURE_FLAGS, ...parsed.flags };
             if (typeof window !== 'undefined') {
               localStorage.setItem(FLAGS_STORAGE_KEY, JSON.stringify(memoryFeatureFlags));
@@ -1624,6 +1666,9 @@ export async function syncShopAndFlagsFromSupabase(): Promise<{
               localStorage.setItem(SKINS_STORAGE_KEY, JSON.stringify(memoryShopSkins));
             }
           }
+          if (migratedRemoteFlags) {
+            saveShopAndFlagsToSupabase(memoryShopCatalog, memoryFeatureFlags, memoryShopSkins || undefined).catch(() => {});
+          }
         }
       }
     }
@@ -1643,7 +1688,7 @@ export async function saveShopAndFlagsToSupabase(
   skins?: CharacterSkinTemplate[]
 ): Promise<boolean> {
   memoryShopCatalog = [...catalog];
-  memoryFeatureFlags = { ...flags };
+  memoryFeatureFlags = { ...flags, transportsPriceMigratedV2: true };
   if (Array.isArray(skins)) {
     memoryShopSkins = mergeSkinsWithDefaults(skins, memoryShopSkins);
   } else if (memoryShopSkins === null) {
@@ -2067,28 +2112,42 @@ export function formatTravelTimeText(seconds: number): string {
 export function getTransportsCatalog(flags?: Partial<GlobalFeatureFlags> | null): TransportTemplate[] {
   const f = flags || getFeatureFlags();
   if (Array.isArray(f.transportsCatalog) && f.transportsCatalog.length > 0) {
-    return f.transportsCatalog.map((t, idx) => ({
-      id: String(t.id || `transport_${idx}`),
-      name: String(t.name || 'Транспорт'),
-      icon: String(t.icon || '🚤'),
-      lvl: Math.max(1, Number(t.lvl || 1)),
-      travelTimeSec: Math.max(5, Number(t.travelTimeSec || 600)),
-      priceGold: Math.max(0, Number(t.priceGold ?? 300)),
-      priceCrystals: Math.max(0, Number(t.priceCrystals ?? 0)),
-      currency: (t.currency || 'gold') as 'gold' | 'crystals',
-      maxDurability: Math.max(1, Number(t.maxDurability || 50)),
-      quality: (t.quality || 'common') as ItemQualityKey,
-      description: t.description || '',
-      isNamed: Boolean(t.isNamed),
-      timeReductionPct: Number(t.timeReductionPct || 0),
-      enabled: t.enabled !== false
-    }));
+    return f.transportsCatalog.map((t, idx) => {
+      const def = DEFAULT_TRANSPORTS.find((d) => d.id === t.id) || DEFAULT_TRANSPORTS[idx];
+      const goldVal = Math.max(0, Number(t.priceGold ?? (t as any).price ?? def?.priceGold ?? 0));
+      const crystalVal = Math.max(0, Number(t.priceCrystals ?? def?.priceCrystals ?? 0));
+      const derivedCurrency: 'gold' | 'crystals' | 'both' =
+        goldVal > 0 && crystalVal > 0
+          ? 'both'
+          : crystalVal > 0
+          ? 'crystals'
+          : 'gold';
+
+      return {
+        id: String(t.id || `transport_${idx}`),
+        name: String(t.name || def?.name || 'Транспорт'),
+        icon: String(t.icon || def?.icon || '🚤'),
+        lvl: Math.max(1, Number(t.lvl || def?.lvl || 1)),
+        travelTimeSec: Math.max(5, Number(t.travelTimeSec || def?.travelTimeSec || 600)),
+        priceGold: goldVal,
+        priceCrystals: crystalVal,
+        price: goldVal,
+        currency: derivedCurrency,
+        maxDurability: Math.max(1, Number(t.maxDurability || def?.maxDurability || 10)),
+        quality: (t.quality || def?.quality || 'common') as ItemQualityKey,
+        description: t.description || def?.description || '',
+        isNamed: Boolean(t.isNamed),
+        timeReductionPct: Number(t.timeReductionPct || 0),
+        enabled: t.enabled !== false
+      };
+    });
   }
   return DEFAULT_TRANSPORTS.map((t) => ({ ...t }));
 }
 
 export function createTransportItemFromTemplate(tpl: TransportTemplate): GameItem {
-  const maxDur = Math.max(1, Number(tpl.maxDurability || 50));
+  const maxDur = Math.max(1, Number(tpl.maxDurability || 10));
+  const goldVal = Math.max(0, Number(tpl.priceGold ?? tpl.price ?? 0));
   return {
     id: `transport_${tpl.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     transportTemplateId: tpl.id,
@@ -2100,7 +2159,7 @@ export function createTransportItemFromTemplate(tpl: TransportTemplate): GameIte
     lvl: Math.max(1, Number(tpl.lvl || 1)),
     dmg: 0,
     hp: 0,
-    price: Number(tpl.priceGold || 300),
+    price: goldVal,
     durability: maxDur,
     maxDurability: maxDur,
     initialMaxDurability: maxDur,
