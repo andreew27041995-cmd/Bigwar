@@ -264,11 +264,30 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
     }
   }, [activeTab, unreadMailCount, onMarkMailRead]);
 
+  const isAdminOrSystemSender = (nick: string) => {
+    const n = String(nick || '').trim().toLowerCase();
+    return (
+      n.includes('админ') ||
+      n.includes('система') ||
+      n.includes('admin') ||
+      n.includes('system') ||
+      n.includes('кузница') ||
+      n.includes('аукцион') ||
+      n.includes('главный') ||
+      n.includes('оповещение') ||
+      nick === '👑 Администрация'
+    );
+  };
+
   const handleSendNewMail = (e: React.FormEvent) => {
     e.preventDefault();
     const target = recipientNick.trim();
     const body = mailText.trim();
     if (!target || !body || !onSendMail) return;
+    if (isAdminOrSystemSender(target)) {
+      if (showToast) showToast('🔒 Отправка сообщений Администрации отключена для защиты от спама!');
+      return;
+    }
     onSendMail(target, body);
     setMailText('');
   };
@@ -276,6 +295,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const handleSendInlineReply = (targetNick: string) => {
     const body = inlineReplyText.trim();
     if (!targetNick || !body || !onSendMail) return;
+    if (isAdminOrSystemSender(targetNick)) {
+      if (showToast) showToast('🔒 Отправка сообщений Администрации отключена для защиты от спама!');
+      setReplyingToId(null);
+      return;
+    }
     onSendMail(targetNick, body);
     setInlineReplyText('');
     setReplyingToId(null);
@@ -683,27 +707,44 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                               ⭐ +{msg.gift.exp} Опыта
                             </span>
                           )}
-                          {msg.gift.item && (
-                            <span className="rounded bg-slate-900 border border-amber-400/60 px-2 py-0.5 text-[9px] font-extrabold text-amber-200">
-                              {msg.gift.item.icon} {msg.gift.item.name} (Ур.{msg.gift.item.lvl})
+                          {(msg.gift.relicsCount || 0) > 0 && (
+                            <span className="rounded bg-fuchsia-950/80 border border-fuchsia-500/40 px-1.5 py-0.5 text-[9px] font-extrabold text-fuchsia-300">
+                              🏺 +{msg.gift.relicsCount} Реликвий{msg.gift.relicClass ? ` (Класс М${msg.gift.relicClass})` : ''}
                             </span>
                           )}
+                          {msg.gift.item && (
+                            <span className="rounded bg-slate-900 border border-amber-400/60 px-2 py-0.5 text-[9px] font-extrabold text-amber-200">
+                              {msg.gift.item.isTransport ? '🚤 ' : ''}{msg.gift.item.icon} {msg.gift.item.name} {msg.gift.item.isTransport ? `(${msg.gift.item.durability}/${msg.gift.item.maxDurability} прочн.)` : `(Ур.${msg.gift.item.lvl})`}
+                            </span>
+                          )}
+                          {Array.isArray(msg.gift.items) &&
+                            msg.gift.items.map((it, itIdx) => (
+                              <span
+                                key={it.id || itIdx}
+                                className="rounded bg-slate-900 border border-amber-400/60 px-2 py-0.5 text-[9px] font-extrabold text-amber-200"
+                              >
+                                {it.isTransport ? '🚤 ' : ''}{it.icon} {it.name}
+                              </span>
+                            ))}
                         </div>
 
                         {isIncoming && (
-                          <div className="mt-2">
+                          <div className="mt-2.5 pt-1.5 border-t border-amber-500/20">
                             {isGiftClaimed ? (
-                              <div className="w-full rounded bg-slate-900 border border-emerald-500/30 py-1.5 text-center text-[9.5px] font-extrabold text-emerald-400">
-                                ✅ Подарок получен и зачислен на аккаунт
+                              <div className="w-full rounded bg-slate-900 border border-emerald-500/40 py-2 text-center text-[10px] font-extrabold text-emerald-400">
+                                ✅ Подарок успешно забран (1/1)
                               </div>
                             ) : (
                               <button
                                 type="button"
-                                onClick={() => handleClaimGiftClick(msg, msgId)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleClaimGiftClick(msg, msgId);
+                                }}
                                 disabled={isClaimingNow}
-                                className="w-full rounded-md bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 py-1.5 text-[10.5px] font-black text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.5)] hover:from-amber-400 hover:to-yellow-300 active:scale-95 cursor-pointer disabled:opacity-50"
+                                className="w-full rounded-lg bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 py-2 text-[11px] font-black text-slate-950 shadow-[0_0_15px_rgba(245,158,11,0.5)] hover:from-amber-400 hover:to-yellow-300 active:scale-95 cursor-pointer disabled:opacity-50"
                               >
-                                {isClaimingNow ? '⏳ Начисление...' : '🎁 Забрать подарок'}
+                                {isClaimingNow ? '⏳ Зачисление подарка...' : '🎁 Забрать подарок'}
                               </button>
                             )}
                           </div>
@@ -713,21 +754,27 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
 
                     {isIncoming && (
                       <div className="mt-2 flex items-center justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (isReplying) {
-                              setReplyingToId(null);
-                            } else {
-                              setReplyingToId(msgId);
-                              setRecipientNick(otherParty);
-                              setInlineReplyText('');
-                            }
-                          }}
-                          className="rounded border border-sky-500/50 bg-sky-950/80 px-2 py-0.5 text-[8.5px] font-bold text-sky-200 hover:bg-sky-900 active:scale-95"
-                        >
-                          ↩️ Ответить {msg.from}
-                        </button>
+                        {isAdminOrSystemSender(msg.from) ? (
+                          <span className="rounded bg-slate-950/90 border border-slate-800 px-2.5 py-1 text-[8.5px] font-bold text-slate-500 flex items-center gap-1">
+                            🔒 Ответ отключен (сообщение от Администрации)
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isReplying) {
+                                setReplyingToId(null);
+                              } else {
+                                setReplyingToId(msgId);
+                                setRecipientNick(otherParty);
+                                setInlineReplyText('');
+                              }
+                            }}
+                            className="rounded border border-sky-500/50 bg-sky-950/80 px-2 py-0.5 text-[8.5px] font-bold text-sky-200 hover:bg-sky-900 active:scale-95 cursor-pointer"
+                          >
+                            ↩️ Ответить {msg.from}
+                          </button>
+                        )}
                       </div>
                     )}
 

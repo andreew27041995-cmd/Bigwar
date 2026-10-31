@@ -3672,28 +3672,75 @@ export default function App() {
       return;
     }
 
-    // 4. PvP Attack on another player (online OR offline) standing on this cell in the Pyramid!
+    // 4. Check if another living player (online or offline) occupies this cell in the Pyramid!
     // A Killer License is strictly required for PvP, never for monsters or bosses
     const activeNickLower = (currentUser || '').trim().toLowerCase();
-    const enemyOnCell = realtimePlayers.find(
-      (p) =>
-        p.location === 'pyramid' &&
-        Number(p.pyramidTier) === Number(pyramidTier) &&
-        Number(p.row) === r &&
-        Number(p.col) === c &&
-        (p.hp ?? 100) > 0 &&
-        (!activeNickLower || p.nick.trim().toLowerCase() !== activeNickLower)
-    );
+    const otherPlayerOnCell = (realtimePlayers || []).find((p) => {
+      if (!p) return false;
+      const nick = String(p.nick || p.name || p['имя'] || '').trim();
+      if (!nick || (activeNickLower && nick.toLowerCase() === activeNickLower)) return false;
+      const loc = String(p.location || 'pyramid').toLowerCase();
+      if (loc !== 'pyramid' && loc !== 'пирамида') return false;
+      const hp = Number(p.hp ?? 100);
+      if (hp <= 0) return false;
+      const pLvl = Math.max(1, Number(p.lvl ?? p.level ?? 1));
+      const tier = Math.max(
+        1,
+        Math.min(
+          3,
+          Number(p.pyramidTier ?? p.pyramid_tier ?? p['пирамидальный_уровень'] ?? getPyramidTierForLevel(pLvl))
+        )
+      );
+      if (tier !== Number(pyramidTier)) return false;
+      const pR = Number(p.row ?? p['ряд'] ?? 9);
+      const pC = Number(p.col ?? p['ц'] ?? 0);
+      return pR === r && pC === c;
+    });
+
     const hasEnemyPlayer = Boolean(
-      enemyOnCell ||
+      otherPlayerOnCell ||
         cell.type === 'player' ||
         (cell.playerNick &&
           (!activeNickLower || cell.playerNick.trim().toLowerCase() !== activeNickLower))
     );
 
     if (cell.type !== 'mob' && hasEnemyPlayer) {
-      const enemyNick = enemyOnCell?.nick || cell.playerNick || 'Соперник';
-      executePvPAttackOnPlayer(enemyNick, { r, c });
+      const enemyNick =
+        otherPlayerOnCell?.nick ||
+        otherPlayerOnCell?.name ||
+        cell.playerNick ||
+        'Соперник';
+
+      const isAdjacent = Math.abs(r - playerPos.row) <= 1 && Math.abs(c - playerPos.col) <= 1;
+      if (!isAdjacent) {
+        showToast(`📍 Игрок ${enemyNick} находится слишком далеко! Подойдите ближе.`);
+        setInspectedNick(enemyNick);
+        return;
+      }
+
+      const isKillerLicenseActive = Boolean(
+        hero.killerLicenseUntil && hero.killerLicenseUntil > Date.now()
+      );
+      if (isKillerLicenseActive) {
+        executePvPAttackOnPlayer(enemyNick, { r, c });
+      } else {
+        const storedCount = Number(hero.killerLicenses || 0);
+        const hintMsg =
+          storedCount > 0
+            ? `У вас есть ${storedCount} шт. в запасе — активируйте её в Персонаже!`
+            : `Купите её в разделе «Магазин ➔ Лицензии» (${KILLER_LICENSE_CONFIG.costCrystals} 💎).`;
+        showToast(`🛡️ Клетка занята игроком ${enemyNick}! Для нападения нужна Лицензия киллера. ${hintMsg}`);
+        setInspectedNick(enemyNick);
+      }
+      // CRITICAL: NEVER step onto this cell! It is occupied by another player.
+      return;
+    }
+
+    // Strict block: If cell (r, c) is occupied by ANY other player, do NOT allow stepping onto it!
+    if (otherPlayerOnCell || (cell.playerNick && cell.playerNick.trim().toLowerCase() !== activeNickLower)) {
+      const occNick = otherPlayerOnCell?.nick || otherPlayerOnCell?.name || cell.playerNick || 'другим игроком';
+      showToast(`🛡️ Клетка уже занята игроком ${occNick}! Встать на неё нельзя.`);
+      setInspectedNick(occNick);
       return;
     }
 
@@ -5616,15 +5663,30 @@ export default function App() {
       const addPremDays = Math.max(0, Number(gift.premiumDays || 0));
       const addWheelSpins = Math.max(0, Number(gift.wheelSpins || 0));
 
-      let nextInventory = inventory;
+      let nextInventory = [...(inventoryRef.current || inventory)];
       if (gift.item) {
         const giftedItem: GameItem = {
           ...gift.item,
           id: gift.item.id || `gift_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         };
-        nextInventory = [giftedItem, ...inventory];
-        setInventory(nextInventory);
+        nextInventory = [giftedItem, ...nextInventory];
       }
+      if (Array.isArray(gift.items) && gift.items.length > 0) {
+        const giftedList = gift.items.map((it) => ({
+          ...it,
+          id: it.id || `gift_item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+        }));
+        nextInventory = [...giftedList, ...nextInventory];
+      }
+      if (gift.relicsCount && gift.relicsCount > 0) {
+        const rClass = Math.max(1, Math.min(10, Number(gift.relicClass || 1)));
+        const newRelics: GameItem[] = Array.from({ length: gift.relicsCount }, () =>
+          createRelicItem(Math.min(3, rClass) as 1 | 2 | 3, rClass >= 4, rClass)
+        );
+        nextInventory = [...newRelics, ...nextInventory];
+      }
+      inventoryRef.current = nextInventory;
+      setInventory(nextInventory);
 
       setHero((prev) => {
         const nextGold = Number(prev.gold || 0) + addGold;
@@ -5673,6 +5735,13 @@ export default function App() {
         const nextLastWheelSpin =
           addWheelSpins > 0 ? 0 : prev.lastWheelSpinTime;
 
+        // Auto-equip transport if recipient doesn't have an active one
+        const receivedTransport = gift.item?.isTransport
+          ? gift.item
+          : nextInventory.find((i) => i.isTransport);
+        const nextActiveTransportId =
+          prev.activeTransportId || (receivedTransport ? receivedTransport.id : undefined);
+
         lastSyncedFinancialsRef.current = {
           gold: nextGold,
           crystals: nextCrystals,
@@ -5699,10 +5768,11 @@ export default function App() {
           premium_until: nextPremUntil || 0,
           last_wheel_spin_time: nextLastWheelSpin,
           inventory: nextInventory,
-          claimed_mail_gift_ids: nextClaimedIds
+          claimed_mail_gift_ids: nextClaimedIds,
+          active_transport_id: nextActiveTransportId
         });
 
-        return {
+        const nextHeroObj: HeroState = {
           ...prev,
           gold: nextGold,
           totalGoldCollected: nextTotalGold,
@@ -5722,8 +5792,12 @@ export default function App() {
           premiumUntil: nextPremUntil,
           vipUntil: nextPremUntil,
           lastWheelSpinTime: nextLastWheelSpin,
-          claimedMailGiftIds: nextClaimedIds
+          claimedMailGiftIds: nextClaimedIds,
+          activeTransportId: nextActiveTransportId
         };
+        heroRef.current = nextHeroObj;
+        saveGameToStorage({ hero: nextHeroObj, inventory: nextInventory });
+        return nextHeroObj;
       });
 
       playLevelUpSound();
@@ -5737,6 +5811,12 @@ export default function App() {
       if (addExp > 0) parts.push(`+${addExp} ⭐ опыта`);
       if (addPremDays > 0) parts.push(`+${addPremDays} дн. 👑 VIP`);
       if (gift.item) parts.push(`${gift.item.icon} ${gift.item.name}`);
+      if (Array.isArray(gift.items) && gift.items.length > 0) {
+        parts.push(`Предметов: ${gift.items.length} шт.`);
+      }
+      if (gift.relicsCount && gift.relicsCount > 0) {
+        parts.push(`+${gift.relicsCount} 🏺 Реликвий`);
+      }
 
       showToast(`🎁 Подарок получен: ${parts.join(', ')}!`);
       return true;
@@ -9646,7 +9726,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.22</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.23</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>

@@ -607,6 +607,9 @@ export interface MailGiftAttachment {
   wheelSpins?: number;
   vipHours?: number;
   item?: GameItem;
+  items?: GameItem[];
+  relicsCount?: number;
+  relicClass?: number;
   claimed?: boolean;
 }
 

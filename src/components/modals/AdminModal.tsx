@@ -757,6 +757,109 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [giftItemSlot, setGiftItemSlot] = useState<ItemSlot>('weapon');
   const [giftItemQuality, setGiftItemQuality] = useState<ItemQualityKey>('epic');
   const [giftItemLvl, setGiftItemLvl] = useState('5');
+  const [giftRelicsCount, setGiftRelicsCount] = useState('0');
+  const [giftRelicClass, setGiftRelicClass] = useState('0');
+
+  // Relic grant tab state
+  const [adminRelicCount, setAdminRelicCount] = useState<number>(10);
+  const [adminRelicClass, setAdminRelicClass] = useState<number>(0); // 0 = random, 1..10 = M1..M10
+  const [adminRelicTarget, setAdminRelicTarget] = useState<'self' | 'player'>('self');
+  const [adminRelicMethod, setAdminRelicMethod] = useState<'inventory' | 'mail'>('inventory');
+
+  // Transport creation & mailing state
+  const [adminTrPreset, setAdminTrPreset] = useState<string>('boat');
+  const [adminTrName, setAdminTrName] = useState('Лодка Фараона');
+  const [adminTrIcon, setAdminTrIcon] = useState('🛶');
+  const [adminTrDurability, setAdminTrDurability] = useState('10');
+  const [adminTrTravelTimeSec, setAdminTrTravelTimeSec] = useState('600');
+  const [adminTrLvl, setAdminTrLvl] = useState('1');
+  const [adminTrTransferable, setAdminTrTransferable] = useState(false);
+  const [adminTrDmg, setAdminTrDmg] = useState('0');
+  const [adminTrHp, setAdminTrHp] = useState('0');
+  const [adminTrStr, setAdminTrStr] = useState('0');
+  const [adminTrAgi, setAdminTrAgi] = useState('0');
+  const [adminTrVit, setAdminTrVit] = useState('0');
+  const [adminTrTarget, setAdminTrTarget] = useState<'self_inv' | 'self_equip' | 'player_inv' | 'player_mail'>('self_inv');
+  const [adminTrMailText, setAdminTrMailText] = useState('🎁 Вам выдан транспорт от Администрации!');
+
+  const applyAdminTransportPreset = (preset: string) => {
+    setAdminTrPreset(preset);
+    if (preset === 'boat') {
+      setAdminTrName('Лодка Фараона');
+      setAdminTrIcon('🛶');
+      setAdminTrDurability('10');
+      setAdminTrTravelTimeSec('600');
+      setAdminTrLvl('1');
+      setAdminTrTransferable(false);
+      setAdminTrDmg('0');
+      setAdminTrHp('0');
+      setAdminTrStr('0');
+      setAdminTrAgi('0');
+      setAdminTrVit('0');
+    } else if (preset === 'cutter') {
+      setAdminTrName('Катер Нила');
+      setAdminTrIcon('🚤');
+      setAdminTrDurability('20');
+      setAdminTrTravelTimeSec('360');
+      setAdminTrLvl('3');
+      setAdminTrTransferable(false);
+      setAdminTrDmg('0');
+      setAdminTrHp('0');
+      setAdminTrStr('0');
+      setAdminTrAgi('0');
+      setAdminTrVit('0');
+    } else if (preset === 'apache') {
+      setAdminTrName('Апач Пустыни');
+      setAdminTrIcon('🚁');
+      setAdminTrDurability('30');
+      setAdminTrTravelTimeSec('240');
+      setAdminTrLvl('5');
+      setAdminTrTransferable(false);
+      setAdminTrDmg('10');
+      setAdminTrHp('50');
+      setAdminTrStr('5');
+      setAdminTrAgi('5');
+      setAdminTrVit('5');
+    } else if (preset === 'm8') {
+      setAdminTrName('М-8 Императорский');
+      setAdminTrIcon('🛸');
+      setAdminTrDurability('60');
+      setAdminTrTravelTimeSec('180');
+      setAdminTrLvl('9');
+      setAdminTrTransferable(false);
+      setAdminTrDmg('30');
+      setAdminTrHp('150');
+      setAdminTrStr('15');
+      setAdminTrAgi('15');
+      setAdminTrVit('15');
+    } else if (preset === 'named') {
+      setAdminTrName('Именной Крейсер');
+      setAdminTrIcon('⭐');
+      setAdminTrDurability('500');
+      setAdminTrTravelTimeSec('60');
+      setAdminTrLvl('1');
+      setAdminTrTransferable(false);
+      setAdminTrDmg('50');
+      setAdminTrHp('250');
+      setAdminTrStr('25');
+      setAdminTrAgi('25');
+      setAdminTrVit('25');
+    }
+  };
+
+  const handleUploadImageForAdminTransport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const res = await processUploadedItemImage(file, 'cover');
+    e.target.value = '';
+    if ((!res.ok && !res.success) || !res.dataUrl) {
+      showToast(res.error || 'Ошибка загрузки картинки');
+      return;
+    }
+    const sizeKb = res.finalSizeKb ?? res.compressedSizeKb ?? 20;
+    setAdminTrIcon(res.dataUrl);
+    showToast(`✅ Картинка транспорта загружена (128×128px, ${sizeKb} КБ)!`);
+  };
 
   const populateFieldsFromUnpacked = useCallback(
     (p: any, fallbackNick: string) => {
@@ -3043,7 +3146,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     showToast('📢 Системное объявление отправлено в мировой чат!');
   };
 
-  const handleSendGift = () => {
+  const handleSendGift = async () => {
     const recipient = giftNick.trim() || targetPlayerNick.trim() || hero.nick || 'Игрок';
     const goldAmount = Math.max(0, parseInt(giftGold, 10) || 0);
     const crystalsAmount = Math.max(0, parseInt(giftCrystals, 10) || 0);
@@ -3053,6 +3156,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     const statPtsAmount = Math.max(0, parseInt(giftStatPoints, 10) || 0);
     const expAmount = Math.max(0, parseInt(giftExp, 10) || 0);
     const premDaysAmount = Math.max(0, parseInt(giftPremiumDays, 10) || 0);
+    const relicsAmount = Math.max(0, parseInt(giftRelicsCount, 10) || 0);
+    const relicsCls = Math.max(0, parseInt(giftRelicClass, 10) || 0);
 
     let customGiftItem = undefined;
     if (giftIncludeItem) {
@@ -3073,6 +3178,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       statPoints: statPtsAmount > 0 ? statPtsAmount : undefined,
       exp: expAmount > 0 ? expAmount : undefined,
       premiumDays: premDaysAmount > 0 ? premDaysAmount : undefined,
+      relicsCount: relicsAmount > 0 ? relicsAmount : undefined,
+      relicClass: relicsCls > 0 ? relicsCls : undefined,
       item: customGiftItem,
       claimed: false
     };
@@ -3084,23 +3191,183 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     if (enPotAmount > 0) summaryParts.push(`+${enPotAmount} ⚡EN`);
     if (expAmount > 0) summaryParts.push(`+${expAmount} EXP`);
     if (premDaysAmount > 0) summaryParts.push(`👑 VIP ${premDaysAmount}дн.`);
+    if (relicsAmount > 0) summaryParts.push(`🏺 ${relicsAmount} Реликвий${relicsCls > 0 ? ` (М${relicsCls})` : ''}`);
     if (customGiftItem) summaryParts.push(`⚔️ ${customGiftItem.name}`);
 
     const summaryStr = summaryParts.length > 0 ? ` [${summaryParts.join(', ')}]` : '';
+    const nowMs = Date.now();
+    const msgId = 'gift_admin_' + nowMs + '_' + Math.random().toString(36).slice(2, 6);
 
     const pm: PrivateMessage = {
-      id: 'gift_admin_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      id: msgId,
       from: '👑 Администрация',
       to: recipient,
       text: `${giftMessageText.trim() || '🎁 Подарок от Администрации!'}${summaryStr}`,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: nowMs,
+      timeStr: new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       read: false,
-      gift: attachment
+      gift: attachment,
+      giftClaimed: false
     };
 
     setPrivateMessages((prev) => [pm, ...prev]);
-    sendMailInSupabase(pm.from, pm.to, pm.text, pm.gift);
+    await sendMailInSupabase(pm.from, pm.to, pm.text, pm.gift, msgId);
     showToast(`📩 Подарок отправлен на почту игроку ${recipient}!`);
+  };
+
+  const handleAdminGrantRelics = async (overrideCount?: number, overrideClass?: number) => {
+    const isSelf = adminRelicTarget === 'self';
+    const targetNick = (isSelf ? hero.nick : (targetPlayerNick || giftNick || '').trim()) || hero.nick || '';
+    if (!targetNick) {
+      showToast('Укажите ник игрока!');
+      return;
+    }
+
+    const count = Math.max(1, Math.min(100, overrideCount !== undefined ? overrideCount : adminRelicCount));
+    const rClass = overrideClass !== undefined ? (overrideClass > 0 ? overrideClass : undefined) : (adminRelicClass > 0 ? adminRelicClass : undefined);
+
+    if (adminRelicMethod === 'mail') {
+      const nowMs = Date.now();
+      const msgId = `gift_relics_${nowMs}_${Math.random().toString(36).slice(2, 6)}`;
+      const giftAttachment: MailGiftAttachment = {
+        relicsCount: count,
+        relicClass: rClass,
+        claimed: false
+      };
+      const text = `🎁 Администрация отправила вам Реликвии Пирамид (+${count} шт.${rClass ? `, Класс М${rClass}` : ''})!`;
+      const pm: PrivateMessage = {
+        id: msgId,
+        from: '👑 Администрация',
+        to: targetNick,
+        text,
+        time: nowMs,
+        timeStr: new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+        gift: giftAttachment,
+        giftClaimed: false
+      };
+      setPrivateMessages((prev) => [pm, ...prev]);
+      await sendMailInSupabase(pm.from, pm.to, pm.text, pm.gift, msgId);
+      showToast(`✉️ +${count} Реликвий отправлено по почте игроку ${targetNick}!`);
+      return;
+    }
+
+    const newRelics: GameItem[] = Array.from({ length: count }, (_, idx) => {
+      const cls = rClass ?? ((idx % 10) + 1);
+      return createRelicItem(Math.min(3, Math.ceil(cls / 3.3)) as 1 | 2 | 3, cls >= 8, cls);
+    });
+
+    if (isSelf || targetNick.toLowerCase() === (hero.nick || '').toLowerCase()) {
+      if (setSelfInventory) {
+        const nextInv = [...(selfInventory || []), ...newRelics];
+        setSelfInventory(nextInv);
+        await updatePlayerInDatabase(hero.nick || '', { inventory: nextInv });
+        showToast(`🏺 +${count} Реликвий добавлено в ваш инвентарь!`);
+      }
+    } else {
+      setIsUpdatingDb(true);
+      try {
+        const row = await findPlayerInSupabase(targetNick);
+        const curInv: GameItem[] = Array.isArray(row?.inventory) ? row.inventory : [];
+        const nextInv = [...curInv, ...newRelics];
+        await updatePlayerInDatabase(targetNick, { inventory: nextInv });
+        await loadTargetPlayerData(targetNick, true);
+        showToast(`🏺 +${count} Реликвий добавлено в инвентарь игроку ${targetNick}!`);
+      } finally {
+        setIsUpdatingDb(false);
+      }
+    }
+  };
+
+  const handleAdminCreateOrSendTransport = async () => {
+    const isSelf = adminTrTarget === 'self_inv' || adminTrTarget === 'self_equip';
+    const targetNick = (isSelf ? hero.nick : (targetPlayerNick || giftNick || '').trim()) || hero.nick || '';
+    if (!targetNick) {
+      showToast('Укажите ник игрока!');
+      return;
+    }
+
+    const maxDur = Math.max(1, parseInt(adminTrDurability, 10) || 10);
+    const travelSec = Math.max(10, parseInt(adminTrTravelTimeSec, 10) || 60);
+    const lvlVal = Math.max(1, parseInt(adminTrLvl, 10) || 1);
+
+    const transportItem: GameItem = {
+      id: `transport_admin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      name: adminTrName.trim() || 'Транспорт',
+      slot: 'transport',
+      icon: adminTrIcon.trim() || '🚤',
+      quality: adminTrPreset === 'named' ? 'custom' : lvlVal >= 9 ? 'legendary' : lvlVal >= 5 ? 'epic' : 'rare',
+      lvl: lvlVal,
+      dmg: Math.max(0, parseInt(adminTrDmg, 10) || 0),
+      hp: Math.max(0, parseInt(adminTrHp, 10) || 0),
+      str: Math.max(0, parseInt(adminTrStr, 10) || 0),
+      agi: Math.max(0, parseInt(adminTrAgi, 10) || 0),
+      vit: Math.max(0, parseInt(adminTrVit, 10) || 0),
+      price: 5000,
+      durability: maxDur,
+      maxDurability: maxDur,
+      initialMaxDurability: maxDur,
+      isTransport: true,
+      travelTimeSec: travelSec,
+      isNamedTransport: adminTrPreset === 'named',
+      transferable: adminTrTransferable,
+      origin: 'Выдача Администрации'
+    };
+
+    if (adminTrTarget === 'player_mail') {
+      const nowMs = Date.now();
+      const msgId = `gift_transport_${nowMs}_${Math.random().toString(36).slice(2, 6)}`;
+      const giftAttachment: MailGiftAttachment = {
+        item: transportItem,
+        claimed: false
+      };
+      const text = `${adminTrMailText.trim() || 'Вам отправлен транспорт от Администрации!'} [🚤 ${transportItem.name} (${maxDur}/${maxDur} прочн., ${Math.round(travelSec / 60)} мин.)]`;
+      const pm: PrivateMessage = {
+        id: msgId,
+        from: '👑 Администрация',
+        to: targetNick,
+        text,
+        time: nowMs,
+        timeStr: new Date(nowMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        read: false,
+        gift: giftAttachment,
+        giftClaimed: false
+      };
+      setPrivateMessages((prev) => [pm, ...prev]);
+      await sendMailInSupabase(pm.from, pm.to, pm.text, pm.gift, msgId);
+      showToast(`✉️ Транспорт «${transportItem.name}» отправлен по почте игроку ${targetNick}!`);
+      return;
+    }
+
+    if (isSelf || targetNick.toLowerCase() === (hero.nick || '').toLowerCase()) {
+      if (setSelfInventory) {
+        const nextInv = [...(selfInventory || []), transportItem];
+        setSelfInventory(nextInv);
+        if (adminTrTarget === 'self_equip') {
+          setHero((prev) => ({
+            ...prev,
+            activeTransportId: transportItem.id
+          }));
+        }
+        await updatePlayerInDatabase(hero.nick || '', {
+          inventory: nextInv,
+          ...(adminTrTarget === 'self_equip' ? { active_transport_id: transportItem.id } : {})
+        });
+        showToast(`🚤 Транспорт «${transportItem.name}» добавлен ${adminTrTarget === 'self_equip' ? 'и сразу экипирован' : 'в инвентарь'}!`);
+      }
+    } else {
+      setIsUpdatingDb(true);
+      try {
+        const row = await findPlayerInSupabase(targetNick);
+        const curInv: GameItem[] = Array.isArray(row?.inventory) ? row.inventory : [];
+        const nextInv = [...curInv, transportItem];
+        await updatePlayerInDatabase(targetNick, { inventory: nextInv });
+        await loadTargetPlayerData(targetNick, true);
+        showToast(`🎒 Транспорт «${transportItem.name}» выдан в инвентарь игроку ${targetNick}!`);
+      } finally {
+        setIsUpdatingDb(false);
+      }
+    }
   };
 
   // Build combined player list with explicit separation of Real registered players vs Mirror bots
@@ -10304,6 +10571,31 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       className="mt-0.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-sky-300 outline-none"
                     />
                   </div>
+                  <div>
+                    <label className="text-[10px] text-fuchsia-400">Реликвии 🏺 (шт):</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={giftRelicsCount}
+                      onChange={(e) => setGiftRelicsCount(e.target.value)}
+                      className="mt-0.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-fuchsia-300 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-fuchsia-400">Класс Реликвии:</label>
+                    <select
+                      value={giftRelicClass}
+                      onChange={(e) => setGiftRelicClass(e.target.value)}
+                      className="mt-0.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-fuchsia-200 outline-none"
+                    >
+                      <option value="0">Случайный класс</option>
+                      {Array.from({ length: 10 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          Класс М{i + 1}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div className="mt-2">
@@ -16653,49 +16945,102 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     </div>
                   </div>
 
-                  <div className="sm:col-span-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2 space-y-1.5">
-                    <div className="flex items-center justify-between text-[10px]">
+                  <div className="sm:col-span-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between text-[10px] gap-1.5 border-b border-slate-800 pb-1">
                       <span className="font-bold text-amber-300">
-                        🎁 Быстро выдать Реликвии игроку ({targetPlayerNick || hero.nick}):
+                        🔮 Выдача Реликвий (Себе или Игроку):
                       </span>
-                      <span className="text-slate-400">Добавляются сразу в инвентарь</span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {[1, 5, 10, 25, 50].map((count) => (
+                      <div className="flex items-center gap-1">
                         <button
-                          key={count}
                           type="button"
-                          disabled={isUpdatingDb}
-                          onClick={async () => {
-                            const targetNick = (targetPlayerNick || hero.nick || '').trim();
-                            if (!targetNick) return;
-                            const newRelics: GameItem[] = Array.from({ length: count }, (_, idx) =>
-                              createRelicItem(((idx % 3) + 1) as 1 | 2 | 3, idx % 5 === 0)
-                            );
-                            if (targetNick.toLowerCase() === hero.nick.toLowerCase() && setSelfInventory) {
-                              const nextInv = [...(selfInventory || []), ...newRelics];
-                              setSelfInventory(nextInv);
-                              await updatePlayerInDatabase(hero.nick, { inventory: nextInv });
-                              showToast(`🏺 Выдано +${count} Реликвий в ваш инвентарь!`);
-                            } else {
-                              setIsUpdatingDb(true);
-                              try {
-                                const row = await findPlayerInSupabase(targetNick);
-                                const curInv: GameItem[] = Array.isArray(row?.inventory) ? row.inventory : [];
-                                const nextInv = [...curInv, ...newRelics];
-                                await updatePlayerInDatabase(targetNick, { inventory: nextInv });
-                                await loadTargetPlayerData(targetNick, true);
-                                showToast(`🏺 Игроку ${targetNick} выдано +${count} Реликвий!`);
-                              } finally {
-                                setIsUpdatingDb(false);
-                              }
-                            }
-                          }}
-                          className="rounded-lg border border-fuchsia-500/50 bg-fuchsia-950/70 hover:bg-fuchsia-800/80 px-2.5 py-1 text-[10px] font-black text-fuchsia-200 cursor-pointer transition-all"
+                          onClick={() => setAdminRelicTarget('self')}
+                          className={`rounded px-2 py-0.5 text-[9px] font-bold cursor-pointer ${
+                            adminRelicTarget === 'self'
+                              ? 'bg-fuchsia-600 text-white'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
                         >
-                          +{count} 🏺 Реликвий
+                          ⚡ Себе ({hero.nick})
                         </button>
-                      ))}
+                        <button
+                          type="button"
+                          onClick={() => setAdminRelicTarget('player')}
+                          className={`rounded px-2 py-0.5 text-[9px] font-bold cursor-pointer ${
+                            adminRelicTarget === 'player'
+                              ? 'bg-fuchsia-600 text-white'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          👥 Игроку ({targetPlayerNick || 'не выбран'})
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px]">
+                      <div>
+                        <label className="text-slate-300 font-bold">Класс Реликвий:</label>
+                        <select
+                          value={adminRelicClass}
+                          onChange={(e) => setAdminRelicClass(parseInt(e.target.value, 10) || 0)}
+                          className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs text-fuchsia-200 outline-none"
+                        >
+                          <option value="0">🔮 Случайный класс (М1..М10)</option>
+                          {Array.from({ length: 10 }, (_, i) => (
+                            <option key={i + 1} value={i + 1}>
+                              Класс М{i + 1}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-slate-300 font-bold">Способ выдачи:</label>
+                        <select
+                          value={adminRelicMethod}
+                          onChange={(e) => setAdminRelicMethod(e.target.value as 'inventory' | 'mail')}
+                          className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-xs text-amber-200 outline-none"
+                        >
+                          <option value="inventory">🎒 Сразу в рюкзак</option>
+                          <option value="mail">✉️ Отправить по почте</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-slate-300 font-bold">Количество (шт):</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={100}
+                          value={adminRelicCount}
+                          onChange={(e) => setAdminRelicCount(Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 1)))}
+                          className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-bold text-white outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
+                      <div className="flex flex-wrap gap-1">
+                        {[1, 5, 10, 25, 50].map((count) => (
+                          <button
+                            key={count}
+                            type="button"
+                            disabled={isUpdatingDb}
+                            onClick={() => handleAdminGrantRelics(count)}
+                            className="rounded border border-fuchsia-500/40 bg-fuchsia-950/70 hover:bg-fuchsia-800/80 px-2 py-0.5 text-[9px] font-black text-fuchsia-200 cursor-pointer"
+                          >
+                            +{count} шт
+                          </button>
+                        ))}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={isUpdatingDb}
+                        onClick={() => handleAdminGrantRelics()}
+                        className="rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 px-3 py-1 text-[10.5px] font-black text-white shadow cursor-pointer disabled:opacity-50"
+                      >
+                        {adminRelicMethod === 'mail' ? '✉️ Отправить по почте' : '🔮 Выдать в инвентарь'} ({adminRelicCount} шт.)
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -17033,14 +17378,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                               const targetNick = (targetPlayerNick || hero.nick || '').trim();
                               if (!targetNick) return;
                               const transportItem = createTransportItemFromTemplate(tr);
-                              if (targetNick.toLowerCase() === hero.nick.toLowerCase() && setSelfInventory) {
+                              if (targetNick.toLowerCase() === (hero.nick || '').toLowerCase() && setSelfInventory) {
                                 const nextInv = [...(selfInventory || []), transportItem];
                                 setSelfInventory(nextInv);
                                 setHero((prev) => ({
                                   ...prev,
                                   activeTransportId: prev.activeTransportId || transportItem.id
                                 }));
-                                await updatePlayerInDatabase(hero.nick, { inventory: nextInv });
+                                await updatePlayerInDatabase(hero.nick || '', { inventory: nextInv });
                                 showToast(`🚤 Транспорт «${tr.name}» выдан в ваш инвентарь!`);
                               } else {
                                 setIsUpdatingDb(true);
@@ -17156,7 +17501,269 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     );
                   })}
                 </div>
+              </div>
 
+              {/* 5. Конструктор Транспорта: создание себе или отправка игроку по почте */}
+              <div className="rounded-xl border-2 border-cyan-400/80 bg-gradient-to-b from-cyan-950/40 via-slate-900 to-slate-950 p-3 space-y-3 shadow-xl">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/30 pb-2">
+                  <div>
+                    <div className="text-sm font-black text-cyan-300 flex items-center gap-1.5">
+                      <span>🚀 5. Создание Транспорта себе или отправка другому игроку по почте</span>
+                    </div>
+                    <p className="text-[10px] text-slate-300">
+                      Создайте любой транспорт (Лодка, Катер, Апач, М-8, Именной или свой кастомный) и выдайте себе (в сумку/экипировать) или отправьте игроку по почте подарком.
+                    </p>
+                  </div>
+                  <span className="rounded-lg border border-cyan-400/50 bg-cyan-950/90 px-2.5 py-1 text-xs font-black text-cyan-200">
+                    Транспорт: {adminTrName}
+                  </span>
+                </div>
+
+                {/* Шаблоны быстрого выбора */}
+                <div className="space-y-1.5">
+                  <div className="text-[10px] font-bold text-amber-300">
+                    ⚡ Выберите готовый шаблон транспорта:
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                    {[
+                      { id: 'boat', name: '🛶 Лодка', sub: '1 ур • 10 мин • 10 прочн.' },
+                      { id: 'cutter', name: '🚤 Катер', sub: '3 ур • 6 мин • 20 прочн.' },
+                      { id: 'apache', name: '🚁 Апач', sub: '5 ур • 4 мин • 30 прочн.' },
+                      { id: 'm8', name: '🛸 М-8', sub: '9 ур • 3 мин • 60 прочн.' },
+                      { id: 'named', name: '⭐ Именной', sub: '1 мин • 500 прочн. • топ' }
+                    ].map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        onClick={() => applyAdminTransportPreset(tpl.id)}
+                        className={`rounded-lg border p-1.5 text-left transition-all cursor-pointer ${
+                          adminTrPreset === tpl.id
+                            ? 'border-cyan-400 bg-cyan-950/80 shadow-[0_0_10px_rgba(6,182,212,0.4)]'
+                            : 'border-slate-800 bg-slate-900/90 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="text-[11px] font-black text-white">{tpl.name}</div>
+                        <div className="text-[8.5px] text-slate-400 leading-tight">{tpl.sub}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Поля параметров транспорта */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[10px]">
+                  <div>
+                    <label className="font-bold text-amber-300">Название транспорта:</label>
+                    <input
+                      type="text"
+                      value={adminTrName}
+                      onChange={(e) => setAdminTrName(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-amber-200"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-cyan-300">Иконка / Смайл:</label>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <div className="h-7 w-7 rounded border border-slate-700 bg-slate-900 flex items-center justify-center shrink-0">
+                        <ItemIcon icon={adminTrIcon} name={adminTrName} className="text-base" />
+                      </div>
+                      <input
+                        type="text"
+                        value={adminTrIcon}
+                        onChange={(e) => setAdminTrIcon(e.target.value)}
+                        className="w-12 rounded border border-slate-700 bg-slate-950 px-1 py-1 text-center font-bold text-white text-xs"
+                      />
+                      <label className="rounded bg-slate-800 border border-slate-700 px-1.5 py-1 text-[9px] font-bold text-cyan-300 hover:bg-slate-700 cursor-pointer shrink-0">
+                        📷 Фото
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handleUploadImageForAdminTransport}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-emerald-300">Прочность (макс):</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50000}
+                      value={adminTrDurability}
+                      onChange={(e) => setAdminTrDurability(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-emerald-300"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-cyan-300">Время пути (секунды):</label>
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <input
+                        type="number"
+                        min={10}
+                        max={7200}
+                        value={adminTrTravelTimeSec}
+                        onChange={(e) => setAdminTrTravelTimeSec(e.target.value)}
+                        className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-mono font-bold text-white"
+                      />
+                      <span className="text-[9px] text-slate-400 shrink-0 font-bold">
+                        ({Math.round(parseInt(adminTrTravelTimeSec, 10) / 60 || 1)} мин)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-purple-300">Требуемый Уровень:</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={adminTrLvl}
+                      onChange={(e) => setAdminTrLvl(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-purple-200"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-amber-300">Передаваемый (Рынок/Трейд):</label>
+                    <select
+                      value={adminTrTransferable ? 'yes' : 'no'}
+                      onChange={(e) => setAdminTrTransferable(e.target.value === 'yes')}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-amber-200"
+                    >
+                      <option value="no">🔒 Личный (нельзя передавать)</option>
+                      <option value="yes">🤝 Можно передавать / продавать</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-red-300">Бонус Урона ⚔️:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={adminTrDmg}
+                      onChange={(e) => setAdminTrDmg(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-red-300"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-green-300">Бонус Здоровья ❤️:</label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={adminTrHp}
+                      onChange={(e) => setAdminTrHp(e.target.value)}
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 font-bold text-green-300"
+                    />
+                  </div>
+                </div>
+
+                {/* Направление выдачи и отправки */}
+                <div className="rounded-lg border border-slate-800 bg-slate-950/95 p-2.5 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-[10px] font-bold text-sky-300">
+                      🎯 Куда выдать транспорт:
+                    </span>
+                    <span className="text-[9.5px] text-amber-300 font-bold">
+                      Целевой игрок: {adminTrTarget.startsWith('self') ? `${hero.nick} (Себе)` : (targetPlayerNick || 'не выбран')}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setAdminTrTarget('self_inv')}
+                      className={`rounded-lg border p-1.5 text-center text-[10px] font-black cursor-pointer transition-all ${
+                        adminTrTarget === 'self_inv'
+                          ? 'border-emerald-400 bg-emerald-950/80 text-emerald-200 shadow'
+                          : 'border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      ⚡ Себе в рюкзак
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminTrTarget('self_equip')}
+                      className={`rounded-lg border p-1.5 text-center text-[10px] font-black cursor-pointer transition-all ${
+                        adminTrTarget === 'self_equip'
+                          ? 'border-cyan-400 bg-cyan-950/80 text-cyan-200 shadow'
+                          : 'border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      👑 Себе и сразу надеть
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminTrTarget('player_inv')}
+                      className={`rounded-lg border p-1.5 text-center text-[10px] font-black cursor-pointer transition-all ${
+                        adminTrTarget === 'player_inv'
+                          ? 'border-amber-400 bg-amber-950/80 text-amber-200 shadow'
+                          : 'border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      🎒 Игроку в рюкзак
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAdminTrTarget('player_mail')}
+                      className={`rounded-lg border p-1.5 text-center text-[10px] font-black cursor-pointer transition-all ${
+                        adminTrTarget === 'player_mail'
+                          ? 'border-fuchsia-400 bg-fuchsia-950/80 text-fuchsia-200 shadow'
+                          : 'border-slate-800 bg-slate-900 text-slate-300 hover:border-slate-700'
+                      }`}
+                    >
+                      ✉️ Отправить по почте
+                    </button>
+                  </div>
+
+                  {!adminTrTarget.startsWith('self') && (
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-bold text-slate-300 shrink-0">Игрок получатель:</span>
+                      <input
+                        type="text"
+                        value={targetPlayerNick}
+                        onChange={(e) => setTargetPlayerNick(e.target.value)}
+                        placeholder="Ник персонажа..."
+                        className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-bold text-amber-300 outline-none"
+                      />
+                    </div>
+                  )}
+
+                  {adminTrTarget === 'player_mail' && (
+                    <div className="space-y-1 pt-1">
+                      <span className="text-[10px] font-bold text-fuchsia-300">Сопроводительный текст письма:</span>
+                      <input
+                        type="text"
+                        value={adminTrMailText}
+                        onChange={(e) => setAdminTrMailText(e.target.value)}
+                        placeholder="Текст сообщения..."
+                        className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-white outline-none"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={isUpdatingDb}
+                    onClick={handleAdminCreateOrSendTransport}
+                    className="mt-1 w-full rounded-xl bg-gradient-to-r from-cyan-500 via-sky-500 to-emerald-500 py-2.5 text-xs font-black uppercase text-slate-950 shadow-lg hover:brightness-110 active:scale-95 cursor-pointer disabled:opacity-50"
+                  >
+                    {isUpdatingDb
+                      ? '⏳ Создание и отправка...'
+                      : adminTrTarget === 'player_mail'
+                      ? `✉️ Отправить «${adminTrName}» по почте игроку ${targetPlayerNick || 'Игроку'}`
+                      : adminTrTarget.startsWith('self')
+                      ? `🚀 Создать «${adminTrName}» себе (${adminTrTarget === 'self_equip' ? 'и экипировать' : 'в рюкзак'})`
+                      : `🎒 Выдать «${adminTrName}» в рюкзак игроку ${targetPlayerNick || 'Игроку'}`}
+                  </button>
+                </div>
+              </div>
+
+              {/* 6. Глобальное сохранение всех настроек Порта и Транспорта */}
+              <div className="pt-1">
                 <button
                   type="button"
                   disabled={isSavingShop}

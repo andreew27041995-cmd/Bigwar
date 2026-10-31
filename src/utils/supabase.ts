@@ -4595,7 +4595,8 @@ export async function sendMailInSupabase(
   fromNick: string,
   toNick: string,
   text: string,
-  gift?: MailGiftAttachment
+  gift?: MailGiftAttachment,
+  customId?: string
 ): Promise<PrivateMessage[]> {
   const cleanFrom = String(fromNick || '').trim();
   const cleanTo = String(toNick || '').trim();
@@ -4614,11 +4615,19 @@ export async function sendMailInSupabase(
         (gift.statPoints && gift.statPoints > 0) ||
         (gift.hpPotions && gift.hpPotions > 0) ||
         (gift.enPotions && gift.enPotions > 0) ||
-        (gift.vipHours && gift.vipHours > 0))
+        (gift.expPotions && gift.expPotions > 0) ||
+        (gift.energy && gift.energy > 0) ||
+        (gift.premiumDays && gift.premiumDays > 0) ||
+        (gift.wheelSpins && gift.wheelSpins > 0) ||
+        (gift.vipHours && gift.vipHours > 0) ||
+        Boolean(gift.item) ||
+        Boolean(Array.isArray(gift.items) && gift.items.length > 0) ||
+        Boolean(gift.relicsCount && gift.relicsCount > 0) ||
+        Boolean((gift as any).transport))
   );
 
   const newMsg: PrivateMessage = {
-    id: `mail_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    id: customId || `mail_${now}_${Math.random().toString(36).slice(2, 7)}`,
     from: cleanFrom,
     to: cleanTo,
     text: cleanText,
@@ -4664,15 +4673,20 @@ export async function claimMailGiftInSupabase(
       messages: globalMailCache?.messages || []
     };
   }
-  claimedGiftLocksInMemory.add(cleanId);
 
   let claimedGift: MailGiftAttachment | undefined = undefined;
   let wasAlreadyClaimed = false;
 
   const state = await saveGlobalMailAndChatToSupabase((cur) => {
     const nextMessages = cur.messages.map((m) => {
-      const mId = m.id || `${m.from}_${m.to}_${m.time}`;
-      if (mId !== cleanId) return m;
+      const mId = String(m.id || `${m.from}_${m.to}_${m.time}`);
+      const isMatched =
+        mId === cleanId ||
+        mId.toLowerCase() === cleanId.toLowerCase() ||
+        (cleanId.startsWith('gift_admin_') &&
+          String(m.from || '').includes('Админ') &&
+          String(m.to || '').trim().toLowerCase() === cleanRec);
+      if (!isMatched) return m;
       const isToRecipient = String(m.to || '').trim().toLowerCase() === cleanRec;
       if (!isToRecipient || !m.gift) return m;
 
@@ -4697,10 +4711,12 @@ export async function claimMailGiftInSupabase(
     };
   });
 
-  if (wasAlreadyClaimed || !claimedGift) {
+  claimedGiftLocksInMemory.add(cleanId);
+
+  if (wasAlreadyClaimed) {
     return {
       success: false,
-      alreadyClaimed: wasAlreadyClaimed,
+      alreadyClaimed: true,
       messages: state.messages
     };
   }

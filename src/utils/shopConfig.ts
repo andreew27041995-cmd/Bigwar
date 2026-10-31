@@ -2258,18 +2258,24 @@ export const RELIC_TEMPLATES = [
   { tier: 3, name: 'Божественная Реликвия Солнца Ра', icon: '🔱', quality: 'legendary' as ItemQualityKey, power: 1.5, price: 600 }
 ];
 
-export function createRelicItem(pyramidTier: number = 1, isBoss: boolean = false): GameItem {
+export function createRelicItem(
+  pyramidTier: number = 1,
+  isBoss: boolean = false,
+  relicClass?: number
+): GameItem {
   const safeTier = Math.max(1, Math.min(3, Number(pyramidTier || 1)));
   const tpl = RELIC_TEMPLATES.find((r) => r.tier === safeTier) || RELIC_TEMPLATES[0];
   const power = isBoss ? Number((tpl.power * 1.25).toFixed(2)) : tpl.power;
-  const relicName = isBoss ? `${tpl.name} (Королевская)` : tpl.name;
-  const relicQuality: ItemQualityKey = isBoss ? 'legendary' : tpl.quality;
+  const safeClass = relicClass && relicClass >= 1 && relicClass <= 10 ? Math.round(relicClass) : undefined;
+  const baseName = safeClass ? `Реликвия Пирамиды (Класс М${safeClass})` : tpl.name;
+  const relicName = isBoss ? `${baseName} (Королевская)` : baseName;
+  const relicQuality: ItemQualityKey = isBoss || (safeClass && safeClass >= 8) ? 'legendary' : (safeClass && safeClass >= 4) ? 'epic' : tpl.quality;
   return {
     id: `relic_t${safeTier}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
     shopTemplateId: `relic_tier_${safeTier}`,
     name: relicName,
     slot: 'ring',
-    icon: isBoss ? '👑' : tpl.icon,
+    icon: isBoss ? '👑' : safeClass ? '🔮' : tpl.icon,
     quality: relicQuality,
     lvl: safeTier === 1 ? 1 : safeTier === 2 ? 5 : 10,
     dmg: 0,
@@ -2281,7 +2287,8 @@ export function createRelicItem(pyramidTier: number = 1, isBoss: boolean = false
     isRelic: true,
     relicTier: safeTier,
     relicPower: power,
-    origin: `Пирамида ${safeTier}`
+    ...(safeClass ? { relicClass: safeClass } : {}),
+    origin: safeClass ? `Алтарь / Выдача Класс М${safeClass}` : `Пирамида ${safeTier}`
   };
 }
 
