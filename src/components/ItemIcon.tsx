@@ -76,7 +76,10 @@ interface ItemIconProps {
   fallback?: string;
   className?: string;
   imgClassName?: string;
+  modificationClass?: number | null;
+  showStarsOverlay?: boolean;
 }
+
 
 const SHOP_EQUIPMENT_ASSET_BY_NAME: Record<string, string> = {
   'перчатки искателя сокровищ': '/assets/gloves/gloves_lvl2.png',
@@ -109,7 +112,9 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
   alt = 'icon',
   fallback = '⚔️',
   className = '',
-  imgClassName = 'w-full h-full object-contain'
+  imgClassName = 'w-full h-full object-contain',
+  modificationClass,
+  showStarsOverlay = true
 }) => {
   const [imgError, setImgError] = useState(false);
   const [triedAltRoot, setTriedAltRoot] = useState(false);
@@ -125,55 +130,78 @@ export const ItemIcon: React.FC<ItemIconProps> = ({
   const egyptianResolved = elixirOverride ? null : resolveEgyptianEquipmentIcon(rawNormalized, effectiveAlt, slot);
   const normalized = egyptianResolved || rawNormalized;
 
+  const modCls =
+    modificationClass !== undefined && modificationClass !== null
+      ? Math.max(0, Math.min(10, Math.floor(Number(modificationClass))))
+      : 0;
+
   useEffect(() => {
     setImgError(false);
     setTriedAltRoot(false);
   }, [normalized]);
 
-  if (!imgError && isImageIconPath(normalized)) {
-    let src = resolveItemIconSrc(normalized);
-    if (triedAltRoot && src.startsWith('/Bigwar/')) {
-      src = src.replace(/^\/Bigwar\//, '/');
+  const renderContent = () => {
+    if (!imgError && isImageIconPath(normalized)) {
+      let src = resolveItemIconSrc(normalized);
+      if (triedAltRoot && src.startsWith('/Bigwar/')) {
+        src = src.replace(/^\/Bigwar\//, '/');
+      }
+      const isEgyptianGeneratedSvg = Boolean(egyptianResolved && egyptianResolved.startsWith('data:image/svg+xml'));
+      const isTransparentCutoutPng =
+        Boolean(elixirOverride) ||
+        normalized.includes('/assets/armor/') ||
+        normalized.includes('assets/armor/') ||
+        normalized.includes('/assets/boots/') ||
+        normalized.includes('assets/boots/') ||
+        normalized.includes('/assets/gloves/') ||
+        normalized.includes('assets/gloves/') ||
+        normalized.includes('/assets/swords/') ||
+        normalized.includes('assets/swords/') ||
+        normalized.includes('/assets/elixirs/') ||
+        normalized.includes('assets/elixirs/');
+      const isCustomUploadedOrUrl =
+        !isEgyptianGeneratedSvg &&
+        !isTransparentCutoutPng &&
+        (normalized.startsWith('data:image/') ||
+          normalized.startsWith('http://') ||
+          normalized.startsWith('https://') ||
+          imgClassName.includes('object-cover'));
+      return (
+        <img
+          src={src}
+          alt={effectiveAlt}
+          style={{ objectFit: isCustomUploadedOrUrl ? 'cover' : 'contain' }}
+          className={isCustomUploadedOrUrl ? 'w-full h-full object-cover rounded' : imgClassName}
+          onError={() => {
+            if (!triedAltRoot && src.startsWith('/Bigwar/')) {
+              setTriedAltRoot(true);
+            } else {
+              setImgError(true);
+            }
+          }}
+        />
+      );
     }
-    const isEgyptianGeneratedSvg = Boolean(egyptianResolved && egyptianResolved.startsWith('data:image/svg+xml'));
-    const isTransparentCutoutPng =
-      Boolean(elixirOverride) ||
-      normalized.includes('/assets/armor/') ||
-      normalized.includes('assets/armor/') ||
-      normalized.includes('/assets/boots/') ||
-      normalized.includes('assets/boots/') ||
-      normalized.includes('/assets/gloves/') ||
-      normalized.includes('assets/gloves/') ||
-      normalized.includes('/assets/swords/') ||
-      normalized.includes('assets/swords/') ||
-      normalized.includes('/assets/elixirs/') ||
-      normalized.includes('assets/elixirs/');
-    const isCustomUploadedOrUrl =
-      !isEgyptianGeneratedSvg &&
-      !isTransparentCutoutPng &&
-      (normalized.startsWith('data:image/') ||
-        normalized.startsWith('http://') ||
-        normalized.startsWith('https://') ||
-        imgClassName.includes('object-cover'));
+    return <span className={className}>{isImageIconPath(normalized) ? fallback : normalized}</span>;
+  };
+
+  if (modCls > 0 && showStarsOverlay) {
     return (
-      <img
-        src={src}
-        alt={effectiveAlt}
-        style={{ objectFit: isCustomUploadedOrUrl ? 'cover' : 'contain' }}
-        className={isCustomUploadedOrUrl ? 'w-full h-full object-cover rounded' : imgClassName}
-        onError={() => {
-          if (!triedAltRoot && src.startsWith('/Bigwar/')) {
-            setTriedAltRoot(true);
-          } else {
-            setImgError(true);
-          }
-        }}
-      />
+      <span className="relative inline-flex items-center justify-center w-full h-full">
+        {renderContent()}
+        <span
+          className="absolute -top-1 -right-1 z-20 flex items-center justify-center rounded-full bg-slate-950/95 border border-amber-400 px-1 py-[0.5px] text-[7px] font-black text-amber-300 shadow-[0_0_6px_rgba(251,191,36,0.85)] pointer-events-none select-none leading-none"
+          title={`Алтарь модификации: ${modCls}/10 звёзд`}
+        >
+          ⭐{modCls}
+        </span>
+      </span>
     );
   }
 
-  return <span className={className}>{isImageIconPath(normalized) ? fallback : normalized}</span>;
+  return renderContent();
 };
+
 
 
 

@@ -9726,10 +9726,11 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.23</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.24</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>
+
 
 
         {/* ================= MODALS OVERLAYS ================= */}
@@ -10627,7 +10628,7 @@ export default function App() {
                 dateStr,
                 type: 'altar_modify',
                 description: succeeded && updatedItem
-                  ? `🔮 Алтарь Модификации (УСПЕХ — шанс ${chancePct}%, выпало ${rolledPct}%): «${updatedItem.name}» улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)! Сожжено материалов: ${sacrificeItemIds.length} шт.`
+                  ? `🔮 Алтарь Модификации (УСПЕХ — шанс ${chancePct}%, выпало ${rolledPct}%): «${updatedItem.name} ${'⭐'.repeat(Math.min(10, Number(updatedItem.modificationClass || 0)))}» улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)! Сожжено материалов: ${sacrificeItemIds.length} шт.`
                   : `🔥 Алтарь Модификации (НЕУДАЧА — шанс ${chancePct}%, выпало ${rolledPct}%): модификация «${targetRefItem?.name || 'Предмет'}» сорвалась. Жертвенные материалы (${sacrificeItemIds.length} шт.) сгорели.`,
                 itemSnapshot: targetRefItem
                   ? {
@@ -10665,10 +10666,11 @@ export default function App() {
 
               addCombatLog(
                 succeeded && updatedItem
-                  ? `🔮 Алтарь Модификации: «${updatedItem.name}» успешно улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)!`
+                  ? `🔮 Алтарь Модификации: «${updatedItem.name} ${'⭐'.repeat(Math.min(10, Number(updatedItem.modificationClass || 0)))}» успешно улучшен до Класса М${updatedItem.modificationClass} (+${(updatedItem.modificationClass || 0) * 5}% статов)!`
                   : `🔥 Алтарь Модификации: неудача (${rolledPct}% при шансе ${chancePct}%) — жертвенные материалы (${sacrificeItemIds.length} шт.) сгорели.`,
                 succeeded ? 'loot' : 'pvp'
               );
+
             }}
           />
         )}

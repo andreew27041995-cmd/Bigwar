@@ -206,15 +206,21 @@ export const TradeProtocolModal: React.FC<TradeProtocolModalProps> = ({
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border bg-slate-950 p-0.5 overflow-hidden text-lg"
                         style={{ borderColor: q.color }}
                       >
-                        <ItemIcon icon={item.icon} alt={item.name} slot={item.slot} />
+                        <ItemIcon icon={item.icon} alt={item.name} slot={item.slot} modificationClass={item.modificationClass} />
                       </div>
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="text-[11px] font-extrabold truncate" style={{ color: q.color }}>
                             {item.name}
                           </span>
+                          {Number(item.modificationClass || 0) > 0 && (
+                            <span className="text-amber-400 font-black text-[9.5px] shrink-0" title={`Модификация: ${item.modificationClass}/10 звёзд`}>
+                              {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                            </span>
+                          )}
                           <span className="text-[9px] text-amber-400 font-bold">({item.lvl} ур.)</span>
                         </div>
+
                         <div className="text-[9.5px] text-slate-300">
                           Арендатор: <strong className="text-amber-300">{rent.to}</strong> •{' '}
                           {isExpired ? (

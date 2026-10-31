@@ -110,14 +110,28 @@ export const ItemActionModal: React.FC<ItemActionModalProps> = ({
           style={{ borderColor: quality.color, backgroundColor: 'rgba(15, 23, 42, 0.7)' }}
         >
           <div className="text-2xl w-10 h-10 bg-slate-950 rounded-lg flex items-center justify-center border border-slate-700 shrink-0 overflow-hidden p-0.5">
-            <ItemIcon icon={item.icon} alt={item.name} />
+            <ItemIcon icon={item.icon} alt={item.name} slot={item.slot} modificationClass={item.modificationClass} />
           </div>
           <div className="flex-1">
-            <div className="text-xs font-bold" style={{ color: quality.color }}>
-              {item.name}
+            <div className="text-xs font-bold flex items-center gap-1.5 flex-wrap" style={{ color: quality.color }}>
+              <span>{item.name}</span>
+              {Number(item.modificationClass || 0) > 0 && (
+                <span
+                  className="text-amber-400 font-black tracking-tight text-[11px] leading-none drop-shadow-[0_0_6px_rgba(250,204,21,0.7)] select-none"
+                  title={`Алтарь модификации: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
+                >
+                  {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                </span>
+              )}
+              {Number(item.modificationClass || 0) > 0 && (
+                <span className="rounded bg-fuchsia-950 border border-fuchsia-400/80 px-1 py-[0.5px] text-[8px] font-black text-fuchsia-200">
+                  М{item.modificationClass} (+{Number(item.modificationClass) * 5}%)
+                </span>
+              )}
             </div>
             <div className="text-[10px] text-slate-400">
               {quality.name} • Ур.{item.lvl}
+              {Number(item.modificationClass || 0) > 0 && ` • Класс М${item.modificationClass}`}
               {item.dmg > 0 && ` • +${item.dmg} Урон`}
               {item.hp > 0 && ` • +${item.hp} HP`}
               {(item.str || 0) > 0 && ` • +${item.str} Сила`}
@@ -126,6 +140,7 @@ export const ItemActionModal: React.FC<ItemActionModalProps> = ({
             </div>
           </div>
         </div>
+
 
         {errorMsg && (
           <div className="mb-2 rounded bg-red-900/60 p-1.5 text-center text-[10px] font-semibold text-red-300">

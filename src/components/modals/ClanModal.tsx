@@ -1490,13 +1490,19 @@ export const ClanModal: React.FC<ClanModalProps> = ({
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded border border-slate-700 bg-slate-950 p-1">
-                                  <ItemIcon icon={item.icon} name={item.name} className="text-lg" />
+                                  <ItemIcon icon={item.icon} name={item.name} slot={item.slot} modificationClass={item.modificationClass} className="text-lg" />
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="truncate text-[10.5px] font-bold" style={{ color: q.color }}>
-                                    {item.name}
+                                  <div className="truncate text-[10.5px] font-bold flex items-center gap-1" style={{ color: q.color }}>
+                                    <span className="truncate">{item.name}</span>
+                                    {Number(item.modificationClass || 0) > 0 && (
+                                      <span className="text-amber-400 font-black text-[9px] shrink-0" title={`Модификация: ${item.modificationClass}/10 звёзд`}>
+                                        {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-[8.5px] text-slate-400">
+
                                     Ур.{item.lvl} • ⚔️+{item.dmg} ❤️+{item.hp} • 🔧{item.durability ?? 100}/{item.maxDurability ?? 100}
                                   </div>
                                 </div>
@@ -1649,23 +1655,36 @@ export const ClanModal: React.FC<ClanModalProps> = ({
                       >
                         <div className="flex items-start gap-2.5">
                           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-700 bg-slate-950 p-1">
-                            <ItemIcon icon={item.icon} name={item.name} className="text-2xl" />
+                            <ItemIcon icon={item.icon} name={item.name} slot={item.slot} modificationClass={item.modificationClass} className="text-2xl" />
                           </div>
 
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center justify-between gap-1">
                               <span
-                                className="truncate text-[11px] font-black"
+                                className="truncate text-[11px] font-black flex items-center gap-1"
                                 style={{ color: q.color }}
                               >
-                                {item.name}
+                                <span className="truncate">{item.name}</span>
+                                {!isElixir && Number(item.modificationClass || 0) > 0 && (
+                                  <span className="text-amber-400 font-black text-[9px] shrink-0" title={`Модификация: ${item.modificationClass}/10 звёзд`}>
+                                    {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                                  </span>
+                                )}
                               </span>
                               {!isElixir && (
-                                <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[8.5px] font-bold text-slate-300 shrink-0">
-                                  Ур. {item.lvl}
-                                </span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {Number(item.modificationClass || 0) > 0 && (
+                                    <span className="rounded bg-fuchsia-950 border border-fuchsia-400/70 px-1 py-[0.5px] text-[7.5px] font-black text-fuchsia-200">
+                                      М{item.modificationClass}
+                                    </span>
+                                  )}
+                                  <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[8.5px] font-bold text-slate-300">
+                                    Ур. {item.lvl}
+                                  </span>
+                                </div>
                               )}
                             </div>
+
 
                             {isElixir ? (
                               <div className="mt-0.5 text-[9px] text-purple-300 font-bold">

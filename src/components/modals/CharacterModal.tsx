@@ -714,7 +714,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           )}
                           {msg.gift.item && (
                             <span className="rounded bg-slate-900 border border-amber-400/60 px-2 py-0.5 text-[9px] font-extrabold text-amber-200">
-                              {msg.gift.item.isTransport ? '🚤 ' : ''}{msg.gift.item.icon} {msg.gift.item.name} {msg.gift.item.isTransport ? `(${msg.gift.item.durability}/${msg.gift.item.maxDurability} прочн.)` : `(Ур.${msg.gift.item.lvl})`}
+                              {msg.gift.item.isTransport ? '🚤 ' : ''}{msg.gift.item.icon} {msg.gift.item.name} {Number(msg.gift.item.modificationClass || 0) > 0 ? ('⭐'.repeat(Math.min(10, Number(msg.gift.item.modificationClass))) + ' ') : ''}{msg.gift.item.isTransport ? `(${msg.gift.item.durability}/${msg.gift.item.maxDurability} прочн.)` : `(Ур.${msg.gift.item.lvl})`}
                             </span>
                           )}
                           {Array.isArray(msg.gift.items) &&
@@ -723,10 +723,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                                 key={it.id || itIdx}
                                 className="rounded bg-slate-900 border border-amber-400/60 px-2 py-0.5 text-[9px] font-extrabold text-amber-200"
                               >
-                                {it.isTransport ? '🚤 ' : ''}{it.icon} {it.name}
+                                {it.isTransport ? '🚤 ' : ''}{it.icon} {it.name} {Number(it.modificationClass || 0) > 0 ? ('⭐'.repeat(Math.min(10, Number(it.modificationClass))) + ' ') : ''}
                               </span>
                             ))}
                         </div>
+
 
                         {isIncoming && (
                           <div className="mt-2.5 pt-1.5 border-t border-amber-500/20">
@@ -2076,6 +2077,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           alt={item.name}
                           slot={slot}
                           fallback={info.icon}
+                          modificationClass={item.modificationClass}
                           imgClassName="w-full h-full object-contain"
                         />
                       ) : (
@@ -2095,8 +2097,9 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                         {item && (
                           <div className="flex items-center gap-0.5 shrink-0">
                             {Number(item.modificationClass || 0) > 0 && (
-                              <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[7px] font-black text-fuchsia-300 border border-fuchsia-400/60">
-                                М{item.modificationClass}
+                              <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[7px] font-black text-fuchsia-300 border border-fuchsia-400/60 flex items-center gap-0.5">
+                                <span className="text-amber-400">{'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}</span>
+                                <span>М{item.modificationClass}</span>
                               </span>
                             )}
                             <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7.5px] font-black text-amber-300 border border-amber-500/30">
@@ -2107,10 +2110,18 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       </div>
                       {item ? (
                         <div
-                          className="truncate text-[9px] font-extrabold leading-tight mt-0.5"
+                          className="truncate text-[9px] font-extrabold leading-tight mt-0.5 flex items-center gap-1"
                           style={{ color: quality?.color }}
                         >
-                          {item.name}
+                          <span className="truncate">{item.name}</span>
+                          {Number(item.modificationClass || 0) > 0 && (
+                            <span
+                              className="text-amber-400 font-black text-[8px] leading-none shrink-0"
+                              title={`Модификация: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
+                            >
+                              {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="text-[8.5px] text-slate-500 italic leading-tight mt-0.5">
@@ -2118,6 +2129,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                         </div>
                       )}
                     </div>
+
                   </div>
 
                   {/* Bottom Row: Stats, Durability & Unequip Button */}

@@ -633,9 +633,17 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                       borderColor: getQualityConfig(targetItem.quality || 'common').color
                     }}
                   >
-                    <ItemIcon icon={targetItem.icon} alt={targetItem.name} slot={targetItem.slot} />
-                    <span className="absolute -top-2 -right-2 rounded-md border border-cyan-300 bg-gradient-to-r from-cyan-500 to-indigo-600 px-1.5 py-0.2 text-[9px] font-black text-white shadow-[0_0_10px_rgba(34,211,238,0.8)]">
-                      М{currentModClass}
+                    <ItemIcon
+                      icon={targetItem.icon}
+                      alt={targetItem.name}
+                      slot={targetItem.slot}
+                      modificationClass={currentModClass}
+                    />
+                    <span className="absolute -top-2 -right-2 rounded-md border border-cyan-300 bg-gradient-to-r from-cyan-500 to-indigo-600 px-1.5 py-0.2 text-[9px] font-black text-white shadow-[0_0_10px_rgba(34,211,238,0.8)] flex items-center gap-1">
+                      {currentModClass > 0 && (
+                        <span className="text-amber-300 font-black">{'⭐'.repeat(currentModClass)}</span>
+                      )}
+                      <span>М{currentModClass}</span>
                     </span>
                     {selectedTargetEntry?.isEquipped && (
                       <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 rounded bg-emerald-600 px-1 text-[7.5px] font-black text-white uppercase">
@@ -652,6 +660,14 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                       >
                         {targetItem.name}
                       </span>
+                      {currentModClass > 0 && (
+                        <span
+                          className="text-amber-400 font-black tracking-tight text-xs sm:text-sm drop-shadow-[0_0_6px_rgba(250,204,21,0.8)] select-none"
+                          title={`Модификация: ${currentModClass}/10 звёзд`}
+                        >
+                          {'⭐'.repeat(currentModClass)}
+                        </span>
+                      )}
                       <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
                         {targetItem.lvl} ур.
                       </span>
@@ -659,11 +675,16 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
 
                     <div className="space-y-1">
                       <div className="flex items-center justify-between text-[9.5px] font-black">
-                        <span className="text-slate-300">
-                          Класс модификации:{' '}
+                        <span className="text-slate-300 flex items-center gap-1 flex-wrap">
+                          <span>Класс:</span>
                           <strong className="text-cyan-300">
                             {currentModClass} / {MAX_MODIFICATION_CLASS}
-                          </strong>{' '}
+                          </strong>
+                          {currentModClass > 0 && (
+                            <span className="text-amber-400 font-black">
+                              {'⭐'.repeat(currentModClass)}
+                            </span>
+                          )}
                           <span className="text-emerald-400">
                             (+{currentModClass * bonusPerClassPct}% к статам)
                           </span>
@@ -674,6 +695,7 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                           </span>
                         )}
                       </div>
+
                       <div className="grid grid-cols-10 gap-1">
                         {Array.from({ length: MAX_MODIFICATION_CLASS }, (_, i) => i + 1).map((cls) => {
                           const achieved = cls <= currentModClass;
@@ -770,16 +792,22 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="h-8 w-8 shrink-0 rounded-lg border border-slate-700 bg-slate-950 p-0.5 flex items-center justify-center">
-                          <ItemIcon icon={item.icon} alt={item.name} slot={item.slot} />
+                          <ItemIcon icon={item.icon} alt={item.name} slot={item.slot} modificationClass={modCls} />
                         </div>
                         <div className="min-w-0">
                           <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="text-xs font-black truncate" style={{ color: q.color }}>
                               {item.name}
                             </span>
+                            {modCls > 0 && (
+                              <span className="text-amber-400 font-black text-[10px] tracking-tight">
+                                {'⭐'.repeat(modCls)}
+                              </span>
+                            )}
                             <span className="rounded bg-cyan-950 border border-cyan-500/50 px-1 text-[8.5px] font-black text-cyan-300">
                               М{modCls}/10 (+{modCls * bonusPerClassPct}%)
                             </span>
+
                             {isEquipped && (
                               <span className="rounded bg-emerald-950 border border-emerald-500/50 px-1 text-[8px] font-bold text-emerald-300">
                                 Надето
@@ -943,18 +971,25 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                     : 'border-rose-500 bg-rose-950/80 text-rose-100 shadow-[0_0_20px_rgba(244,63,94,0.4)]'
                 }`}
               >
-                <div className="text-xs sm:text-sm font-black uppercase tracking-wider">
-                  {lastResult.succeeded
-                    ? `✨ МОДИФИКАЦИЯ УСПЕШНА! КЛАСС М${lastResult.newClass} (+${lastResult.newClass * bonusPerClassPct}%)`
-                    : '💥 МОДИФИКАЦИЯ НЕ УДАЛАСЬ! РЕЛИКВИИ СГОРЕЛИ'}
+                <div className="text-xs sm:text-sm font-black uppercase tracking-wider flex items-center justify-center gap-1.5 flex-wrap">
+                  {lastResult.succeeded ? (
+                    <>
+                      <span>✨ МОДИФИКАЦИЯ УСПЕШНА!</span>
+                      <span className="text-amber-300 font-black">{'⭐'.repeat(lastResult.newClass)}</span>
+                      <span>КЛАСС М{lastResult.newClass} (+{lastResult.newClass * bonusPerClassPct}%)</span>
+                    </>
+                  ) : (
+                    '💥 МОДИФИКАЦИЯ НЕ УДАЛАСЬ! РЕЛИКВИИ СГОРЕЛИ'
+                  )}
                 </div>
                 <div className="text-[10px] mt-0.5 opacity-90">
                   {lastResult.succeeded
-                    ? `«${lastResult.itemName}» усилен до ${lastResult.newClass}-го класса! Все характеристики выросли до +${
+                    ? `«${lastResult.itemName} ${'⭐'.repeat(lastResult.newClass)}» успешно усилен до ${lastResult.newClass}-го класса (1..10 звёзд)! Все характеристики выросли до +${
                         lastResult.newClass * bonusPerClassPct
                       }%.`
                     : `Выпало значение вне сектора успеха (шанс был ${lastResult.chancePct}%). Израсходовано реликвий: ${lastResult.burnedCount} шт. Предмет на Алтаре сохранён (М${lastResult.prevClass}).`}
                 </div>
+
               </div>
             )}
           </div>

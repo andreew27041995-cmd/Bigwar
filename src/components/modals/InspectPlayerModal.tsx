@@ -565,6 +565,7 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                               alt={item.name}
                               slot={slotKey}
                               fallback={slotMeta.icon}
+                              modificationClass={item.modificationClass}
                               imgClassName="w-full h-full object-contain"
                             />
                           ) : (
@@ -582,23 +583,40 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                               {slotMeta.name}
                             </span>
                             {item && (
-                              <span className="shrink-0 rounded bg-slate-950/90 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-amber-500/30">
-                                {item.lvl} ур.
-                              </span>
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                {Number(item.modificationClass || 0) > 0 && (
+                                  <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[6.5px] font-black text-fuchsia-300 border border-fuchsia-400/60 flex items-center gap-0.5">
+                                    <span className="text-amber-400">{'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}</span>
+                                    <span>М{item.modificationClass}</span>
+                                  </span>
+                                )}
+                                <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-amber-500/30">
+                                  {item.lvl} ур.
+                                </span>
+                              </div>
                             )}
                           </div>
                           {item ? (
                             <div
-                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5"
+                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5 flex items-center gap-1"
                               style={{ color: q?.color }}
                             >
-                              {item.name}
+                              <span className="truncate">{item.name}</span>
+                              {Number(item.modificationClass || 0) > 0 && (
+                                <span
+                                  className="text-amber-400 font-black text-[7.5px] leading-none shrink-0"
+                                  title={`Модификация: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
+                                >
+                                  {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <div className="text-[8px] italic text-slate-500 mt-0.5">Пусто</div>
                           )}
                         </div>
                       </div>
+
 
                       {item && (
                         <div className="mt-1 pt-0.5 border-t border-slate-800/80 flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">

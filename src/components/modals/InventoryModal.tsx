@@ -243,7 +243,12 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                       title={`Прочность: ${curDur}/${maxDur} (${durPct}%)${isCritical ? ' — КРИТИЧЕСКИЙ ИЗНОС!' : ''}`}
                     >
                       <div className="w-12 h-12 rounded-lg border border-amber-500/40 bg-slate-900 flex items-center justify-center p-1 shrink-0 overflow-hidden">
-                        <ItemIcon icon={itemToSell.icon} alt={itemToSell.name} slot={slotKey as any} />
+                        <ItemIcon
+                          icon={itemToSell.icon}
+                          alt={itemToSell.name}
+                          slot={slotKey as any}
+                          modificationClass={itemToSell.modificationClass}
+                        />
                       </div>
                       <div className={`w-12 h-1.5 rounded-full bg-slate-950 border overflow-hidden p-[1px] transition-colors duration-300 ${isCritical ? 'border-red-500/90' : 'border-slate-700/90'}`}>
                         <div
@@ -266,9 +271,15 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                   );
                 })()}
                 <div className="min-w-0 flex-1 space-y-0.5">
-                  <div className="text-xs font-black truncate" style={{ color: q.color }}>
-                    {itemToSell.name}
+                  <div className="text-xs font-black truncate flex items-center gap-1" style={{ color: q.color }}>
+                    <span className="truncate">{itemToSell.name}</span>
+                    {Number(itemToSell.modificationClass || 0) > 0 && (
+                      <span className="text-amber-400 font-black text-[10px] shrink-0" title={`Модификация: ${itemToSell.modificationClass}/10 звёзд`}>
+                        {'⭐'.repeat(Math.min(10, Number(itemToSell.modificationClass)))}
+                      </span>
+                    )}
                   </div>
+
                   <div className="text-[10px] text-slate-300 flex items-center gap-1.5 flex-wrap">
                     <span>{slotInfo.name}</span>
                     <span>•</span>
@@ -566,7 +577,12 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         title={`Прочность: ${curDur}/${maxDur} (${durPct}%)${isDurCritical ? ' — КРИТИЧЕСКАЯ ПРОЧНОСТЬ (<15%)!' : ''}`}
                       >
                         <span className="text-2xl bg-slate-950/80 w-10 h-10 rounded-lg flex items-center justify-center border border-amber-500/40 shrink-0 overflow-hidden p-0.5">
-                          <ItemIcon icon={item.icon} alt={item.name} slot={slotKey as any} />
+                          <ItemIcon
+                            icon={item.icon}
+                            alt={item.name}
+                            slot={slotKey as any}
+                            modificationClass={item.modificationClass}
+                          />
                         </span>
                         {/* Small colored durability progress bar below item icon with smooth color transition & critical <15% red blink */}
                         <div className={`w-10 h-1.5 rounded-full bg-slate-950 border overflow-hidden p-[1px] transition-colors duration-300 ${isDurCritical ? 'border-red-500/90' : 'border-slate-700/90'}`}>
@@ -603,12 +619,21 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                       <div>
                         <div className="text-xs font-bold flex items-center gap-1.5 flex-wrap" style={{ color: q.color }}>
                           <span>{item.name}</span>
+                          {Number(item.modificationClass || 0) > 0 && (
+                            <span
+                              className="text-amber-400 font-black tracking-tight text-[11px] leading-none drop-shadow-[0_0_6px_rgba(250,204,21,0.7)] select-none"
+                              title={`Алтарь модификации: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}% к характеристикам)`}
+                            >
+                              {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                            </span>
+                          )}
                           <span className="text-[10px] text-amber-400">({item.lvl} ур.)</span>
                           {Number(item.modificationClass || 0) > 0 && (
                             <span className="rounded bg-fuchsia-950 border border-fuchsia-400/80 px-1.5 py-0.5 text-[9px] font-black text-fuchsia-200 shadow-[0_0_8px_rgba(217,70,239,0.45)]">
                               🔮 М{item.modificationClass} (+{Number(item.modificationClass) * 5}%)
                             </span>
                           )}
+
                           {isCustom && (
                             <span className="rounded bg-cyan-950 border border-cyan-500/50 px-1.5 py-0.5 text-[9px] font-bold text-cyan-300">
                               ⚒️ Создано

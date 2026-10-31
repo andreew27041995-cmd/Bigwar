@@ -485,6 +485,30 @@ export function getItemStats(item: GameItem) {
   };
 }
 
+/**
+ * Returns item modification class from 0 to 10 (0 = not modified, 1..10 = upgraded in Altar).
+ */
+export function getItemModClass(item?: { modificationClass?: number } | null): number {
+  if (!item) return 0;
+  return Math.max(0, Math.min(10, Math.floor(Number(item.modificationClass || 0))));
+}
+
+/**
+ * Returns string of stars corresponding to modification class (1..10 max).
+ * 1 -> '⭐'
+ * 2 -> '⭐⭐'
+ * ...
+ * 10 -> '⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐'
+ */
+export function getItemModStars(modClassOrItem?: number | { modificationClass?: number } | null): string {
+  const cls = typeof modClassOrItem === 'number'
+    ? Math.max(0, Math.min(10, Math.floor(modClassOrItem)))
+    : getItemModClass(modClassOrItem);
+  if (cls <= 0) return '';
+  return '⭐'.repeat(cls);
+}
+
+
 export function rollQuality(isBoss = false): ItemQuality {
   const r = Math.random();
   if (isBoss) {

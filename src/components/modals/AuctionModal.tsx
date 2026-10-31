@@ -567,20 +567,39 @@ export const AuctionModal: React.FC<AuctionModalProps> = ({
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-2xl w-10 h-10 bg-slate-950 rounded-lg flex items-center justify-center border border-slate-700 shrink-0 overflow-hidden p-0.5">
-                        <ItemIcon icon={lot.item.icon} alt={lot.item.name} />
+                        <ItemIcon
+                          icon={lot.item.icon}
+                          alt={lot.item.name}
+                          slot={lot.item.slot}
+                          modificationClass={lot.item.modificationClass}
+                        />
                       </span>
                       <div>
                         <div
-                          className="text-xs font-bold"
+                          className="text-xs font-bold flex items-center gap-1 flex-wrap"
                           style={{ color: isElixir ? '#34d399' : q.color }}
                         >
-                          {lot.item.name}
+                          <span>{lot.item.name}</span>
+                          {!isElixir && Number(lot.item.modificationClass || 0) > 0 && (
+                            <span
+                              className="text-amber-400 font-black tracking-tight text-[10px] leading-none drop-shadow-[0_0_6px_rgba(250,204,21,0.7)] select-none"
+                              title={`Алтарь модификации: ${lot.item.modificationClass}/10 звёзд (+${Number(lot.item.modificationClass) * 5}%)`}
+                            >
+                              {'⭐'.repeat(Math.min(10, Number(lot.item.modificationClass)))}
+                            </span>
+                          )}
+                          {!isElixir && Number(lot.item.modificationClass || 0) > 0 && (
+                            <span className="rounded bg-fuchsia-950 border border-fuchsia-400/70 px-1 py-[0.5px] text-[7.5px] font-black text-fuchsia-200">
+                              М{lot.item.modificationClass}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-400">
                           {isElixir
                             ? `Партия эликсиров: ${lot.item.elixirQty || 1} шт.`
-                            : `${q.name} • Ур.${lot.item.lvl} • ${slotInfo?.name || 'Экипировка'}`}
+                            : `${q.name} • Ур.${lot.item.lvl} • ${slotInfo?.name || 'Экипировка'}${Number(lot.item.modificationClass || 0) > 0 ? ` • Класс М${lot.item.modificationClass}` : ''}`}
                         </div>
+
 
                         {/* Item Stats Badges */}
                         {!isElixir && (
