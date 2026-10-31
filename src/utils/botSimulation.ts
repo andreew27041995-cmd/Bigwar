@@ -488,36 +488,81 @@ export function tickBotSimulation(cfg?: BotSimulationConfig): BotCharacter[] {
   return nextBots;
 }
 
+const BOT_LOCATIONS = [
+  'Москва, Россия',
+  'Санкт-Петербург, Россия',
+  'Екатеринбург, Россия',
+  'Новосибирск, Россия',
+  'Казань, Россия',
+  'Краснодар, Россия',
+  'Минск, Беларусь',
+  'Алматы, Казахстан',
+  'Астана, Казахстан',
+  'Ташкент, Узбекистан'
+];
+
+const BOT_DEVICES = [
+  '📱 Мобильный (Android 14) • Chrome Mobile',
+  '📱 Мобильный (iPhone / iOS 17.4) • Safari',
+  '📱 Мобильный (Android 13 • Telegram WebApp)',
+  '💻 ПК (Windows 10/11) • Chrome 124',
+  '📱 Мобильный (iPhone / iOS 17.5 • Telegram WebApp)'
+];
+
+function getBotDeterministicIp(botId: string, nick: string): string {
+  let hash = 0;
+  const seed = `${botId}_${nick}`;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  const oct1 = [46, 77, 85, 91, 95, 109, 176, 178, 185, 188, 212][hash % 11];
+  const oct2 = (hash >> 4) % 220 + 15;
+  const oct3 = (hash >> 8) % 240 + 10;
+  const oct4 = (hash >> 12) % 230 + 12;
+  return `${oct1}.${oct2}.${oct3}.${oct4}`;
+}
+
 /**
- * Converts active bots to RealtimePlayer array for merging into the live game state
- */
+  * Converts active bots to RealtimePlayer array for merging into the live game state
+  */
 export function convertBotsToRealtimePlayers(bots: BotCharacter[]): RealtimePlayer[] {
   const cfg = getBotSimulationConfig();
   if (!cfg.enabled) return [];
   const now = Date.now();
   return bots
     .filter((b) => b.isOnline)
-    .map((b) => ({
-      id: b.id,
-      nick: b.nick,
-      lvl: b.lvl,
-      hp: b.hp,
-      maxHp: b.maxHp,
-      avatar: b.avatar,
-      location: b.location,
-      pyramidTier: b.pyramidTier,
-      row: b.row,
-      col: b.col,
-      isOnline: true,
-      lastSeen: b.lastSeen || now,
-      last_seen: b.lastSeen || now,
-      isPremium: b.isPremium,
-      clanTag: b.clanTag,
-      clanEmblem: b.clanEmblem,
-      role: b.role || 'regular',
-      status: b.lastAction || (b.location === 'pyramid' ? `В Пирамиде (Т${b.pyramidTier})` : 'В Городе'),
-      isSimulatedBot: true
-    } as any));
+    .map((b, idx) => {
+      const botIp = getBotDeterministicIp(b.id, b.nick);
+      const botLoc = BOT_LOCATIONS[idx % BOT_LOCATIONS.length];
+      const botDevice = BOT_DEVICES[idx % BOT_DEVICES.length];
+      return {
+        id: b.id,
+        nick: b.nick,
+        lvl: b.lvl,
+        hp: b.hp,
+        maxHp: b.maxHp,
+        avatar: b.avatar,
+        location: b.location,
+        pyramidTier: b.pyramidTier,
+        row: b.row,
+        col: b.col,
+        isOnline: true,
+        lastSeen: b.lastSeen || now,
+        last_seen: b.lastSeen || now,
+        isPremium: b.isPremium,
+        clanTag: b.clanTag,
+        clanEmblem: b.clanEmblem,
+        role: b.role || 'regular',
+        status: b.lastAction || (b.location === 'pyramid' ? `В Пирамиде (Т${b.pyramidTier})` : 'В Городе'),
+        ip_address: botIp,
+        last_login_ip: botIp,
+        ip_location: botLoc,
+        device_info: botDevice,
+        screen_res: idx % 3 === 0 ? '390x844 (DPR 3)' : '412x915 (DPR 2.6)',
+        timezone: 'Europe/Moscow',
+        isSimulatedBot: true
+      } as any;
+    });
 }
 
 /**

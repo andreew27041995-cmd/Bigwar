@@ -154,6 +154,15 @@ export const EGYPTIAN_SLOTS: Record<ItemSlot, EgyptianSlotInfo> = {
         'Кольцо Владыки Солнца'
       ]
     }
+  },
+  transport: {
+    name: 'Транспорт',
+    icon: '🚤',
+    pools: {
+      low: ['Лодка Нила', 'Катер Луксора'],
+      mid: ['Апач Пустыни', 'М-8 Военный'],
+      high: ['Именная Ладья Ра', 'Солнечный Фрегат Гора']
+    }
   }
 };
 
@@ -164,7 +173,8 @@ export const SLOT_INFO: Record<ItemSlot, { name: string; icon: string; pool: str
   pants: { name: EGYPTIAN_SLOTS.pants.name, icon: EGYPTIAN_SLOTS.pants.icon, pool: [...EGYPTIAN_SLOTS.pants.pools.low, ...EGYPTIAN_SLOTS.pants.pools.mid] },
   boots: { name: EGYPTIAN_SLOTS.boots.name, icon: EGYPTIAN_SLOTS.boots.icon, pool: [...EGYPTIAN_SLOTS.boots.pools.low, ...EGYPTIAN_SLOTS.boots.pools.mid] },
   gloves: { name: EGYPTIAN_SLOTS.gloves.name, icon: EGYPTIAN_SLOTS.gloves.icon, pool: [...EGYPTIAN_SLOTS.gloves.pools.low, ...EGYPTIAN_SLOTS.gloves.pools.mid] },
-  ring: { name: EGYPTIAN_SLOTS.ring.name, icon: EGYPTIAN_SLOTS.ring.icon, pool: [...EGYPTIAN_SLOTS.ring.pools.low, ...EGYPTIAN_SLOTS.ring.pools.mid] }
+  ring: { name: EGYPTIAN_SLOTS.ring.name, icon: EGYPTIAN_SLOTS.ring.icon, pool: [...EGYPTIAN_SLOTS.ring.pools.low, ...EGYPTIAN_SLOTS.ring.pools.mid] },
+  transport: { name: EGYPTIAN_SLOTS.transport.name, icon: EGYPTIAN_SLOTS.transport.icon, pool: [...EGYPTIAN_SLOTS.transport.pools.low, ...EGYPTIAN_SLOTS.transport.pools.mid] }
 };
 
 import {
@@ -1217,7 +1227,8 @@ export const INITIAL_EQUIPPED: EquippedGear = {
   pants: null,
   boots: null,
   gloves: null,
-  ring: null
+  ring: null,
+  transport: null
 };
 
 export const INITIAL_INVENTORY: GameItem[] = [];

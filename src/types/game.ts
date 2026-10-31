@@ -1,4 +1,4 @@
-export type ItemSlot = 'weapon' | 'armor' | 'pants' | 'boots' | 'gloves' | 'ring';
+export type ItemSlot = 'weapon' | 'armor' | 'pants' | 'boots' | 'gloves' | 'ring' | 'transport';
 
 export type ItemQualityKey = 'common' | 'rare' | 'epic' | 'legendary' | 'custom';
 

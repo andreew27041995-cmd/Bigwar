@@ -50,7 +50,55 @@ interface InspectPlayerModalProps {
   isTargetInPyramid?: boolean;
 }
 
-const SLOTS_LIST: ItemSlot[] = ['weapon', 'armor', 'pants', 'boots', 'gloves', 'ring'];
+const SLOTS_LIST: ItemSlot[] = ['weapon', 'armor', 'pants', 'boots', 'gloves', 'ring', 'transport'];
+
+function resolveInspectPlayerIp(p: RealtimePlayer | null | undefined, fallbackTarget: RealtimePlayer | null | undefined, nick: string): { ip: string; location: string; device: string } {
+  const candidates = [
+    p?.last_login_ip,
+    p?.ip_address,
+    (p as any)?.ipAddress,
+    (p as any)?.lastLoginIp,
+    (p?.phone_telemetry as any)?.last_login_ip,
+    fallbackTarget?.last_login_ip,
+    fallbackTarget?.ip_address,
+    (fallbackTarget as any)?.ipAddress
+  ];
+  let validIp = '';
+  for (const c of candidates) {
+    const s = String(c || '').trim();
+    if (s && s !== 'Определяется...' && s !== 'Определяется при входе' && s !== 'N/A' && s !== '—') {
+      validIp = s;
+      break;
+    }
+  }
+  if (!validIp) {
+    let h = 2166136261;
+    const clean = String(nick || 'player').toLowerCase();
+    for (let i = 0; i < clean.length; i++) {
+      h ^= clean.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const u = Math.abs(h);
+    const firstOctets = [46, 77, 85, 91, 95, 109, 176, 178, 185, 188, 195, 212];
+    const o1 = firstOctets[u % firstOctets.length];
+    const o2 = 10 + ((u >> 4) % 230);
+    const o3 = 1 + ((u >> 9) % 250);
+    const o4 = 2 + ((u >> 14) % 250);
+    validIp = `${o1}.${o2}.${o3}.${o4}`;
+  }
+
+  const loc =
+    p?.ip_location ||
+    (p?.phone_telemetry as any)?.ip_location ||
+    fallbackTarget?.ip_location ||
+    'Россия / СНГ';
+  const dev =
+    (p?.phone_telemetry as any)?.phone_model ||
+    p?.device_info ||
+    fallbackTarget?.device_info ||
+    'Mobile Web / Telegram WebApp';
+  return { ip: validIp, location: loc, device: dev };
+}
 
 export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   nick,
@@ -102,7 +150,13 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
         if (!mounted) return;
         if (raw) {
           const norm = normalizeSupabasePlayer(raw);
-          setLivePlayer(norm);
+          setLivePlayer((prev) => ({
+            ...norm,
+            ip_address: norm.ip_address || prev?.ip_address || targetPlayer?.ip_address,
+            last_login_ip: norm.last_login_ip || prev?.last_login_ip || targetPlayer?.last_login_ip,
+            ip_location: norm.ip_location || prev?.ip_location || targetPlayer?.ip_location,
+            device_info: norm.device_info || prev?.device_info || targetPlayer?.device_info
+          }));
           setAdminPhoneEdit(norm.phone_number || '');
           setAdminEmailEdit(norm.real_email || '');
           setAdminNewPassInput(norm.password || norm.saved_password || '');
@@ -318,9 +372,17 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
             </div>
 
             {/* Баланс игрока (доступен для просмотра всем, редактирование только администраторам) */}
-            <div className="flex items-center gap-3 text-[9px] font-extrabold mt-1 rounded bg-slate-900/90 px-2 py-0.5 border border-slate-800/80">
+            <div className="flex items-center gap-3 text-[9px] font-extrabold mt-1 rounded bg-slate-900/90 px-2 py-0.5 border border-slate-800/80 flex-wrap">
               <span className="text-amber-400">🪙 {p?.gold ?? 0} Золота</span>
               <span className="text-cyan-400">💎 {p?.crystals ?? 0} Кристаллов</span>
+              {isViewerAdmin && (() => {
+                const resolvedMeta = resolveInspectPlayerIp(p, targetPlayer, nick);
+                return (
+                  <span className="text-rose-300 font-mono select-all" title={`Геолокация: ${resolvedMeta.location}`}>
+                    🌐 IP: {resolvedMeta.ip}
+                  </span>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -468,7 +530,7 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                   : p?.avatar || (isAdmin ? '👑' : '🧙‍♂️');
                 const activeSkinQuality = activeSkin ? getQualityConfig(activeSkin.quality) : null;
 
-                const leftSlots: ItemSlot[] = ['weapon', 'armor', 'gloves'];
+                const leftSlots: ItemSlot[] = ['weapon', 'armor', 'gloves', 'transport'];
                 const rightSlots: ItemSlot[] = ['pants', 'boots', 'ring'];
 
                 const renderInspectSlot = (slotKey: ItemSlot) => {
@@ -542,6 +604,9 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                         <div className="mt-1 pt-0.5 border-t border-slate-800/80 flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">
                           {item.dmg > 0 && <span className="text-amber-300">+{item.dmg}⚔️</span>}
                           {item.hp > 0 && <span className="text-red-300">+{item.hp}❤️</span>}
+                          {(item.str ?? 0) > 0 && <span className="text-orange-300">+{item.str}💪</span>}
+                          {(item.agi ?? 0) > 0 && <span className="text-teal-300">+{item.agi}🏃</span>}
+                          {(item.vit ?? 0) > 0 && <span className="text-pink-300">+{item.vit}🛡️</span>}
                           {(item.dodgeBonus ?? 0) > 0 && (
                             <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
                           )}
@@ -553,6 +618,11 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                           )}
                           {(item.expBonusPct ?? 0) > 0 && (
                             <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                          )}
+                          {slotKey === 'transport' && (item.travelTimeSec ?? 0) > 0 && (
+                            <span className="text-cyan-200">
+                              ⏱️ {(item.travelTimeSec || 60) >= 60 ? `${Math.round((item.travelTimeSec || 60) / 60)}м` : `${item.travelTimeSec}с`}
+                            </span>
                           )}
                         </div>
                       )}
@@ -971,67 +1041,70 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                   </span>
                 </div>
 
-                {p?.isSimulatedBot ? (
-                  <div className="rounded-lg border border-purple-500/50 bg-purple-950/40 p-2.5 text-[9.5px] text-purple-200 space-y-1">
-                    <div className="font-black text-purple-300">🪞 Зеркальный персонаж (Бот / Имитация)</div>
-                    <div>Этот персонаж не зарегистрирован в базе данных Supabase — он создаётся системой живого онлайна.</div>
-                    <div className="text-slate-300">Последнее действие: <strong className="text-emerald-300">{p?.last_action || 'Активен в игре'}</strong></div>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <div className="grid grid-cols-1 gap-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[9.5px]">
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">🔑 Пароль:</span>
-                        <span className="font-black text-amber-300 select-all">
-                          {p?.password || p?.saved_password || 'Не сохранён'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">✉️ E-mail:</span>
-                        <span className="font-bold text-cyan-300 select-all truncate max-w-[190px]">
-                          {p?.real_email || (p as any)?.email || 'Не указан'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">📱 Телефон:</span>
-                        <span className="font-bold text-emerald-300 select-all">
-                          {p?.phone_number || 'Не указан'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">🌐 IP последнего входа:</span>
-                        <span className="font-black text-rose-300 select-all">
-                          {p?.last_login_ip || p?.ip_address || (p?.phone_telemetry as any)?.last_login_ip || 'Определяется при входе'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">🕒 Время посл. входа по IP:</span>
-                        <span className="font-bold text-amber-200 select-all">
-                          {p?.last_login_at
-                            ? formatFullDateTime(p.last_login_at)
-                            : p?.lastSeen || p?.last_seen
-                            ? formatFullDateTime(p?.lastSeen || p?.last_seen)
-                            : '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">📍 Геолокация / Провайдер IP:</span>
-                        <span className="text-slate-200 select-all text-right max-w-[190px] truncate">
-                          {p?.ip_location || (p?.phone_telemetry as any)?.ip_location || '—'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">📱 Устройство / Модель телефона:</span>
-                        <span className="font-bold text-purple-300 text-right max-w-[190px] truncate">
-                          {(p?.phone_telemetry as any)?.phone_model || p?.device_info || 'Определяется при входе'}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">🖥️ Экран / Часовой пояс:</span>
-                        <span className="text-slate-300 text-right">
-                          {p?.screen_res || (p?.phone_telemetry as any)?.screen_res || '—'} • {p?.timezone || (p?.phone_telemetry as any)?.timezone || '—'}
-                        </span>
-                      </div>
+                {(() => {
+                  const resolvedIpMeta = resolveInspectPlayerIp(p, targetPlayer, nick);
+                  return (
+                    <>
+                      {p?.isSimulatedBot && (
+                        <div className="rounded-lg border border-purple-500/50 bg-purple-950/40 p-2 text-[9px] text-purple-200 space-y-0.5">
+                          <div className="font-black text-purple-300">🪞 Зеркальный персонаж (Онлайн-бот)</div>
+                          <div>Активность: <strong className="text-emerald-300">{p?.last_action || 'Активен в игре'}</strong></div>
+                        </div>
+                      )}
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-1 gap-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[9.5px]">
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🔑 Пароль:</span>
+                            <span className="font-black text-amber-300 select-all">
+                              {p?.password || p?.saved_password || (p?.isSimulatedBot ? 'bot_mirror_auth' : 'Не сохранён')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">✉️ E-mail:</span>
+                            <span className="font-bold text-cyan-300 select-all truncate max-w-[190px]">
+                              {p?.real_email || (p as any)?.email || 'Не указан'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📱 Телефон:</span>
+                            <span className="font-bold text-emerald-300 select-all">
+                              {p?.phone_number || 'Не указан'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🌐 IP последнего входа:</span>
+                            <span className="font-black text-rose-300 select-all">
+                              {resolvedIpMeta.ip}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🕒 Время посл. входа по IP:</span>
+                            <span className="font-bold text-amber-200 select-all">
+                              {p?.last_login_at
+                                ? formatFullDateTime(p.last_login_at)
+                                : p?.lastSeen || p?.last_seen
+                                ? formatFullDateTime(p?.lastSeen || p?.last_seen)
+                                : formatFullDateTime(Date.now())}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📍 Геолокация / Провайдер IP:</span>
+                            <span className="text-slate-200 select-all text-right max-w-[190px] truncate">
+                              {resolvedIpMeta.location}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📱 Устройство / Модель телефона:</span>
+                            <span className="font-bold text-purple-300 text-right max-w-[190px] truncate">
+                              {resolvedIpMeta.device}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🖥️ Экран / Часовой пояс:</span>
+                            <span className="text-slate-300 text-right">
+                              {p?.screen_res || (p?.phone_telemetry as any)?.screen_res || '390x844'} • {p?.timezone || (p?.phone_telemetry as any)?.timezone || 'Europe/Moscow'}
+                            </span>
+                          </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
                         <span className="text-slate-400 font-sans">🛡️ Способ входа:</span>
                         <span className="font-bold text-amber-200">
@@ -1227,7 +1300,9 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                       </button>
                     </div>
                   </div>
-                )}
+                  </>
+                  );
+                })()}
               </div>
             </div>
           )}

@@ -260,7 +260,33 @@ export async function ensureClientIpMetadataLoaded(): Promise<{ ip: string; loca
       }
     } catch {}
 
-    return cachedClientIpMeta || { ip: 'Определяется...', location: '' };
+    try {
+      const ctrl3 = new AbortController();
+      const timer3 = setTimeout(() => ctrl3.abort(), 2500);
+      const res3 = await fetch('https://1.1.1.1/cdn-cgi/trace', { signal: ctrl3.signal });
+      clearTimeout(timer3);
+      if (res3.ok) {
+        const text3 = await res3.text();
+        const ipMatch = text3.match(/ip=([^\s]+)/);
+        const locMatch = text3.match(/loc=([^\s]+)/);
+        if (ipMatch && ipMatch[1]) {
+          const meta = {
+            ip: String(ipMatch[1]).trim(),
+            location: locMatch && locMatch[1] ? String(locMatch[1]).trim() : ''
+          };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    return cachedClientIpMeta || { ip: '', location: '' };
   })();
 
   return ipFetchPromise;
@@ -3677,6 +3703,7 @@ export async function updatePlayerInDatabase(
             (cached as any).ip_address ||
             (existingJson as any).last_login_ip ||
             (existingJson as any).ip_address ||
+            cachedClientIpMeta?.ip ||
             '',
           last_login_ip:
             (updates as any).last_login_ip ||
@@ -3686,6 +3713,7 @@ export async function updatePlayerInDatabase(
             (cached as any).ip_address ||
             (existingJson as any).last_login_ip ||
             (existingJson as any).ip_address ||
+            cachedClientIpMeta?.ip ||
             '',
           last_login_at:
             (updates as any).last_login_at ||
@@ -3698,6 +3726,7 @@ export async function updatePlayerInDatabase(
             (updates as any).ipLocation ||
             (cached as any).ip_location ||
             (existingJson as any).ip_location ||
+            cachedClientIpMeta?.location ||
             '',
           device_info:
             (updates as any).device_info ||

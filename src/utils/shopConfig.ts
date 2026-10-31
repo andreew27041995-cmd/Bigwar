@@ -343,9 +343,9 @@ export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
   transportsPriceMigratedV2: true,
   namedTransportEnabled: true,
   namedTransportDefaultDurability: 500,
-  namedTransportTimeReductionPct: 35,
-  namedTransportBaseTimeSec: 180,
-  namedTransportCostCrystals: 35,
+  namedTransportTimeReductionPct: 50,
+  namedTransportBaseTimeSec: 60,
+  namedTransportCostCrystals: 10000,
   namedTransportCostGold: 15000
 };
 
@@ -1557,8 +1557,14 @@ export function resolvePlayerOwnedSkins(
 
 function migrateTransportsCatalogIfNeeded(flagsObj: any): boolean {
   if (!flagsObj || typeof flagsObj !== 'object') return false;
+  let changed = false;
+  if (Number(flagsObj.namedTransportCostCrystals || 0) < 10000) {
+    flagsObj.namedTransportCostCrystals = 10000;
+    flagsObj.namedTransportBaseTimeSec = 60;
+    changed = true;
+  }
   if (flagsObj.transportsPriceMigratedV2 === true && Array.isArray(flagsObj.transportsCatalog) && flagsObj.transportsCatalog.length > 0) {
-    return false;
+    return changed;
   }
   const defaultMap = new Map<string, TransportTemplate>();
   DEFAULT_TRANSPORTS.forEach((d) => defaultMap.set(d.id, { ...d }));
@@ -1931,9 +1937,11 @@ export function isCustomCreatedItem(item?: Partial<GameItem> | null): boolean {
   if (!item) return false;
   return Boolean(
     item.isCustomCreated ||
+      item.isNamedTransport ||
       item.quality === 'custom' ||
       String(item.id || '').startsWith('custom_') ||
-      String(item.id || '').startsWith('admin_custom_')
+      String(item.id || '').startsWith('admin_custom_') ||
+      String(item.id || '').startsWith('transport_named_')
   );
 }
 
@@ -1968,15 +1976,24 @@ export function getItemSellRefund(item: GameItem): {
   label: string;
 } {
   if (isCustomCreatedItem(item)) {
-    // При продаже своей созданной вещи игрок получает 70% от затрат
+    // При продаже своей созданной вещи или именного транспорта игрок получает 70% от стоимости создания
     const paidInCrystals =
       item.forgeCurrency === 'crystals' ||
+      item.isNamedTransport ||
+      String(item.id || '').startsWith('transport_named_') ||
       (!item.forgeCurrency &&
         Number(item.forgeCrystalCost || 0) > 0 &&
         Number(item.forgeGoldCost || 0) === 0);
 
-    if (paidInCrystals && Number(item.forgeCrystalCost || 0) > 0) {
-      const crystals = Math.max(1, Math.floor(Number(item.forgeCrystalCost) * 0.7));
+    const crystalCostVal =
+      Number(item.forgeCrystalCost || 0) > 0
+        ? Number(item.forgeCrystalCost)
+        : item.isNamedTransport || String(item.id || '').startsWith('transport_named_')
+        ? 10000
+        : 0;
+
+    if (paidInCrystals && crystalCostVal > 0) {
+      const crystals = Math.max(1, Math.floor(crystalCostVal * 0.7));
       return {
         gold: 0,
         crystals,
@@ -2153,7 +2170,7 @@ export function createTransportItemFromTemplate(tpl: TransportTemplate): GameIte
     transportTemplateId: tpl.id,
     shopTemplateId: tpl.id,
     name: tpl.name,
-    slot: 'boots',
+    slot: 'transport',
     icon: tpl.icon || '🚤',
     quality: tpl.quality || 'common',
     lvl: Math.max(1, Number(tpl.lvl || 1)),
@@ -2180,27 +2197,43 @@ export function createNamedTransportItem(params: {
   paidCurrency?: 'crystals' | 'gold';
   paidAmount?: number;
   baseTransport?: TransportTemplate | null;
+  maxDurability?: number;
+  travelTimeSec?: number;
+  transferable?: boolean;
+  dmg?: number;
+  hp?: number;
+  str?: number;
+  agi?: number;
+  vit?: number;
+  dodgeBonus?: number;
+  energyBonus?: number;
+  goldBonusPct?: number;
+  expBonusPct?: number;
 }): GameItem {
   const f = params.flags || getFeatureFlags();
-  const maxDur = Math.max(1, Number(f.namedTransportDefaultDurability ?? 500));
-  const reductionPct = Math.max(1, Math.min(90, Number(f.namedTransportTimeReductionPct ?? 35)));
-  const baseSec = params.baseTransport
-    ? Math.max(10, Number(params.baseTransport.travelTimeSec || 180))
-    : Math.max(10, Number(f.namedTransportBaseTimeSec ?? 180));
-  const reducedTravelSec = Math.max(10, Math.round(baseSec * (1 - reductionPct / 100)));
+  const maxDur = Math.max(1, Number(params.maxDurability ?? f.namedTransportDefaultDurability ?? 500));
+  // Именной транспорт летит за 1 минуту (60 секунд) по умолчанию, либо выбранное время
+  const travelSec = Math.max(15, Number(params.travelTimeSec || 60));
   const currency = params.paidCurrency || 'crystals';
-  const amount = Number(params.paidAmount ?? (currency === 'crystals' ? f.namedTransportCostCrystals ?? 35 : f.namedTransportCostGold ?? 15000));
+  const amount = Math.max(1, Number(params.paidAmount ?? (currency === 'crystals' ? f.namedTransportCostCrystals ?? 10000 : f.namedTransportCostGold ?? 15000)));
 
   return {
     id: `transport_named_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     transportTemplateId: params.baseTransport?.id || 'named_transport',
     name: params.name.trim() || 'Именной Крейсер Фараона',
-    slot: 'boots',
+    slot: 'transport',
     icon: params.icon || params.baseTransport?.icon || '🚁',
     quality: 'custom',
     lvl: Math.max(1, Number(params.lvl || params.baseTransport?.lvl || 1)),
-    dmg: 0,
-    hp: 0,
+    dmg: Math.max(0, Number(params.dmg || 0)),
+    hp: Math.max(0, Number(params.hp || 0)),
+    str: Math.max(0, Number(params.str || 0)),
+    agi: Math.max(0, Number(params.agi || 0)),
+    vit: Math.max(0, Number(params.vit || 0)),
+    dodgeBonus: Math.max(0, Number(params.dodgeBonus || 0)),
+    energyBonus: Math.max(0, Number(params.energyBonus || 0)),
+    goldBonusPct: Math.max(0, Number(params.goldBonusPct || 0)),
+    expBonusPct: Math.max(0, Number(params.expBonusPct || 0)),
     price: currency === 'gold' ? amount : amount * 100,
     forgeCurrency: currency,
     forgeCrystalCost: currency === 'crystals' ? amount : 0,
@@ -2210,11 +2243,11 @@ export function createNamedTransportItem(params: {
     initialMaxDurability: maxDur,
     isCustomCreated: true,
     creatorNick: params.creatorNick || 'Герой',
-    transferable: false,
+    transferable: Boolean(params.transferable),
     isTransport: true,
     isNamedTransport: true,
-    travelTimeSec: reducedTravelSec,
-    timeReductionPct: reductionPct,
+    travelTimeSec: travelSec,
+    timeReductionPct: 50,
     origin: 'Порт (Именной транспорт)'
   };
 }

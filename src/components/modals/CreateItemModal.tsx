@@ -21,7 +21,8 @@ const SLOT_NAMES: Record<ItemSlot, string> = {
   pants: SLOT_INFO.pants.name,
   boots: SLOT_INFO.boots.name,
   gloves: SLOT_INFO.gloves.name,
-  ring: SLOT_INFO.ring.name
+  ring: SLOT_INFO.ring.name,
+  transport: SLOT_INFO.transport.name
 };
 
 const SLOT_ICONS: Record<ItemSlot, string> = {
@@ -30,8 +31,11 @@ const SLOT_ICONS: Record<ItemSlot, string> = {
   pants: SLOT_INFO.pants.icon,
   boots: SLOT_INFO.boots.icon,
   gloves: SLOT_INFO.gloves.icon,
-  ring: SLOT_INFO.ring.icon
+  ring: SLOT_INFO.ring.icon,
+  transport: SLOT_INFO.transport.icon
 };
+
+const EQUIPMENT_SLOTS: ItemSlot[] = ['weapon', 'armor', 'pants', 'boots', 'gloves', 'ring'];
 
 export interface ForgeCustomItemOptions {
   equipImmediately?: boolean;
@@ -67,10 +71,11 @@ const PRESET_SLOT_ICONS: Record<ItemSlot, string[]> = {
   pants: ['👖', '🩳', '🩰', '⛓️', '🛡️'],
   boots: ['👢', '🥾', '👟', '👞', '⚡', '🪽'],
   gloves: ['🧤', '🥊', '🦾', '✋', '🔥', '⚡'],
-  ring: ['💍', '💎', '🔮', '🧿', '👑', '☀️', '🌙']
+  ring: ['💍', '💎', '🔮', '🧿', '👑', '☀️', '🌙'],
+  transport: ['🛶', '🚤', '🚁', '🛩️', '⛵', '🛳️', '🛸', '🦅']
 };
 
-const PRESET_TRANSPORT_ICONS: string[] = ['🛶', '🚤', '🚁', '🛩️', '⛵', '🛳️', '🛸', '🦅'];
+const PRESET_TRANSPORT_ICONS: string[] = ['🛶', '🚤', '🚁', '🛩️', '⛵', '🛳️', '🛸', '🦅', '🚀', '🐉'];
 
 const RANDOM_TRANSPORT_NAMES: string[] = [
   'Золотая Ладья Фараона',
@@ -115,7 +120,8 @@ const RANDOM_ITEM_NAMES: Record<ItemSlot, string[]> = {
     'Кольцо Ока Гора',
     'Перстень Вечной Жизни',
     'Печать Древних Богов'
-  ]
+  ],
+  transport: RANDOM_TRANSPORT_NAMES
 };
 
 export const CreateItemModal: React.FC<CreateItemModalProps> = ({
@@ -145,7 +151,24 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   const [selectedBaseTransportId, setSelectedBaseTransportId] = useState<string>(
     transportsCatalog[transportsCatalog.length - 1]?.id || 'transport_m8'
   );
-  const [transportIcon, setTransportIcon] = useState<string>('🛩️');
+  const [transportIcon, setTransportIcon] = useState<string>('🚁');
+  const [transportDurability, setTransportDurability] = useState<number>(
+    Math.max(10, Number(flags.namedTransportDefaultDurability ?? 500))
+  );
+  // Именной транспорт летит за 1 минуту (60 секунд)
+  const [transportTravelTimeSec, setTransportTravelTimeSec] = useState<number>(60);
+  const [transportTransferable, setTransportTransferable] = useState<boolean>(false);
+
+  // Все игровые бонусы для Именного Транспорта (+5% к начальной цене 10 000 💎 за каждый добавленный параметр)
+  const [tDmg, setTDmg] = useState<number>(0);
+  const [tHp, setTHp] = useState<number>(0);
+  const [tStr, setTStr] = useState<number>(0);
+  const [tAgi, setTAgi] = useState<number>(0);
+  const [tVit, setTVit] = useState<number>(0);
+  const [tDodge, setTDodge] = useState<number>(0);
+  const [tEnergy, setTEnergy] = useState<number>(0);
+  const [tGoldPct, setTGoldPct] = useState<number>(0);
+  const [tExpPct, setTExpPct] = useState<number>(0);
 
   const [currency, setCurrency] = useState<'crystals' | 'gold'>(
     allowedCurrency === 'gold' ? 'gold' : 'crystals'
@@ -171,30 +194,49 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   const rawCfgDur = Number(flags.customDefaultDurability ?? 100);
   const defaultDurability = rawCfgDur === 25 || rawCfgDur <= 0 ? 100 : rawCfgDur;
 
-  // Характеристики Именного Транспорта: прочность 500/500 и ускорение пути до Порта
-  const namedTransportDurability = Math.max(100, Number(flags.namedTransportDefaultDurability ?? 500));
-  const namedTransportReductionPct = Math.max(5, Math.min(80, Number(flags.namedTransportTimeReductionPct ?? 35)));
   const selectedBaseTransport =
     transportsCatalog.find((t) => t.id === selectedBaseTransportId) ||
     transportsCatalog[0] || {
       id: 'transport_m8',
       name: 'М-8',
-      lvl: 9,
-      travelTimeSec: 180,
-      icon: '🛩️'
+      lvl: 1,
+      travelTimeSec: 60,
+      icon: '🚁'
     };
-  const baseTransportTimeSec = Math.max(30, Number(selectedBaseTransport.travelTimeSec || flags.namedTransportBaseTimeSec || 180));
-  const reducedTransportTimeSec = Math.max(
-    15,
-    Math.round(baseTransportTimeSec * (1 - namedTransportReductionPct / 100))
+
+  // Базовая цена создания Именного Транспорта: 10 000 кристаллов
+  const baseNamedTransportCostCrystals = Math.max(
+    10000,
+    Number(flags.namedTransportCostCrystals && flags.namedTransportCostCrystals >= 10000 ? flags.namedTransportCostCrystals : 10000)
   );
-  const namedTransportCostCrystals = Math.max(1, Number(flags.namedTransportCostCrystals ?? 50));
-  const namedTransportCostGold = Math.max(50, Number(flags.namedTransportCostGold ?? 2500));
+  const costPerAddedTransportParam = Math.round(baseNamedTransportCostCrystals * 0.05); // +5% = +500 💎 за каждый добавленный параметр
+
+  // Подсчет количества добавленных параметров на Именном Транспорте
+  const addedTransportParamsCount =
+    (tDmg > 0 ? 1 : 0) +
+    (tHp > 0 ? 1 : 0) +
+    (tStr > 0 ? 1 : 0) +
+    (tAgi > 0 ? 1 : 0) +
+    (tVit > 0 ? 1 : 0) +
+    (tDodge > 0 ? 1 : 0) +
+    (tEnergy > 0 ? 1 : 0) +
+    (tGoldPct > 0 ? 1 : 0) +
+    (tExpPct > 0 ? 1 : 0);
+
+  const transportParamsExtraCrystals = addedTransportParamsCount * costPerAddedTransportParam;
+  const transportSubtotalCrystals = baseNamedTransportCostCrystals + transportParamsExtraCrystals;
+  // Если можно передавать — стоимость увеличивается на +50%
+  const transportTransferExtraCrystals = transportTransferable
+    ? Math.round(transportSubtotalCrystals * 0.5)
+    : 0;
+  const totalTransportCrystals = transportSubtotalCrystals + transportTransferExtraCrystals;
+  // При продаже именного созданного транспорта возврат составляет 70% от стоимости создания
+  const transportSellRefundCrystals = Math.floor(totalTransportCrystals * 0.7);
 
   const statCostCrystals = Math.max(1, Number(flags.customCostPerStatCrystals ?? 1));
   const statCostGold = Math.max(1, Number(flags.customCostPerStatGold ?? 50));
 
-  // Расчёт стоимости строго по выбранным характеристикам
+  // Расчёт стоимости строго по выбранным характеристикам оружия/брони
   const statUnits =
     Math.ceil(dmg / 5) +
     Math.ceil(hp / 15) +
@@ -312,7 +354,7 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
     creatorNick: hero.nick
   };
 
-  const handleCreateNamedTransport = () => {
+  const handleCreateNamedTransport = (equipImmediately: boolean = false) => {
     if (flags.namedTransportEnabled === false && !isAdmin) {
       showToast('Создание именного транспорта временно отключено администратором!');
       return;
@@ -322,41 +364,46 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
       showToast('Введите название создаваемого Именного Транспорта!');
       return;
     }
-    const reqLvl = Math.max(1, Number(selectedBaseTransport.lvl || 1));
-    if (Number(hero.level || 1) < reqLvl && !isAdmin) {
-      showToast(`Для базы «${selectedBaseTransport.name}» требуется ${reqLvl} уровень персонажа!`);
+    if (hero.crystals < totalTransportCrystals) {
+      showToast(`❌ Недостаточно кристаллов! Нужно: ${totalTransportCrystals.toLocaleString('ru-RU')} 💎 (у вас: ${hero.crystals.toLocaleString('ru-RU')} 💎)`);
       return;
     }
-    if (effectiveCurrency === 'crystals' && hero.crystals < namedTransportCostCrystals) {
-      showToast(`Недостаточно кристаллов! Нужно: ${namedTransportCostCrystals} 💎`);
-      return;
-    }
-    if (effectiveCurrency === 'gold' && hero.gold < namedTransportCostGold) {
-      showToast(`Недостаточно золота! Нужно: ${namedTransportCostGold} 🪙`);
-      return;
-    }
+
+    const safeDur = Math.max(1, Math.min(5000, Math.round(Number(transportDurability) || 500)));
+    // Именной транспорт летит за 1 минуту (60 сек) или выбранное время
+    const safeTravelSec = Math.max(15, Math.min(3600, Math.round(Number(transportTravelTimeSec) || 60)));
 
     const transportItem = createNamedTransportItem({
       name: cleanName,
       icon: transportIcon || selectedBaseTransport.icon || '🚁',
-      lvl: reqLvl,
+      lvl: 1,
       creatorNick: hero.nick || 'Игрок',
-      baseTimeSec: baseTransportTimeSec,
-      timeReductionPct: namedTransportReductionPct,
-      maxDurability: namedTransportDurability,
-      currency: effectiveCurrency,
-      costCrystals: effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
-      costGold: effectiveCurrency === 'gold' ? namedTransportCostGold : 0
+      flags,
+      paidCurrency: 'crystals',
+      paidAmount: totalTransportCrystals,
+      baseTransport: selectedBaseTransport as any,
+      maxDurability: safeDur,
+      travelTimeSec: safeTravelSec,
+      transferable: transportTransferable,
+      dmg: tDmg,
+      hp: tHp,
+      str: tStr,
+      agi: tAgi,
+      vit: tVit,
+      dodgeBonus: tDodge,
+      energyBonus: tEnergy,
+      goldBonusPct: tGoldPct,
+      expBonusPct: tExpPct
     });
 
     onForgeItem(
       transportItem,
-      effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
+      totalTransportCrystals,
       {
-        equipImmediately: false,
-        currency: effectiveCurrency,
-        crystalCost: effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
-        goldCost: effectiveCurrency === 'gold' ? namedTransportCostGold : 0
+        equipImmediately,
+        currency: 'crystals',
+        crystalCost: totalTransportCrystals,
+        goldCost: 0
       }
     );
     onClose();
@@ -411,14 +458,14 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
       className="fixed inset-0 z-[100] bg-black/85 flex justify-center items-center p-2.5 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-gradient-to-b from-[#221b15] to-[#120e0b] border-2 border-[#d4af37] w-full max-w-[560px] rounded-xl p-4 relative text-[#f4e4bc] shadow-[0_0_50px_rgba(0,0,0,1)] max-h-[92vh] overflow-y-auto">
+      <div className="bg-gradient-to-b from-[#221b15] to-[#120e0b] border-2 border-[#d4af37] w-full max-w-[580px] rounded-xl p-4 relative text-[#f4e4bc] shadow-[0_0_50px_rgba(0,0,0,1)] max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between border-b border-[#d4af37]/30 pb-2.5 mb-3">
           <div>
             <h2 className="text-[#d4af37] text-base sm:text-lg font-bold uppercase tracking-wider flex items-center gap-2">
               <span>⚓ Кузница Порта: Именное Оружие и Транспорт</span>
             </h2>
             <p className="text-[11px] text-[#a08c70]">
-              Создайте именное оружие (100/100) или Именной Транспорт (500/500 прочность, ускорение пути)
+              Создайте именное оружие (100/100) или Именной Транспорт (полёт за 1 мин, своя картинка, все бонусы)
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -462,7 +509,7 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                 : 'border-[#3a2a1a] bg-black/40 text-[#a08c70] hover:border-cyan-500/50'
             }`}
           >
-            🚁 Именной транспорт ({namedTransportDurability}/{namedTransportDurability})
+            🚁 Именной транспорт (⚡ 1 мин • 10 000 💎)
           </button>
         </div>
 
@@ -475,10 +522,8 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
             {/* Баланс игрока */}
             <div className="flex flex-wrap items-center justify-between gap-2 bg-black/50 border border-cyan-500/40 rounded-lg px-3 py-2">
               <div className="text-[11px] text-cyan-200">
-                Ваш уровень: <b className="text-white">{hero.level} ур.</b> • Стандартная прочность:{' '}
-                <b className="text-emerald-300">
-                  {namedTransportDurability} / {namedTransportDurability}
-                </b>
+                Базовая цена: <b className="text-[#00f2fe]">10 000 💎</b> • Скорость полёта:{' '}
+                <b className="text-emerald-300">⚡ 1 минута</b>
               </div>
               <div className="flex items-center gap-3 text-xs font-bold">
                 <span className="text-[#ffd700]">🪙 {hero.gold.toLocaleString()}</span>
@@ -486,50 +531,10 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
               </div>
             </div>
 
-            {/* 1. Выбор базового типа транспорта и названия */}
-            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2.5">
+            {/* 1. Название, прочность и скорость передвижения транспорта */}
+            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-3">
               <div className="text-cyan-300 font-bold uppercase text-[11px]">
-                1. Выберите базовый класс транспорта (именной транспорт сокращает время в пути на -{namedTransportReductionPct}%):
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                {transportsCatalog.map((tr) => {
-                  const isSel = selectedBaseTransport.id === tr.id;
-                  const fastSec = Math.max(
-                    15,
-                    Math.round(Number(tr.travelTimeSec || 600) * (1 - namedTransportReductionPct / 100))
-                  );
-                  return (
-                    <button
-                      key={tr.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedBaseTransportId(tr.id);
-                        if (iconSourceType === 'preset') {
-                          setTransportIcon(tr.icon || '🚤');
-                        }
-                      }}
-                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
-                        isSel
-                          ? 'border-cyan-400 bg-cyan-950/60 text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.3)]'
-                          : 'border-[#3a2a1a] bg-[#140f0c] text-[#a08c70] hover:border-cyan-500/50'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-lg">{tr.icon}</span>
-                        <span className="rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
-                          {tr.lvl} ур.
-                        </span>
-                      </div>
-                      <div className="font-extrabold text-xs mt-1 text-white">{tr.name}</div>
-                      <div className="text-[10px] text-slate-400 line-through">
-                        Обычный: {formatTravelTimeText(tr.travelTimeSec)}
-                      </div>
-                      <div className="text-[10.5px] font-black text-emerald-300">
-                        ⚡ Именной: {formatTravelTimeText(fastSec)}
-                      </div>
-                    </button>
-                  );
-                })}
+                1. Название, Прочность и Скорость передвижения:
               </div>
 
               <div>
@@ -555,20 +560,97 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                   </button>
                 </div>
               </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Прочность транспорта */}
+                <div className="bg-[#120d0a] border border-emerald-500/40 rounded-lg p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-emerald-300 font-bold text-[11px]">🔧 Прочность транспорта:</span>
+                    <span className="text-white font-black text-xs">{transportDurability} / {transportDurability}</span>
+                  </div>
+                  <input
+                    type="number"
+                    min={10}
+                    max={5000}
+                    value={transportDurability}
+                    onChange={(e) => setTransportDurability(Math.max(10, Math.min(5000, Number(e.target.value) || 10)))}
+                    className="w-full bg-black/70 border border-emerald-500/50 rounded px-2 py-1 text-white font-bold text-xs outline-none"
+                  />
+                  <div className="flex flex-wrap gap-1">
+                    {[60, 100, 250, 500, 1000].map((dVal) => (
+                      <button
+                        key={dVal}
+                        type="button"
+                        onClick={() => setTransportDurability(dVal)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                          transportDurability === dVal
+                            ? 'bg-emerald-600/40 border-emerald-400 text-emerald-200'
+                            : 'bg-black/40 border-[#33261a] text-[#a08c70]'
+                        }`}
+                      >
+                        {dVal}/{dVal}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Скорость / время передвижения (по умолчанию 1 мин = 60 сек) */}
+                <div className="bg-[#120d0a] border border-cyan-500/40 rounded-lg p-2.5 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-cyan-300 font-bold text-[11px]">⏱️ Время полёта до Порта:</span>
+                    <span className="text-amber-300 font-black text-xs">
+                      ⚡ {formatTravelTimeText(transportTravelTimeSec)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={60}
+                      max={600}
+                      step={10}
+                      value={transportTravelTimeSec}
+                      onChange={(e) => setTransportTravelTimeSec(Math.max(60, Math.min(600, Number(e.target.value) || 60)))}
+                      className="w-24 bg-black/70 border border-cyan-500/50 rounded px-2 py-1 text-white font-bold text-xs outline-none"
+                    />
+                    <span className="text-[10px] text-cyan-200/80">сек. (60 сек = 1 мин)</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      { label: '⚡ 1 мин (Именной)', sec: 60 },
+                      { label: '2 мин', sec: 120 },
+                      { label: '3 мин', sec: 180 }
+                    ].map((opt) => (
+                      <button
+                        key={opt.sec}
+                        type="button"
+                        onClick={() => setTransportTravelTimeSec(opt.sec)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold border cursor-pointer ${
+                          transportTravelTimeSec === opt.sec
+                            ? 'bg-cyan-600/40 border-cyan-300 text-cyan-100'
+                            : 'bg-black/40 border-[#33261a] text-[#a08c70]'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* 2. Иконка или своя картинка транспорта */}
             <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="text-cyan-300 font-bold uppercase text-[11px]">
-                  2. Образ или своя картинка Именного Транспорта:
+                  2. Своя картинка или иконка Именного Транспорта:
                 </div>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
+                  disabled={isProcessingImg}
                   className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] uppercase cursor-pointer shadow hover:brightness-110"
                 >
-                  📁 Загрузить свою картинку
+                  {isProcessingImg ? '⏳ Обработка...' : '📁 Загрузить свою картинку'}
                 </button>
                 <input
                   ref={fileInputRef}
@@ -577,6 +659,24 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                   onChange={handleFileUpload}
                   className="hidden"
                 />
+              </div>
+
+              {/* Поле вставки прямой ссылки на картинку */}
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={customUrl}
+                  onChange={(e) => setCustomUrl(e.target.value)}
+                  placeholder="Или вставьте ссылку на свою картинку (https://...)"
+                  className="flex-1 bg-[#0d0a08] border border-[#3a2a1a] focus:border-cyan-400 text-white px-2.5 py-1.5 rounded-lg text-[11px] outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleApplyUrl}
+                  className="bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/50 text-cyan-200 px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer"
+                >
+                  🔗 Применить URL
+                </button>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
@@ -598,73 +698,340 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                   </button>
                 ))}
               </div>
+            </div>
 
-              {/* Preview Card */}
-              <div className="rounded-xl border-2 border-cyan-400/70 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 p-3 flex items-center gap-3">
-                <div className="w-16 h-16 rounded-xl border-2 border-cyan-300 bg-slate-950 flex items-center justify-center p-1 shrink-0 text-3xl shadow-[0_0_15px_rgba(34,211,238,0.3)]">
-                  <ItemIcon icon={transportIcon} alt={name || selectedBaseTransport.name} />
+            {/* 3. Бонусы транспорта (+5% к начальной стоимости 10 000 💎 за каждый добавленный параметр) */}
+            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-1">
+                <div className="text-cyan-300 font-bold uppercase text-[11px]">
+                  3. Бонусы транспорта (работают, когда транспорт надет в слот):
                 </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="text-[10px] font-black uppercase tracking-wider text-cyan-300">
-                    👑 Именной Транспорт • Уровень {selectedBaseTransport.lvl}
-                  </div>
-                  <div className="text-sm font-black text-amber-300 truncate">
-                    {name.trim() || `Именной ${selectedBaseTransport.name}`}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                    <span className="rounded bg-emerald-950/90 border border-emerald-500/50 px-2 py-0.5 font-black text-emerald-300">
-                      🔧 Прочность: {namedTransportDurability} / {namedTransportDurability}
+                <span className="text-[10px] font-black text-amber-300 bg-amber-950/60 border border-amber-500/40 px-2 py-0.5 rounded">
+                  +5% (+{costPerAddedTransportParam.toLocaleString('ru-RU')} 💎) за каждый добавленный параметр
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* Урон */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#ff6b6b] font-bold">⚔️ Урон:</span>
+                    <span className="text-white font-extrabold">
+                      +{tDmg} {tDmg > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
                     </span>
-                    <span className="rounded bg-cyan-950/90 border border-cyan-400/50 px-2 py-0.5 font-black text-cyan-200">
-                      ⏱️ Путь до Порта: {formatTravelTimeText(reducedTransportTimeSec)} (-{namedTransportReductionPct}%)
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxDmg}
+                    step={5}
+                    value={tDmg}
+                    onChange={(e) => setTDmg(Number(e.target.value))}
+                    className="w-full accent-red-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Здоровье */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#51cf66] font-bold">❤️ Здоровье (HP):</span>
+                    <span className="text-white font-extrabold">
+                      +{tHp} {tHp > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
                     </span>
                   </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxHp}
+                    step={10}
+                    value={tHp}
+                    onChange={(e) => setTHp(Number(e.target.value))}
+                    className="w-full accent-green-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Сила */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-orange-400 font-bold">💪 Сила:</span>
+                    <span className="text-white font-extrabold">
+                      +{tStr} {tStr > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={30}
+                    step={1}
+                    value={tStr}
+                    onChange={(e) => setTStr(Number(e.target.value))}
+                    className="w-full accent-orange-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Ловкость */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-sky-400 font-bold">💨 Ловкость:</span>
+                    <span className="text-white font-extrabold">
+                      +{tAgi} {tAgi > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={30}
+                    step={1}
+                    value={tAgi}
+                    onChange={(e) => setTAgi(Number(e.target.value))}
+                    className="w-full accent-sky-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Живучесть */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-emerald-400 font-bold">🛡️ Живучесть:</span>
+                    <span className="text-white font-extrabold">
+                      +{tVit} {tVit > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={30}
+                    step={1}
+                    value={tVit}
+                    onChange={(e) => setTVit(Number(e.target.value))}
+                    className="w-full accent-emerald-500 cursor-pointer"
+                  />
+                </div>
+
+                {/* Уклонение */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#74c0fc] font-bold">💨 Уклонение (%):</span>
+                    <span className="text-white font-extrabold">
+                      +{tDodge}% {tDodge > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxDodge}
+                    step={1}
+                    value={tDodge}
+                    onChange={(e) => setTDodge(Number(e.target.value))}
+                    className="w-full accent-blue-400 cursor-pointer"
+                  />
+                </div>
+
+                {/* Энергия */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#ffd43b] font-bold">⚡ Бонус Энергии:</span>
+                    <span className="text-white font-extrabold">
+                      +{tEnergy} {tEnergy > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxEnergy}
+                    step={5}
+                    value={tEnergy}
+                    onChange={(e) => setTEnergy(Number(e.target.value))}
+                    className="w-full accent-yellow-400 cursor-pointer"
+                  />
+                </div>
+
+                {/* Золото % */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#ffd700] font-bold">💰 Бонус золота (%):</span>
+                    <span className="text-white font-extrabold">
+                      +{tGoldPct}% {tGoldPct > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxGoldPct}
+                    step={1}
+                    value={tGoldPct}
+                    onChange={(e) => setTGoldPct(Number(e.target.value))}
+                    className="w-full accent-amber-400 cursor-pointer"
+                  />
+                </div>
+
+                {/* Опыт % */}
+                <div className="bg-[#140f0c] border border-[#2c2016] rounded-lg p-2 sm:col-span-2">
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-[#da77f2] font-bold">✨ Бонус опыта (%):</span>
+                    <span className="text-white font-extrabold">
+                      +{tExpPct}% {tExpPct > 0 ? <em className="text-cyan-300 not-italic">(+5%)</em> : null}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={maxExpPct}
+                    step={1}
+                    value={tExpPct}
+                    onChange={(e) => setTExpPct(Number(e.target.value))}
+                    className="w-full accent-purple-400 cursor-pointer"
+                  />
                 </div>
               </div>
             </div>
 
-            {/* 3. Оплата и создание Именного Транспорта */}
-            <div className="bg-[#17110d] border border-cyan-500/50 rounded-xl p-3 space-y-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-cyan-200 font-bold">Стоимость создания Именного Транспорта:</div>
-                <div className="flex gap-2">
-                  {(allowedCurrency === 'both' || allowedCurrency === 'crystals') && (
-                    <button
-                      type="button"
-                      onClick={() => setCurrency('crystals')}
-                      className={`px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer ${
-                        effectiveCurrency === 'crystals'
-                          ? 'bg-[#00f2fe]/20 border-[#00f2fe] text-[#00f2fe]'
-                          : 'bg-black/40 border-[#333] text-[#888]'
-                      }`}
-                    >
-                      💎 {namedTransportCostCrystals} кристаллов
-                    </button>
-                  )}
-                  {(allowedCurrency === 'both' || allowedCurrency === 'gold') && (
-                    <button
-                      type="button"
-                      onClick={() => setCurrency('gold')}
-                      className={`px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer ${
-                        effectiveCurrency === 'gold'
-                          ? 'bg-[#ffd700]/20 border-[#ffd700] text-[#ffd700]'
-                          : 'bg-black/40 border-[#333] text-[#888]'
-                      }`}
-                    >
-                      🪙 {namedTransportCostGold.toLocaleString()} золота
-                    </button>
+            {/* 4. Право передачи другим игрокам (Личный vs Можно передавать +50%) */}
+            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2">
+              <div className="text-cyan-300 font-bold uppercase text-[11px]">
+                4. Статус передачи Именного Транспорта:
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTransportTransferable(false)}
+                  className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    !transportTransferable
+                      ? 'bg-[#2a1f16] border-cyan-400 text-[#ffd700] shadow'
+                      : 'bg-[#120e0b] border-[#33261a] text-[#8c785c]'
+                  }`}
+                >
+                  <div className="font-bold text-xs flex items-center justify-between">
+                    <span>🔒 Личный (нельзя передавать)</span>
+                    <span className="text-[10px] bg-green-950/80 text-green-300 px-1.5 py-0.5 rounded">
+                      Без наценки
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-[#a08c70] mt-1">
+                    Привязан к вашему персонажу. Нельзя передать другому игроку.
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTransportTransferable(true)}
+                  className={`p-2.5 rounded-lg border text-left transition-all cursor-pointer ${
+                    transportTransferable
+                      ? 'bg-[#2a1f16] border-cyan-400 text-[#ffd700] shadow'
+                      : 'bg-[#120e0b] border-[#33261a] text-[#8c785c]'
+                  }`}
+                >
+                  <div className="font-bold text-xs flex items-center justify-between">
+                    <span>🤝 Можно передавать</span>
+                    <span className="text-[10px] bg-amber-950/90 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded">
+                      +50% к цене
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-[#a08c70] mt-1">
+                    Можно свободно передавать другим игрокам через Сумку.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* 5. Превью и Итоговая стоимость Именного Транспорта */}
+            <div className="bg-[#17110d] border-2 border-cyan-500/60 rounded-xl p-3 space-y-3">
+              {/* Preview Card */}
+              <div className="rounded-xl border border-cyan-400/60 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 p-3 flex items-center gap-3">
+                <div className="w-16 h-16 rounded-xl border-2 border-cyan-300 bg-slate-950 flex items-center justify-center p-1 shrink-0 text-3xl shadow-[0_0_15px_rgba(34,211,238,0.3)] overflow-hidden">
+                  <ItemIcon icon={transportIcon} alt={name || 'Именной Транспорт'} className="w-full h-full" imgClassName="w-full h-full object-cover rounded-lg" />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-cyan-300 flex items-center gap-1.5 flex-wrap">
+                    <span>👑 Именной Транспорт</span>
+                    <span>•</span>
+                    <span className={transportTransferable ? 'text-amber-300' : 'text-slate-300'}>
+                      {transportTransferable ? '🤝 Можно передавать' : '🔒 Личный'}
+                    </span>
+                  </div>
+                  <div className="text-sm font-black text-amber-300 truncate">
+                    {name.trim() || 'Именной Крейсер Фараона'}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[10.5px]">
+                    <span className="rounded bg-emerald-950/90 border border-emerald-500/50 px-2 py-0.5 font-black text-emerald-300">
+                      🔧 Прочность: {transportDurability}/{transportDurability}
+                    </span>
+                    <span className="rounded bg-cyan-950/90 border border-cyan-400/50 px-2 py-0.5 font-black text-cyan-200">
+                      ⚡ Время полёта: {formatTravelTimeText(transportTravelTimeSec)}
+                    </span>
+                  </div>
+                  {addedTransportParamsCount > 0 && (
+                    <div className="text-[10.5px] text-amber-200 font-bold pt-0.5">
+                      ✨ Бонусы ({addedTransportParamsCount} парам.):{' '}
+                      {[
+                        tDmg > 0 ? `+${tDmg}⚔️` : '',
+                        tHp > 0 ? `+${tHp}❤️` : '',
+                        tStr > 0 ? `+${tStr}💪Сил` : '',
+                        tAgi > 0 ? `+${tAgi}💨Лов` : '',
+                        tVit > 0 ? `+${tVit}🛡️Жив` : '',
+                        tDodge > 0 ? `+${tDodge}%💨Укл` : '',
+                        tEnergy > 0 ? `+${tEnergy}⚡Эн` : '',
+                        tGoldPct > 0 ? `+${tGoldPct}%🪙` : '',
+                        tExpPct > 0 ? `+${tExpPct}%✨` : ''
+                      ]
+                        .filter(Boolean)
+                        .join(' • ')}
+                    </div>
                   )}
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleCreateNamedTransport}
-                className="w-full py-2.5 bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-extrabold rounded-xl uppercase text-xs cursor-pointer shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:brightness-110"
-              >
-                🚁 Создать Именной Транспорт ({namedTransportDurability}/{namedTransportDurability} • Путь:{' '}
-                {formatTravelTimeText(reducedTransportTimeSec)})
-              </button>
+              {/* Расчёт цены */}
+              <div className="bg-black/50 border border-[#2e2218] rounded-lg p-2.5 space-y-1 text-[11px]">
+                <div className="flex justify-between text-[#b8a282]">
+                  <span>Базовая стоимость создания транспорта:</span>
+                  <span className="font-bold text-white">
+                    {baseNamedTransportCostCrystals.toLocaleString('ru-RU')} 💎
+                  </span>
+                </div>
+                <div className="flex justify-between text-cyan-300">
+                  <span>Добавлено параметров ({addedTransportParamsCount} шт. × +5%):</span>
+                  <span className="font-bold">
+                    +{transportParamsExtraCrystals.toLocaleString('ru-RU')} 💎
+                  </span>
+                </div>
+                {transportTransferable && (
+                  <div className="flex justify-between text-amber-300">
+                    <span>Наценка за возможность передачи (+50%):</span>
+                    <span className="font-bold">
+                      +{transportTransferExtraCrystals.toLocaleString('ru-RU')} 💎
+                    </span>
+                  </div>
+                )}
+                <div className="border-t border-[#3a2a1a] pt-1.5 mt-1 flex justify-between items-center text-sm">
+                  <span className="font-bold text-[#ffd700]">ИТОГО К ОПЛАТЕ:</span>
+                  <span className="font-extrabold text-[#00f2fe] text-base">
+                    💎 {totalTransportCrystals.toLocaleString('ru-RU')} кристаллов
+                  </span>
+                </div>
+                <div className="flex justify-between text-[10px] text-emerald-300 pt-0.5">
+                  <span>💰 Возврат при продаже транспорта (70%):</span>
+                  <span className="font-bold">
+                    +{transportSellRefundCrystals.toLocaleString('ru-RU')} 💎
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCreateNamedTransport(false)}
+                  className="py-2.5 px-3 bg-gradient-to-r from-[#8b5a2b] to-[#5c3a1b] hover:from-[#a06832] hover:to-[#704721] border border-[#d4af37] text-[#ffd700] font-extrabold rounded-xl uppercase text-xs cursor-pointer shadow"
+                >
+                  🎒 Создать в Сумку
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCreateNamedTransport(true)}
+                  className="py-2.5 px-3 bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-extrabold rounded-xl uppercase text-xs cursor-pointer shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:brightness-110"
+                >
+                  ⚡ Создать и надеть в слот
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -687,7 +1054,7 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
                   1. Выберите тип создаваемой амуниции:
                 </div>
                 <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
-                  {(Object.keys(SLOT_NAMES) as ItemSlot[]).map((s) => (
+                  {EQUIPMENT_SLOTS.map((s) => (
                     <button
                       key={s}
                       type="button"

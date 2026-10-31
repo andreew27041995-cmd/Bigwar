@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   HeroState,
   GameItem,
+  EquippedGear,
   GameFeatureFlags,
   PortTravelState
 } from '../../types/game';
@@ -16,6 +17,7 @@ import { GoldCoinIcon, CrystalIcon } from '../CurrencyIcon';
 interface PortModalProps {
   hero: HeroState;
   inventory: GameItem[];
+  equipped?: EquippedGear;
   featureFlags?: GameFeatureFlags;
   onSelectTransport: (transportId: string) => void;
   onStartTravelToPort: (transport: GameItem, durationSec?: number) => void;
@@ -34,6 +36,7 @@ interface PortModalProps {
 export const PortModal: React.FC<PortModalProps> = ({
   hero,
   inventory,
+  equipped,
   featureFlags,
   onSelectTransport,
   onStartTravelToPort,
@@ -59,8 +62,21 @@ export const PortModal: React.FC<PortModalProps> = ({
   }, []);
 
   const ownedTransports = useMemo(() => {
-    return (Array.isArray(inventory) ? inventory : []).filter((it) => isTransportItem(it));
-  }, [inventory]);
+    const list: GameItem[] = [];
+    const seenIds = new Set<string>();
+    const eqTr = equipped?.transport;
+    if (eqTr && isTransportItem(eqTr)) {
+      list.push(eqTr);
+      seenIds.add(eqTr.id);
+    }
+    (Array.isArray(inventory) ? inventory : []).forEach((it) => {
+      if (isTransportItem(it) && !seenIds.has(it.id)) {
+        list.push(it);
+        seenIds.add(it.id);
+      }
+    });
+    return list;
+  }, [inventory, equipped]);
 
   const relicsCount = useMemo(() => {
     return (Array.isArray(inventory) ? inventory : []).filter((it) => isRelicItem(it)).length;
@@ -71,12 +87,15 @@ export const PortModal: React.FC<PortModalProps> = ({
       const found = ownedTransports.find((t) => t.id === hero.activeTransportId);
       if (found) return found;
     }
+    if (equipped?.transport && Number(equipped.transport.durability ?? 1) > 0) {
+      return equipped.transport;
+    }
     // Auto-pick fastest available transport with durability > 0
     const usable = ownedTransports
       .filter((t) => Number(t.durability ?? 1) > 0 && Number(hero.level || 1) >= Number(t.lvl || 1))
       .sort((a, b) => Number(a.travelTimeSec || 600) - Number(b.travelTimeSec || 600));
     return usable[0] || ownedTransports[0] || null;
-  }, [ownedTransports, hero.activeTransportId, hero.level]);
+  }, [ownedTransports, equipped, hero.activeTransportId, hero.level]);
 
   const portTravel: PortTravelState = hero.portTravel || { status: 'idle' };
   const travelStatus = portTravel.status || 'idle';

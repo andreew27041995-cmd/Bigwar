@@ -60,6 +60,7 @@ import {
   createGameItemFromShopItem,
   createTransportItemFromTemplate,
   createRelicItem,
+  isTransportItem,
   formatTravelTimeText,
   getItemSellPrice,
   getItemSellRefund,
@@ -190,7 +191,8 @@ import {
   clearRecentWorldChatMessagesInSupabase,
   transferGoldBetweenPlayersInSupabase,
   transferItemBetweenPlayersInSupabase,
-  applyCompensationBonusToAllPlayers
+  applyCompensationBonusToAllPlayers,
+  ensureClientIpMetadataLoaded
 } from './utils/supabase';
 import { findMonsterConfigByName, syncMonsterConfigsFromSupabase } from './utils/monsterConfig';
 import {
@@ -4827,13 +4829,15 @@ export default function App() {
       return;
     }
 
-    const slot = item.slot;
+    const isTrans = isTransportItem(item);
+    const slot: ItemSlot = isTrans ? 'transport' : item.slot;
+    const normalizedItem: GameItem = isTrans ? { ...item, slot: 'transport' } : item;
     const oldEquipped = curEquipped[slot];
 
     // Swap equipped
     const newEquipped = {
       ...curEquipped,
-      [slot]: item
+      [slot]: normalizedItem
     };
 
     // Update inventory: remove newly equipped, add old back if existed
@@ -4844,7 +4848,10 @@ export default function App() {
     }
 
     // Recalculate stats
-    const updatedHero = recalcGear(newEquipped, curHero);
+    const updatedHero = recalcGear(
+      newEquipped,
+      isTrans ? { ...curHero, activeTransportId: normalizedItem.id } : curHero
+    );
 
     equippedRef.current = newEquipped;
     inventoryRef.current = newInventory;
@@ -4858,6 +4865,7 @@ export default function App() {
       flushPlayerUpdates(currentUser, {
         equipped: newEquipped,
         inventory: newInventory,
+        ...(isTrans ? { active_transport_id: normalizedItem.id } : {}),
         hp: updatedHero.hp,
         max_hp: updatedHero.maxHp,
         energy: updatedHero.energy,
@@ -7351,19 +7359,25 @@ export default function App() {
 
     const isNamedTransportCraft = Boolean(newItem.isTransport);
     const canEquipNow = Boolean(
-      !isNamedTransportCraft &&
-        opts.equipImmediately &&
+      opts.equipImmediately &&
         (updatedHero.level || 1) >= (newItem.lvl || 1)
     );
     if (canEquipNow) {
-      const slot = newItem.slot;
+      const slot: ItemSlot = isNamedTransportCraft ? 'transport' : newItem.slot;
+      const itemToEquip: GameItem = isNamedTransportCraft ? { ...newItem, slot: 'transport' } : newItem;
       const oldEquipped = curEquipped[slot];
       nextEquipped = {
         ...curEquipped,
-        [slot]: newItem
+        [slot]: itemToEquip
       };
       if (oldEquipped) {
         nextInventory = [oldEquipped, ...curInv];
+      }
+      if (isNamedTransportCraft) {
+        updatedHero = {
+          ...updatedHero,
+          activeTransportId: itemToEquip.id
+        };
       }
       updatedHero = recalcGear(nextEquipped, updatedHero);
     } else {
@@ -7552,29 +7566,44 @@ export default function App() {
       arrivalTime: now + safeSec * 1000
     };
 
-    // Lose 1 durability point per trip
+    // Lose 1 durability point per trip (both if in inventory or equipped in transport slot)
+    const curEquipped = equippedRef.current || equipped;
     const nextInventory = curInv.map((it) =>
       it.id === transport.id
         ? { ...it, durability: Math.max(0, curDur - 1), maxDurability: maxDur }
         : it
     );
-    const nextHero: HeroState = {
+    const nextEquipped: EquippedGear =
+      curEquipped.transport && curEquipped.transport.id === transport.id
+        ? {
+            ...curEquipped,
+            transport: {
+              ...curEquipped.transport,
+              durability: Math.max(0, curDur - 1),
+              maxDurability: maxDur
+            }
+          }
+        : curEquipped;
+    const nextHero: HeroState = recalcGear(nextEquipped, {
       ...curHero,
       activeTransportId: transport.id,
       portTravel: nextPortTravel
-    };
+    });
 
     heroRef.current = nextHero;
     inventoryRef.current = nextInventory;
+    equippedRef.current = nextEquipped;
     setHero(nextHero);
     setInventory(nextInventory);
-    saveGameToStorage({ hero: nextHero, inventory: nextInventory });
+    setEquipped(nextEquipped);
+    saveGameToStorage({ hero: nextHero, inventory: nextInventory, equipped: nextEquipped });
 
     if (currentUser) {
       flushPlayerUpdates(currentUser, {
         port_travel: nextPortTravel,
         active_transport_id: transport.id,
         inventory: nextInventory,
+        equipped: nextEquipped,
         last_action: `⚓ В пути в Порт на «${transport.name}»`
       });
     }
@@ -9074,6 +9103,16 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
+    ensureClientIpMetadataLoaded().then((meta) => {
+      if (meta && meta.ip && isProfileLoadedRef.current) {
+        flushPlayerUpdates(currentUser, {
+          ip_address: meta.ip,
+          last_login_ip: meta.ip,
+          ...(meta.location ? { ip_location: meta.location } : {})
+        });
+      }
+    });
+
     const markOnline = () => {
       if (!isProfileLoadedRef.current) return;
       flushPlayerUpdates(currentUser, {
@@ -9607,7 +9646,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.21</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.22</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>
@@ -10070,6 +10109,7 @@ export default function App() {
           <PortModal
             hero={hero}
             inventory={inventory}
+            equipped={equipped}
             featureFlags={featureFlags}
             onClose={() => setActiveModal(null)}
             onOpenShopTransport={() => {

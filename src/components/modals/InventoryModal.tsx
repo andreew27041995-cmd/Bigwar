@@ -394,23 +394,6 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 🤖 Рюкзак NPC
               </button>
             )}
-            {onOpenAltar && (
-              <button
-                onClick={() => onOpenAltar()}
-                className="rounded border border-fuchsia-400 bg-fuchsia-950/90 hover:bg-fuchsia-900 px-2 py-0.5 text-[10px] font-extrabold text-fuchsia-200 cursor-pointer shadow-[0_0_8px_rgba(217,70,239,0.4)]"
-                title="Открыть Алтарь модификации предметов (Классы 1–10, до +50% к статам)"
-              >
-                🔮 Алтарь (+50%)
-              </button>
-            )}
-            {onOpenCreateItem && (
-              <button
-                onClick={onOpenCreateItem}
-                className="rounded border border-cyan-400 bg-cyan-950/80 hover:bg-cyan-900 px-2 py-0.5 text-[10px] font-extrabold text-cyan-200 cursor-pointer"
-              >
-                ⚒️ Создать оружие
-              </button>
-            )}
             <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
               ✕
             </button>
@@ -638,12 +621,21 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           )}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          {slotInfo.name}
+                          {isTransportItem(item) ? 'Транспорт' : slotInfo.name}
                           {stats.hp > 0 && (
                             <span className="text-emerald-400 font-semibold"> • ❤️ +{stats.hp} HP</span>
                           )}
                           {stats.dmg > 0 && (
                             <span className="text-red-400 font-semibold"> • ⚔️ +{stats.dmg} урона</span>
+                          )}
+                          {(item.str ?? 0) > 0 && (
+                            <span className="text-orange-400 font-semibold"> • 💪 +{item.str} Силы</span>
+                          )}
+                          {(item.agi ?? 0) > 0 && (
+                            <span className="text-sky-300 font-semibold"> • 💨 +{item.agi} Ловк.</span>
+                          )}
+                          {(item.vit ?? 0) > 0 && (
+                            <span className="text-emerald-300 font-semibold"> • 🛡️ +{item.vit} Жив.</span>
                           )}
                           {stats.dodgeBonus > 0 && (
                             <span className="text-sky-400 font-semibold"> • 💨 +{stats.dodgeBonus}% укл.</span>
@@ -747,16 +739,18 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 
                   {/* Actions under item */}
                   <div className="mt-2.5 flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-800">
-                    {!permanentlyBroken && !isRelicItem(item) && !isTransportItem(item) && (
+                    {!permanentlyBroken && !isRelicItem(item) && (
                       <button
                         onClick={() => handleEquip(item)}
                         disabled={isRented || item.lvl > heroLvl || curDur <= 0}
-                        className="flex-1 min-w-[90px] rounded bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-500 active:scale-95 disabled:opacity-30"
+                        className="flex-1 min-w-[90px] rounded bg-emerald-600 px-2.5 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-500 active:scale-95 disabled:opacity-30 cursor-pointer"
                         title={
                           curDur <= 0
                             ? 'Сначала отремонтируйте предмет'
                             : item.lvl > heroLvl
                             ? `Требуется ${item.lvl} уровень`
+                            : isTransportItem(item)
+                            ? 'Надеть транспорт в слот персонажа'
                             : 'Надеть на персонажа'
                         }
                       >
@@ -764,6 +758,8 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           ? '🔧 Нужен ремонт'
                           : item.lvl > heroLvl
                           ? `Нужен ${item.lvl} ур.`
+                          : isTransportItem(item)
+                          ? '🚤 Надеть в слот транспорта'
                           : '⚡ Надеть'}
                       </button>
                     )}
@@ -776,19 +772,6 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                         title={`Отремонтировать за ${REPAIR_COST_GOLD} золота (прочность станет ${maxDur - 1}/${maxDur - 1})`}
                       >
                         🔨 Ремонтировать ({REPAIR_COST_GOLD} 🪙 → {maxDur - 1}/{maxDur - 1})
-                      </button>
-                    )}
-
-                    {!permanentlyBroken && onOpenAltar && !isTransportItem(item) && (
-                      <button
-                        onClick={() => onOpenAltar(item)}
-                        disabled={isRented}
-                        className="rounded bg-fuchsia-950/90 border border-fuchsia-400/60 px-2.5 py-1.5 text-[10px] font-black text-fuchsia-200 hover:bg-fuchsia-900 active:scale-95 disabled:opacity-30 shadow-[0_0_8px_rgba(217,70,239,0.25)] cursor-pointer"
-                        title="Открыть Порт / Алтарь модификации"
-                      >
-                        {isRelicItem(item)
-                          ? '⚓ В Порт (Алтарь Реликвий)'
-                          : `⚓ В Порт / Алтарь ${Number(item.modificationClass || 0) > 0 ? `(М${item.modificationClass})` : ''}`}
                       </button>
                     )}
 

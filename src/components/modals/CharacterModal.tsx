@@ -2084,6 +2084,15 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           {item.hp > 0 && (
                             <span className="text-red-300">+{item.hp}❤️</span>
                           )}
+                          {(item.str ?? 0) > 0 && (
+                            <span className="text-orange-300">+{item.str}💪</span>
+                          )}
+                          {(item.agi ?? 0) > 0 && (
+                            <span className="text-sky-300">+{item.agi}💨Лов</span>
+                          )}
+                          {(item.vit ?? 0) > 0 && (
+                            <span className="text-emerald-300">+{item.vit}🛡️</span>
+                          )}
                           {(item.dodgeBonus ?? 0) > 0 && (
                             <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
                           )}
@@ -2095,6 +2104,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           )}
                           {(item.expBonusPct ?? 0) > 0 && (
                             <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                          )}
+                          {(item.travelTimeSec ?? 0) > 0 && (
+                            <span className="text-cyan-200">
+                              ⚓ {Math.max(1, Math.round(Number(item.travelTimeSec) / 60))} мин
+                            </span>
                           )}
                         </div>
                         <div className={`text-[7px] font-semibold mt-0.5 leading-none ${curDur <= 0 ? 'text-red-400 font-black' : 'text-amber-400/90'}`}>
@@ -2448,6 +2462,11 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       {rightSlots.map((slot) => renderPaperDollSlot(slot, 'right'))}
                     </div>
                   </div>
+
+                  {/* Слот Транспорта на персонаже */}
+                  <div className="pt-1 border-t border-amber-500/25">
+                    {renderPaperDollSlot('transport', 'left')}
+                  </div>
                 </div>
 
                 {/* 3. Quick Action Menu Buttons */}
@@ -2509,26 +2528,10 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       🛒 Магазин
                     </button>
                   )}
-                  {onOpenCreateItem && (
-                    <button
-                      onClick={onOpenCreateItem}
-                      className="rounded-lg bg-cyan-900/50 p-2 text-[10px] font-extrabold text-cyan-200 border border-cyan-400/70 hover:bg-cyan-800/70 active:scale-95"
-                    >
-                      ⚒️ Создать оружие
-                    </button>
-                  )}
-                  {onOpenAltar && (
-                    <button
-                      onClick={() => onOpenAltar()}
-                      className="rounded-lg bg-fuchsia-950/80 p-2 text-[10px] font-extrabold text-fuchsia-200 border border-fuchsia-400/70 hover:bg-fuchsia-900/80 active:scale-95 shadow-[0_0_10px_rgba(217,70,239,0.25)]"
-                    >
-                      🔮 Алтарь (+50%)
-                    </button>
-                  )}
                   {onOpenLeaderboard && (
                     <button
                       onClick={onOpenLeaderboard}
-                      className="rounded-lg bg-gradient-to-r from-amber-600/40 via-yellow-600/40 to-amber-600/40 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:from-amber-600/60 hover:to-yellow-600/60 active:scale-95 shadow"
+                      className="rounded-lg bg-gradient-to-r from-amber-600/40 via-yellow-600/40 to-amber-600/40 p-2 text-[10px] font-extrabold text-amber-300 border border-amber-500/60 hover:from-amber-600/60 hover:to-yellow-600/60 active:scale-95 shadow col-span-2"
                     >
                       🏆 Рейтинг
                     </button>
