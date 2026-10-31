@@ -3,7 +3,9 @@ import {
   RealtimePlayer,
   findPlayerInSupabase,
   normalizeSupabasePlayer,
-  isPlayerOnlineByHeartbeat
+  isPlayerOnlineByHeartbeat,
+  changePlayerPasswordInSupabase,
+  updatePlayerInDatabase
 } from '../../utils/supabase';
 import { EquippedGear, ItemSlot, TradeProtocolEntry } from '../../types/game';
 import {
@@ -36,6 +38,8 @@ interface InspectPlayerModalProps {
   targetPlayer?: RealtimePlayer | null;
   shopSkins?: CharacterSkinTemplate[];
   isFriend?: boolean;
+  isViewerAdmin?: boolean;
+  initialTab?: 'protocol' | 'gear' | 'collection' | 'info' | 'sms' | 'about';
   onClose: () => void;
   onOpenTransferModal?: (targetNick: string) => void;
   onAddFriend?: (targetNick: string) => void;
@@ -53,6 +57,8 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   targetPlayer,
   shopSkins,
   isFriend = false,
+  isViewerAdmin = false,
+  initialTab = 'gear',
   onClose,
   onOpenTransferModal,
   onAddFriend,
@@ -62,12 +68,17 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   isHeroInPyramid = false,
   isTargetInPyramid = false
 }) => {
-  const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms'>('gear');
+  const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms' | 'about'>(initialTab);
   const [smsText, setSmsText] = useState('');
   const [friendAdded, setFriendAdded] = useState(isFriend);
   const [livePlayer, setLivePlayer] = useState<RealtimePlayer | null>(targetPlayer || null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [adminNewPassInput, setAdminNewPassInput] = useState('');
+  const [adminPhoneEdit, setAdminPhoneEdit] = useState('');
+  const [adminEmailEdit, setAdminEmailEdit] = useState('');
+  const [adminPassMsg, setAdminPassMsg] = useState<string | null>(null);
+  const [isSavingAdminData, setIsSavingAdminData] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
@@ -90,7 +101,11 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
       .then((raw) => {
         if (!mounted) return;
         if (raw) {
-          setLivePlayer(normalizeSupabasePlayer(raw));
+          const norm = normalizeSupabasePlayer(raw);
+          setLivePlayer(norm);
+          setAdminPhoneEdit(norm.phone_number || '');
+          setAdminEmailEdit(norm.real_email || '');
+          setAdminNewPassInput(norm.password || norm.saved_password || '');
         }
       })
       .finally(() => {
@@ -362,6 +377,19 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
           >
             ✉️ Почта
           </button>
+          {isViewerAdmin && (
+            <button
+              onClick={() => setTab('about')}
+              className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+                tab === 'about'
+                  ? 'bg-rose-600 text-white font-black shadow-[0_0_8px_rgba(225,29,72,0.6)]'
+                  : 'border border-rose-500/50 bg-rose-950/60 text-rose-300 hover:bg-rose-900/60'
+              }`}
+              title="Все данные о персонаже (Пароль, IP, Телефон, Email, Устройство) — доступно только Администратору"
+            >
+              🔐 О нём
+            </button>
+          )}
         </div>
 
         {/* Tab Body */}
@@ -927,6 +955,179 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                   📨 Отправить письмо
                 </button>
               </form>
+            </div>
+          )}
+
+          {/* ==================== ADMIN-ONLY TAB: О НЁМ (FULL REGISTRATION & DEVICE METADATA) ==================== */}
+          {tab === 'about' && isViewerAdmin && (
+            <div className="space-y-2.5 text-[10px]">
+              <div className="rounded-lg border border-rose-500/50 bg-rose-950/30 p-2.5 space-y-2">
+                <div className="flex items-center justify-between border-b border-rose-500/30 pb-1.5">
+                  <div className="font-black text-rose-300 flex items-center gap-1.5">
+                    <span>🔐 О нём: Все данные персонажа</span>
+                  </div>
+                  <span className="rounded bg-rose-500/20 border border-rose-500/40 px-1.5 py-0.5 text-[8px] font-black text-rose-200">
+                    ТОЛЬКО ДЛЯ АДМИНА
+                  </span>
+                </div>
+
+                {p?.isSimulatedBot ? (
+                  <div className="rounded-lg border border-purple-500/50 bg-purple-950/40 p-2.5 text-[9.5px] text-purple-200 space-y-1">
+                    <div className="font-black text-purple-300">🪞 Зеркальный персонаж (Бот / Имитация)</div>
+                    <div>Этот персонаж не зарегистрирован в базе данных Supabase — он создаётся системой живого онлайна.</div>
+                    <div className="text-slate-300">Последнее действие: <strong className="text-emerald-300">{p?.last_action || 'Активен в игре'}</strong></div>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <div className="grid grid-cols-1 gap-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[9.5px]">
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">🔑 Пароль:</span>
+                        <span className="font-black text-amber-300 select-all">
+                          {p?.password || p?.saved_password || 'Не сохранён'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">✉️ E-mail:</span>
+                        <span className="font-bold text-cyan-300 select-all truncate max-w-[190px]">
+                          {p?.real_email || (p as any)?.email || 'Не указан'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📱 Телефон:</span>
+                        <span className="font-bold text-emerald-300 select-all">
+                          {p?.phone_number || 'Не указан'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">🌐 IP-адрес:</span>
+                        <span className="font-bold text-rose-300 select-all">
+                          {p?.ip_address || 'Определяется при входе'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📍 Геолокация IP:</span>
+                        <span className="text-slate-200 select-all text-right max-w-[190px] truncate">
+                          {p?.ip_location || '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📱 Устройство / ОС:</span>
+                        <span className="font-bold text-purple-300 text-right max-w-[190px] truncate">
+                          {p?.device_info || 'Определяется при входе'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">🖥️ Экран / Часовой пояс:</span>
+                        <span className="text-slate-300 text-right">
+                          {p?.screen_res || '—'} • {p?.timezone || '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">🛡️ Способ входа:</span>
+                        <span className="font-bold text-amber-200">
+                          {p?.auth_provider || 'password'}
+                          {p?.telegram_username ? ` (@${p.telegram_username})` : p?.telegram_id ? ` (TG ID: ${p.telegram_id})` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📅 Регистрация:</span>
+                        <span className="text-slate-300">
+                          {p?.registered_at
+                            ? typeof p.registered_at === 'number'
+                              ? formatFullDateTime(p.registered_at)
+                              : new Date(p.registered_at).toLocaleString('ru-RU')
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans">⚡ Посл. действие:</span>
+                        <span className="text-emerald-300 font-sans font-bold text-right max-w-[180px] truncate">
+                          {p?.last_action || (inPyramid ? `Пирамида ${pyramidTier}` : 'В Городе')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {p?.user_agent && (
+                      <div className="rounded border border-slate-800 bg-slate-950 p-1.5 text-[8px] text-slate-400 font-mono break-all">
+                        <span className="text-slate-500 font-bold">User-Agent: </span>
+                        {p.user_agent}
+                      </div>
+                    )}
+
+                    {/* Quick Admin Edit for Password, Phone, Email */}
+                    <div className="rounded-lg border border-amber-500/40 bg-slate-950 p-2 space-y-1.5">
+                      <div className="text-[9.5px] font-black text-amber-300">
+                        ✏️ Изменить пароль / контакты персонажа ({nick}):
+                      </div>
+                      {adminPassMsg && (
+                        <div className="rounded bg-emerald-950/80 border border-emerald-500/50 px-2 py-1 text-[9px] font-bold text-emerald-200">
+                          {adminPassMsg}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">🔑 Пароль:</span>
+                          <input
+                            type="text"
+                            value={adminNewPassInput}
+                            onChange={(e) => setAdminNewPassInput(e.target.value)}
+                            placeholder="Новый пароль..."
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] font-bold text-amber-200 outline-none focus:border-amber-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">📱 Телефон:</span>
+                          <input
+                            type="text"
+                            value={adminPhoneEdit}
+                            onChange={(e) => setAdminPhoneEdit(e.target.value)}
+                            placeholder="+7..."
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] text-emerald-200 outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">✉️ Email:</span>
+                          <input
+                            type="text"
+                            value={adminEmailEdit}
+                            onChange={(e) => setAdminEmailEdit(e.target.value)}
+                            placeholder="email@gmail.com"
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] text-cyan-200 outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isSavingAdminData}
+                        onClick={async () => {
+                          setIsSavingAdminData(true);
+                          setAdminPassMsg(null);
+                          try {
+                            if (adminNewPassInput.trim() && adminNewPassInput.trim().length >= 3) {
+                              await changePlayerPasswordInSupabase(nick, '', adminNewPassInput.trim(), true);
+                            }
+                            await updatePlayerInDatabase(nick, {
+                              phone_number: adminPhoneEdit.trim() || undefined,
+                              real_email: adminEmailEdit.trim() || undefined,
+                              ...(adminNewPassInput.trim() ? { saved_password: adminNewPassInput.trim(), password: adminNewPassInput.trim() } : {})
+                            });
+                            const refreshed = await findPlayerInSupabase(nick);
+                            if (refreshed) {
+                              setLivePlayer(normalizeSupabasePlayer(refreshed));
+                            }
+                            setAdminPassMsg('✅ Данные персонажа сохранены в Supabase!');
+                          } finally {
+                            setIsSavingAdminData(false);
+                          }
+                        }}
+                        className="w-full rounded bg-gradient-to-r from-rose-600 to-amber-600 py-1.5 text-[9.5px] font-black text-white shadow hover:brightness-110 active:scale-95 cursor-pointer disabled:opacity-50"
+                      >
+                        {isSavingAdminData ? '⏳ Сохранение...' : '💾 Сохранить пароль и данные'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>

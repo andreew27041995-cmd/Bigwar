@@ -18,7 +18,7 @@ export interface SocialAuthPayload {
 
 interface AuthScreenProps {
   onLogin: (nick: string, password: string) => Promise<{ success: boolean; error?: string }> | { success: boolean; error?: string };
-  onRegister: (nick: string, email: string, password: string) => Promise<{ success: boolean; error?: string }> | { success: boolean; error?: string };
+  onRegister: (nick: string, email: string, password: string, phone?: string) => Promise<{ success: boolean; error?: string }> | { success: boolean; error?: string };
   onSocialAuth?: (payload: SocialAuthPayload) => Promise<{
     success: boolean;
     needsNickname?: boolean;
@@ -31,6 +31,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister, onS
   const [nick, setNick] = useState<string>('');
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -284,7 +285,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister, onS
         }
       } else {
         const finalEmail = cleanEmail || `${cleanNick.toLowerCase()}@pyramida.game`;
-        const res = await onRegister(cleanNick, finalEmail, cleanPass);
+        const res = await onRegister(cleanNick, finalEmail, cleanPass, phone.trim());
         if (!res.success) {
           setErrorMsg(res.error || 'Ошибка регистрации!');
         }
@@ -551,7 +552,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister, onS
             🎃 ПИРАМИДА: ВОЙНЫ 🎃
           </div>
           <div className="text-[10px] text-amber-200/80">Легендарная ММО RPG • Праздник Хеллоуин 🦇</div>
-          <div className="text-[9px] text-orange-300/70 font-mono">Версия 1.0.98 • Обновление: 28.10.2026</div>
+          <div className="text-[9px] text-orange-300/70 font-mono">Версия 1.1.19 • Обновление: 31.10.2026</div>
         </div>
 
         {/* ==================== GOOGLE ACCOUNT CHOOSER VIEW ==================== */}
@@ -1105,19 +1106,34 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLogin, onRegister, onS
               </div>
 
               {tab === 'register' && (
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-300 mb-1">Email (для сохранения в БД)</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-2.5 text-xs">✉️</span>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="example@gmail.com"
-                      className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 pl-8 text-xs text-amber-200 placeholder-slate-600 focus:border-amber-500 focus:outline-none"
-                    />
+                <>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-300 mb-1">Email (для сохранения в БД)</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-xs">✉️</span>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="example@gmail.com"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 pl-8 text-xs text-amber-200 placeholder-slate-600 focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
                   </div>
-                </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-300 mb-1">Номер телефона (по желанию)</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-xs">📱</span>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="+7 (999) 000-00-00"
+                        className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 pl-8 text-xs text-amber-200 placeholder-slate-600 focus:border-amber-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                </>
               )}
 
               <div>

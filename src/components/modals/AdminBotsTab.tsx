@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   BotSimulationConfig,
   getBotSimulationConfig,
@@ -26,6 +26,19 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
 }) => {
   const [config, setConfig] = useState<BotSimulationConfig>(() => getBotSimulationConfig());
   const [runtimeBots, setRuntimeBots] = useState<BotCharacter[]>(() => getRuntimeBots());
+
+  useEffect(() => {
+    const syncState = () => {
+      setConfig(getBotSimulationConfig());
+      setRuntimeBots([...getRuntimeBots()]);
+    };
+    window.addEventListener('bigwar_bot_config_updated', syncState);
+    window.addEventListener('bigwar_bots_ticked', syncState);
+    return () => {
+      window.removeEventListener('bigwar_bot_config_updated', syncState);
+      window.removeEventListener('bigwar_bots_ticked', syncState);
+    };
+  }, []);
   const [phraseSearch, setPhraseSearch] = useState('');
   const [newPhraseInput, setNewPhraseInput] = useState('');
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
@@ -264,44 +277,60 @@ export const AdminBotsTab: React.FC<AdminBotsTabProps> = ({
 
         <div className="rounded-xl border border-cyan-500/40 bg-slate-900/90 p-2.5 shadow">
           <div className="text-[10px] font-black uppercase tracking-wider text-cyan-400">
-            Имитация онлайна
+            Имитация онлайна ({config.enabled ? '🟢 ВКЛ' : '🔴 ВЫКЛ'})
           </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-xs font-black text-white">
-              {config.enabled ? '🟢 Активна' : '🔴 Выкл'}
-            </span>
+          <div className="mt-1.5 grid grid-cols-2 gap-1">
             <button
               type="button"
-              onClick={() => handleToggleSimulation(!config.enabled)}
-              className={`rounded px-2 py-1 text-[9.5px] font-black transition-all cursor-pointer ${
+              onClick={() => handleToggleSimulation(true)}
+              className={`rounded py-1 text-[9.5px] font-black transition-all cursor-pointer ${
                 config.enabled
-                  ? 'bg-rose-900/80 border border-rose-500/60 text-rose-200 hover:bg-rose-800'
-                  : 'bg-emerald-600 border border-emerald-400 text-slate-950 hover:bg-emerald-500'
+                  ? 'bg-emerald-500 text-slate-950 shadow-[0_0_8px_rgba(16,185,129,0.6)]'
+                  : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
               }`}
             >
-              {config.enabled ? 'Выкл' : 'Вкл'}
+              🟢 Вкл
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleSimulation(false)}
+              className={`rounded py-1 text-[9.5px] font-black transition-all cursor-pointer ${
+                !config.enabled
+                  ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(225,29,72,0.6)]'
+                  : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              🔴 Выкл
             </button>
           </div>
         </div>
 
         <div className="rounded-xl border border-indigo-500/40 bg-slate-900/90 p-2.5 shadow">
           <div className="text-[10px] font-black uppercase tracking-wider text-indigo-400">
-            Авто-чат ботов
+            Авто-чат ботов ({config.chatEnabled ? '💬 ВКЛ' : '🔇 ВЫКЛ'})
           </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-xs font-black text-white">
-              {config.chatEnabled ? '💬 Вкл' : '🔇 Пауза'}
-            </span>
+          <div className="mt-1.5 grid grid-cols-2 gap-1">
             <button
               type="button"
-              onClick={() => handleToggleChat(!config.chatEnabled)}
-              className={`rounded px-2 py-1 text-[9.5px] font-black transition-all cursor-pointer ${
+              onClick={() => handleToggleChat(true)}
+              className={`rounded py-1 text-[9.5px] font-black transition-all cursor-pointer ${
                 config.chatEnabled
-                  ? 'bg-rose-900/80 border border-rose-500/60 text-rose-200 hover:bg-rose-800'
-                  : 'bg-indigo-600 border border-indigo-400 text-white hover:bg-indigo-500'
+                  ? 'bg-indigo-500 text-white shadow-[0_0_8px_rgba(99,102,241,0.6)]'
+                  : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
               }`}
             >
-              {config.chatEnabled ? 'Пауза' : 'Пуск'}
+              💬 Вкл
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleChat(false)}
+              className={`rounded py-1 text-[9.5px] font-black transition-all cursor-pointer ${
+                !config.chatEnabled
+                  ? 'bg-rose-600 text-white shadow-[0_0_8px_rgba(225,29,72,0.6)]'
+                  : 'bg-slate-800 border border-slate-700 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              🔇 Выкл
             </button>
           </div>
         </div>

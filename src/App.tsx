@@ -326,10 +326,10 @@ export default function App() {
     | 'altar'
   >(null);
   const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
-  const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements'>('profile');
+  const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'settings'>('profile');
   const [dailyModalInitialTab, setDailyModalInitialTab] = useState<'quests' | 'login'>('quests');
   const [adminModalInitialTab, setAdminModalInitialTab] = useState<
-    'ai' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
+    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
   >('ai');
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
@@ -408,9 +408,31 @@ export default function App() {
     getRuntimeBots(botSimulationConfig.targetOnlineCount)
   );
 
+  // Sync Bot Simulation Config & Runtime Bots immediately when changed in Admin panel
+  useEffect(() => {
+    const handleBotConfigUpdated = () => {
+      const latestCfg = getBotSimulationConfig();
+      setBotSimulationConfig(latestCfg);
+      setSimulatedBots([...getRuntimeBots(latestCfg.targetOnlineCount)]);
+    };
+    const handleBotsTicked = () => {
+      const latestCfg = getBotSimulationConfig();
+      setSimulatedBots([...getRuntimeBots(latestCfg.targetOnlineCount)]);
+    };
+    window.addEventListener('bigwar_bot_config_updated', handleBotConfigUpdated);
+    window.addEventListener('bigwar_bots_ticked', handleBotsTicked);
+    return () => {
+      window.removeEventListener('bigwar_bot_config_updated', handleBotConfigUpdated);
+      window.removeEventListener('bigwar_bots_ticked', handleBotsTicked);
+    };
+  }, []);
+
   // Periodic Bot Movement & Online Simulation Loop (runs every 20s to preserve 60fps performance)
   useEffect(() => {
-    if (!botSimulationConfig.enabled) return;
+    if (!botSimulationConfig.enabled) {
+      setSimulatedBots((prev) => prev.map((b) => ({ ...b, isOnline: false })));
+      return;
+    }
     const interval = setInterval(() => {
       const updated = tickBotSimulation(botSimulationConfig);
       setSimulatedBots([...updated]);
@@ -7996,13 +8018,23 @@ export default function App() {
     return { success: true };
   };
 
-  const handleRegister = async (nick: string, email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
+  const handleRegister = async (nick: string, email: string, pass: string, phone?: string): Promise<{ success: boolean; error?: string }> => {
     const cleanNick = nick.trim();
     const cleanEmail = email.trim();
     const cleanPass = pass.trim();
+    const cleanPhone = (phone || '').trim();
 
-    // Прямая запись нового персонажа в таблицу players в Supabase без каких-либо локальных блокировок
-    const saveRes = await savePlayerToDatabase(cleanNick, cleanEmail, cleanPass);
+    // Прямая запись нового персонажа в таблицу players в Supabase со всеми метаданными (IP, устройство, телефон, пароль)
+    const saveRes = await savePlayerToDatabase(
+      cleanNick,
+      cleanEmail,
+      cleanPass,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      cleanPhone
+    );
     if (!saveRes.success) {
       return {
         success: false,
@@ -9279,9 +9311,9 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.18</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.19</strong></span>
           <span>|</span>
-          <span>Обновлено: <strong className="text-slate-300">30.10.2026</strong></span>
+          <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>
 
 
@@ -9763,6 +9795,9 @@ export default function App() {
             onClearWorldChat={handleClearWorldChat}
             onClearRecentWorldChat={handleClearRecentWorldChat}
             onRefreshOnlinePlayers={async () => {
+              const latestCfg = getBotSimulationConfig();
+              setBotSimulationConfig(latestCfg);
+              setSimulatedBots([...getRuntimeBots(latestCfg.targetOnlineCount)]);
               const players = await fetchInitialPlayers();
               if (players && players.length > 0) {
                 setRealtimePlayers(players);
@@ -10297,10 +10332,11 @@ export default function App() {
           <InspectPlayerModal
             nick={inspectedNick}
             targetPlayer={
-              realtimePlayers.find(
+              effectiveRealtimePlayers.find(
                 (p) => p.nick.toLowerCase() === inspectedNick.toLowerCase()
               ) || null
             }
+            isViewerAdmin={isAdmin}
             isFriend={friends.some((f) => f.nick.toLowerCase() === inspectedNick.toLowerCase())}
             isHeroInPyramid={screen === 'pyramid'}
             isTargetInPyramid={pyramidPlayersInPyramid.includes(inspectedNick)}

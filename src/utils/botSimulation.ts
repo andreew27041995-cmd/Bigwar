@@ -17,6 +17,7 @@ export interface BotCharacter {
   role?: 'regular' | 'winner';
   isOnline: boolean;
   lastSeen: number;
+  lastAction?: string;
 }
 
 export interface BotSimulationConfig {
@@ -267,21 +268,42 @@ export function saveBotSimulationConfig(config: BotSimulationConfig) {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(BOT_CONFIG_STORAGE_KEY, JSON.stringify(config));
+    window.dispatchEvent(new CustomEvent('bigwar_bot_config_updated', { detail: config }));
   } catch (e) {
     console.warn('[BotSimulation] Failed to save config to storage:', e);
   }
 }
 
+const BOT_CITY_ACTIONS = [
+  'В Городе Луксор (отдых и регенерация)',
+  'Выбирает экипировку в Магазине',
+  'Просматривает лоты на Аукционе',
+  'Улучшает предмет на Алтаре',
+  'Чинит доспехи в Сумке',
+  'Общается в мировом чате',
+  'Крутит Колесо Удачи'
+];
+
+const BOT_PYRAMID_ACTIONS = [
+  'Фармит монстров в Пирамиде',
+  'Ищет сундуки и мешки с золотом',
+  'Сражается со Стражем Гробницы',
+  'Охотится на Босса яруса',
+  'Исследует коридоры Пирамиды',
+  'Собирает добычу после боя'
+];
+
 // In-memory runtime pool of bots
 let cachedRuntimeBots: BotCharacter[] | null = null;
 
 export function initializeRuntimeBots(targetCount: number = 28): BotCharacter[] {
+  const cfg = getBotSimulationConfig();
   const now = Date.now();
-  const count = Math.max(5, Math.min(BOT_DATABASE.length, targetCount));
+  const count = cfg.enabled ? Math.max(5, Math.min(BOT_DATABASE.length, targetCount)) : 0;
 
   // Pick deterministic subset initially, then randomize on subsequent ticks
   const pool = BOT_DATABASE.map((base, idx) => {
-    const isOnline = idx < count;
+    const isOnline = cfg.enabled && idx < count;
     // Jitter coordinates and HP slightly
     const randomRow = isOnline && base.location === 'pyramid'
       ? Math.max(1, Math.min(8, base.row + ((idx % 3) - 1)))
@@ -289,13 +311,18 @@ export function initializeRuntimeBots(targetCount: number = 28): BotCharacter[] 
     const randomCol = isOnline && base.location === 'pyramid'
       ? Math.max(0, Math.min(9, base.col + ((idx % 2) === 0 ? 1 : -1)))
       : base.col;
+    const defaultAction =
+      base.location === 'pyramid'
+        ? BOT_PYRAMID_ACTIONS[idx % BOT_PYRAMID_ACTIONS.length]
+        : BOT_CITY_ACTIONS[idx % BOT_CITY_ACTIONS.length];
 
     return {
       ...base,
       row: Math.max(0, Math.min(9, randomRow)),
       col: Math.max(0, Math.min(9, randomCol)),
       isOnline,
-      lastSeen: isOnline ? now - (idx * 300) : now - 1000000
+      lastSeen: isOnline ? now - (idx * 300) : now - 1000000,
+      lastAction: isOnline ? defaultAction : 'Оффлайн'
     };
   });
 
@@ -304,46 +331,93 @@ export function initializeRuntimeBots(targetCount: number = 28): BotCharacter[] 
 }
 
 export function getRuntimeBots(targetCount?: number): BotCharacter[] {
+  const cfg = getBotSimulationConfig();
   if (!cachedRuntimeBots) {
-    const cfg = getBotSimulationConfig();
     cachedRuntimeBots = initializeRuntimeBots(targetCount || cfg.targetOnlineCount);
+  }
+  if (!cfg.enabled) {
+    return cachedRuntimeBots.map((b) => ({ ...b, isOnline: false, lastAction: 'Оффлайн (Симуляция выкл)' }));
   }
   return cachedRuntimeBots;
 }
 
 /**
  * Ticks the bot simulation:
- * 1. Keeps online count close to targetOnlineCount by logging out 1-2 idle bots and logging in 1-2 new bots.
+ * 1. Keeps online count close to targetOnlineCount by logging out idle bots or logging in bots immediately when re-enabled.
  * 2. Simulates movement inside the Pyramid for bots currently in 'pyramid' (adjusts row/col by ±1).
  * 3. Keeps their `lastSeen` fresh so they pass `isPlayerOnlineByHeartbeat` seamlessly.
  */
 export function tickBotSimulation(cfg?: BotSimulationConfig): BotCharacter[] {
   const config = cfg || getBotSimulationConfig();
-  if (!config.enabled) {
-    if (cachedRuntimeBots) {
-      cachedRuntimeBots = cachedRuntimeBots.map((b) => ({ ...b, isOnline: false }));
-    }
-    return cachedRuntimeBots || [];
+  if (!cachedRuntimeBots) {
+    cachedRuntimeBots = initializeRuntimeBots(config.targetOnlineCount);
   }
 
-  const bots = getRuntimeBots(config.targetOnlineCount);
+  if (!config.enabled) {
+    cachedRuntimeBots = cachedRuntimeBots.map((b) => ({
+      ...b,
+      isOnline: false,
+      lastAction: 'Оффлайн (Симуляция выкл)'
+    }));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('bigwar_bots_ticked', { detail: cachedRuntimeBots }));
+    }
+    return cachedRuntimeBots;
+  }
+
+  const bots = cachedRuntimeBots;
   const now = Date.now();
-  const targetOnline = config.targetOnlineCount;
+  const targetOnline = Math.max(5, Math.min(BOT_DATABASE.length, config.targetOnlineCount));
 
-  const currentOnlineBots = bots.filter((b) => b.isOnline);
-  const currentOfflineBots = bots.filter((b) => !b.isOnline);
+  let nextBots = [...bots];
+  let currentOnlineBots = nextBots.filter((b) => b.isOnline);
+  let currentOfflineBots = nextBots.filter((b) => !b.isOnline);
 
-  // If online count deviates or randomly 20% of the time, rotate 1 bot
-  const shouldRotate = Math.random() < 0.25 || currentOnlineBots.length < targetOnline - 2 || currentOnlineBots.length > targetOnline + 2;
+  // Immediately bring bots online if count is significantly below target (e.g. right after turning simulation ON)
+  if (currentOnlineBots.length < targetOnline - 1) {
+    const needed = targetOnline - currentOnlineBots.length;
+    const shuffledOffline = [...currentOfflineBots].sort(() => Math.random() - 0.5);
+    const idsToActivate = new Set(shuffledOffline.slice(0, needed).map((b) => b.id));
+    nextBots = nextBots.map((b) =>
+      idsToActivate.has(b.id)
+        ? {
+            ...b,
+            isOnline: true,
+            lastSeen: now,
+            lastAction:
+              b.location === 'pyramid'
+                ? BOT_PYRAMID_ACTIONS[Math.floor(Math.random() * BOT_PYRAMID_ACTIONS.length)]
+                : BOT_CITY_ACTIONS[Math.floor(Math.random() * BOT_CITY_ACTIONS.length)]
+          }
+        : b
+    );
+    currentOnlineBots = nextBots.filter((b) => b.isOnline);
+    currentOfflineBots = nextBots.filter((b) => !b.isOnline);
+  } else if (currentOnlineBots.length > targetOnline + 1) {
+    const excess = currentOnlineBots.length - targetOnline;
+    const shuffledOnline = [...currentOnlineBots].sort(() => Math.random() - 0.5);
+    const idsToDeactivate = new Set(shuffledOnline.slice(0, excess).map((b) => b.id));
+    nextBots = nextBots.map((b) =>
+      idsToDeactivate.has(b.id)
+        ? { ...b, isOnline: false, lastSeen: now - 30000, lastAction: 'Вышел из игры' }
+        : b
+    );
+    currentOnlineBots = nextBots.filter((b) => b.isOnline);
+    currentOfflineBots = nextBots.filter((b) => !b.isOnline);
+  }
 
-  let nextBots = bots.map((bot) => {
+  // If online count deviates slightly or randomly 25% of the time, rotate 1 bot
+  const shouldRotate = Math.random() < 0.25;
+
+  nextBots = nextBots.map((bot) => {
     if (!bot.isOnline) return bot;
 
     // Refresh heartbeat
-    let updatedLastSeen = now;
+    const updatedLastSeen = now;
     let nextRow = bot.row;
     let nextCol = bot.col;
     let nextLocation = bot.location;
+    let nextAction = bot.lastAction;
 
     // Move in Pyramid occasionally (35% chance per tick)
     if (bot.location === 'pyramid' && Math.random() < 0.35) {
@@ -351,18 +425,26 @@ export function tickBotSimulation(cfg?: BotSimulationConfig): BotCharacter[] {
       const dCol = Math.random() < 0.5 ? (Math.random() < 0.5 ? 1 : -1) : 0;
       nextRow = Math.max(1, Math.min(8, bot.row + dRow));
       nextCol = Math.max(0, Math.min(9, bot.col + dCol));
+      nextAction = BOT_PYRAMID_ACTIONS[Math.floor(Math.random() * BOT_PYRAMID_ACTIONS.length)];
 
       // 5% chance to exit to city
       if (Math.random() < 0.05) {
         nextLocation = 'city';
         nextRow = 9;
         nextCol = 1;
+        nextAction = 'Вернулся из Пирамиды в Город';
       }
     } else if (bot.location === 'city' && Math.random() < 0.1) {
       // 10% chance to enter pyramid
       nextLocation = 'pyramid';
       nextRow = Math.floor(Math.random() * 7) + 2;
       nextCol = Math.floor(Math.random() * 10);
+      nextAction = `Вошёл в Пирамиду (Ярус ${bot.pyramidTier})`;
+    } else if (Math.random() < 0.2) {
+      nextAction =
+        nextLocation === 'pyramid'
+          ? BOT_PYRAMID_ACTIONS[Math.floor(Math.random() * BOT_PYRAMID_ACTIONS.length)]
+          : BOT_CITY_ACTIONS[Math.floor(Math.random() * BOT_CITY_ACTIONS.length)];
     }
 
     return {
@@ -370,25 +452,39 @@ export function tickBotSimulation(cfg?: BotSimulationConfig): BotCharacter[] {
       row: nextRow,
       col: nextCol,
       location: nextLocation,
-      lastSeen: updatedLastSeen
+      lastSeen: updatedLastSeen,
+      lastAction: nextAction
     };
   });
 
-  if (shouldRotate) {
-    if (currentOnlineBots.length > targetOnline && currentOnlineBots.length > 5) {
-      // Log off one bot
-      const randomIdx = Math.floor(Math.random() * currentOnlineBots.length);
-      const toLogOff = currentOnlineBots[randomIdx];
-      nextBots = nextBots.map((b) => (b.id === toLogOff.id ? { ...b, isOnline: false, lastSeen: now - 30000 } : b));
-    } else if (currentOfflineBots.length > 0) {
-      // Log in one bot
-      const randomIdx = Math.floor(Math.random() * currentOfflineBots.length);
-      const toLogIn = currentOfflineBots[randomIdx];
-      nextBots = nextBots.map((b) => (b.id === toLogIn.id ? { ...b, isOnline: true, lastSeen: now } : b));
-    }
+  if (shouldRotate && currentOnlineBots.length > 5 && currentOfflineBots.length > 0) {
+    const outIdx = Math.floor(Math.random() * currentOnlineBots.length);
+    const inIdx = Math.floor(Math.random() * currentOfflineBots.length);
+    const toLogOff = currentOnlineBots[outIdx];
+    const toLogIn = currentOfflineBots[inIdx];
+    nextBots = nextBots.map((b) => {
+      if (b.id === toLogOff.id) {
+        return { ...b, isOnline: false, lastSeen: now - 30000, lastAction: 'Вышел из игры' };
+      }
+      if (b.id === toLogIn.id) {
+        return {
+          ...b,
+          isOnline: true,
+          lastSeen: now,
+          lastAction:
+            b.location === 'pyramid'
+              ? BOT_PYRAMID_ACTIONS[Math.floor(Math.random() * BOT_PYRAMID_ACTIONS.length)]
+              : BOT_CITY_ACTIONS[Math.floor(Math.random() * BOT_CITY_ACTIONS.length)]
+        };
+      }
+      return b;
+    });
   }
 
   cachedRuntimeBots = nextBots;
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('bigwar_bots_ticked', { detail: cachedRuntimeBots }));
+  }
   return nextBots;
 }
 
@@ -396,6 +492,8 @@ export function tickBotSimulation(cfg?: BotSimulationConfig): BotCharacter[] {
  * Converts active bots to RealtimePlayer array for merging into the live game state
  */
 export function convertBotsToRealtimePlayers(bots: BotCharacter[]): RealtimePlayer[] {
+  const cfg = getBotSimulationConfig();
+  if (!cfg.enabled) return [];
   const now = Date.now();
   return bots
     .filter((b) => b.isOnline)
@@ -416,8 +514,10 @@ export function convertBotsToRealtimePlayers(bots: BotCharacter[]): RealtimePlay
       isPremium: b.isPremium,
       clanTag: b.clanTag,
       clanEmblem: b.clanEmblem,
-      role: b.role || 'regular'
-    }));
+      role: b.role || 'regular',
+      status: b.lastAction || (b.location === 'pyramid' ? `В Пирамиде (Т${b.pyramidTier})` : 'В Городе'),
+      isSimulatedBot: true
+    } as any));
 }
 
 /**

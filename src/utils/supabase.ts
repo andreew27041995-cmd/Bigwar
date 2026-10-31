@@ -132,6 +132,217 @@ export interface RealtimePlayer {
   bossesKilled?: number;
   itemsSold?: number;
   claimedAchievementIds?: string[];
+  // Account & Registration Metadata (for Admin "О нём" view & Online Statistics)
+  password?: string;
+  saved_password?: string;
+  real_email?: string;
+  realEmail?: string;
+  phone_number?: string;
+  phoneNumber?: string;
+  ip_address?: string;
+  ipAddress?: string;
+  ip_location?: string;
+  ipLocation?: string;
+  device_info?: string;
+  deviceInfo?: string;
+  user_agent?: string;
+  userAgent?: string;
+  screen_res?: string;
+  timezone?: string;
+  registered_at?: string | number;
+  registeredAt?: string | number;
+  last_action?: string;
+  lastAction?: string;
+  auth_provider?: string;
+  telegram_id?: string;
+  telegram_username?: string;
+  google_id?: string;
+  facebook_id?: string;
+  isSimulatedBot?: boolean;
+}
+
+export const ADMIN_PLAYER_METADATA_SQL_SCRIPT = `-- SQL миграция для таблицы public.players (Supabase SQL Editor)
+-- Добавляет отдельные колонки для IP, устройства, телефона, email и последнего действия:
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS real_email TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS phone_number TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_address TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_location TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS device_info TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local';
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_username TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS google_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS facebook_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_action TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ DEFAULT NOW();`;
+
+let cachedClientIpMeta: { ip: string; location: string } | null = null;
+let ipFetchPromise: Promise<{ ip: string; location: string }> | null = null;
+
+export async function ensureClientIpMetadataLoaded(): Promise<{ ip: string; location: string }> {
+  if (cachedClientIpMeta && cachedClientIpMeta.ip) {
+    return cachedClientIpMeta;
+  }
+  if (typeof window === 'undefined') {
+    return { ip: 'N/A', location: '' };
+  }
+  try {
+    const rawSaved = window.localStorage.getItem('pyramida_cached_ip_meta');
+    if (rawSaved) {
+      const parsed = JSON.parse(rawSaved);
+      if (parsed && parsed.ip && Date.now() - Number(parsed.ts || 0) < 3600000) {
+        cachedClientIpMeta = { ip: String(parsed.ip), location: String(parsed.location || '') };
+        return cachedClientIpMeta;
+      }
+    }
+  } catch {}
+
+  if (ipFetchPromise) return ipFetchPromise;
+
+  ipFetchPromise = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch('https://ipwho.is/', { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ip) {
+          const locParts = [data.country, data.city, data.connection?.isp].filter(Boolean);
+          const meta = {
+            ip: String(data.ip),
+            location: locParts.join(', ')
+          };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    try {
+      const ctrl2 = new AbortController();
+      const timer2 = setTimeout(() => ctrl2.abort(), 2500);
+      const res2 = await fetch('https://api.ipify.org?format=json', { signal: ctrl2.signal });
+      clearTimeout(timer2);
+      if (res2.ok) {
+        const data2 = await res2.json();
+        if (data2 && data2.ip) {
+          const meta = { ip: String(data2.ip), location: '' };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    return cachedClientIpMeta || { ip: 'Определяется...', location: '' };
+  })();
+
+  return ipFetchPromise;
+}
+
+export function collectClientDeviceMetadata(): {
+  ip_address: string;
+  ip_location: string;
+  device_info: string;
+  user_agent: string;
+  screen_res: string;
+  timezone: string;
+  telegram_id?: string;
+  telegram_username?: string;
+  phone_number?: string;
+} {
+  if (typeof window === 'undefined') {
+    return {
+      ip_address: '',
+      ip_location: '',
+      device_info: 'Server',
+      user_agent: '',
+      screen_res: '',
+      timezone: ''
+    };
+  }
+
+  // Trigger background IP load if not cached yet
+  if (!cachedClientIpMeta) {
+    try {
+      const rawSaved = window.localStorage.getItem('pyramida_cached_ip_meta');
+      if (rawSaved) {
+        const parsed = JSON.parse(rawSaved);
+        if (parsed?.ip) {
+          cachedClientIpMeta = { ip: String(parsed.ip), location: String(parsed.location || '') };
+        }
+      }
+    } catch {}
+    void ensureClientIpMetadataLoaded();
+  }
+
+  const ua = navigator.userAgent || '';
+  let osName = 'Неизвестная ОС';
+  if (/android/i.test(ua)) {
+    const match = ua.match(/Android\s+([\d.]+)/i);
+    osName = match ? `Android ${match[1]}` : 'Android';
+  } else if (/iPad|iPhone|iPod/.test(ua)) {
+    const match = ua.match(/OS\s+([\d_]+)/i);
+    osName = match ? `iOS ${match[1].replace(/_/g, '.')}` : 'iOS (iPhone/iPad)';
+  } else if (/Windows NT/i.test(ua)) {
+    osName = 'Windows PC';
+  } else if (/Mac OS X/i.test(ua)) {
+    osName = 'macOS';
+  } else if (/Linux/i.test(ua)) {
+    osName = 'Linux';
+  }
+
+  let browserName = 'Браузер';
+  const isTgWebApp = Boolean((window as any)?.Telegram?.WebApp?.initData);
+  if (isTgWebApp || /Telegram/i.test(ua)) {
+    browserName = 'Telegram Mini App';
+  } else if (/Edg\//i.test(ua)) {
+    browserName = 'Edge';
+  } else if (/OPR\//i.test(ua) || /Opera/i.test(ua)) {
+    browserName = 'Opera';
+  } else if (/Chrome\//i.test(ua)) {
+    browserName = 'Chrome';
+  } else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) {
+    browserName = 'Safari';
+  } else if (/Firefox\//i.test(ua)) {
+    browserName = 'Firefox';
+  }
+
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const deviceType = isMobile ? '📱 Мобильный' : '💻 ПК';
+  const screenRes = window.screen ? `${window.screen.width}x${window.screen.height}` : '';
+  let tz = '';
+  try {
+    tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {}
+
+  const tgUser = (window as any)?.Telegram?.WebApp?.initDataUnsafe?.user;
+  const tgPlatform = (window as any)?.Telegram?.WebApp?.platform;
+  const deviceSummary = `${deviceType}: ${osName} • ${browserName}${tgPlatform && tgPlatform !== 'unknown' ? ` (TG: ${tgPlatform})` : ''}`;
+
+  return {
+    ip_address: cachedClientIpMeta?.ip || '',
+    ip_location: cachedClientIpMeta?.location || '',
+    device_info: deviceSummary,
+    user_agent: ua,
+    screen_res: screenRes,
+    timezone: tz,
+    telegram_id: tgUser?.id ? String(tgUser.id) : undefined,
+    telegram_username: tgUser?.username ? String(tgUser.username) : undefined
+  };
 }
 
 export type RealtimeConnectionStatus =
@@ -774,6 +985,38 @@ export function unpackPlayerRow(row: any): any {
     telegram_id: parsedEmailData.telegram_id ?? row.telegram_id ?? undefined,
     telegram_username: parsedEmailData.telegram_username ?? row.telegram_username ?? undefined,
     oauth_avatar: parsedEmailData.oauth_avatar ?? row.oauth_avatar ?? undefined,
+    password: String(row.password ?? parsedEmailData.saved_password ?? parsedEmailData.password ?? ''),
+    saved_password: String(parsedEmailData.saved_password ?? row.password ?? parsedEmailData.password ?? ''),
+    phone_number: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
+    phoneNumber: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
+    ip_address: String(parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.ip_address ?? ''),
+    ipAddress: String(parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.ip_address ?? ''),
+    ip_location: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
+    ipLocation: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
+    device_info: String(parsedEmailData.device_info ?? parsedEmailData.deviceInfo ?? row.device_info ?? ''),
+    deviceInfo: String(parsedEmailData.device_info ?? parsedEmailData.deviceInfo ?? row.device_info ?? ''),
+    user_agent: String(parsedEmailData.user_agent ?? parsedEmailData.userAgent ?? row.user_agent ?? ''),
+    userAgent: String(parsedEmailData.user_agent ?? parsedEmailData.userAgent ?? row.user_agent ?? ''),
+    screen_res: String(parsedEmailData.screen_res ?? row.screen_res ?? ''),
+    timezone: String(parsedEmailData.timezone ?? row.timezone ?? ''),
+    registered_at: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
+    registeredAt: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
+    last_action: String(
+      parsedEmailData.last_action ??
+        parsedEmailData.lastAction ??
+        row.last_action ??
+        ((parsedEmailData.location ?? row.location) === 'pyramid'
+          ? `Исследует Пирамиду Т${canonicalTier} [${Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9}:${Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1}]`
+          : 'В Городе Луксор')
+    ),
+    lastAction: String(
+      parsedEmailData.last_action ??
+        parsedEmailData.lastAction ??
+        row.last_action ??
+        ((parsedEmailData.location ?? row.location) === 'pyramid'
+          ? `Исследует Пирамиду Т${canonicalTier} [${Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9}:${Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1}]`
+          : 'В Городе Луксор')
+    ),
     tutorial_completed: Boolean(parsedEmailData.tutorial_completed ?? row.tutorial_completed ?? false),
     _offlineRegenGainedHp: offlineRegenGainedHp,
     _offlineRegenGainedEnergy: offlineRegenGainedEnergy,
@@ -1070,7 +1313,32 @@ export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
     claimedAchievementIds: Array.isArray(row.claimed_achievement_ids ?? row.claimedAchievementIds)
       ? (row.claimed_achievement_ids ?? row.claimedAchievementIds)
       : [],
-    totalGoldCollected: Math.max(0, Number(row.total_gold_collected ?? row.totalGoldCollected ?? row.gold ?? 0))
+    totalGoldCollected: Math.max(0, Number(row.total_gold_collected ?? row.totalGoldCollected ?? row.gold ?? 0)),
+    password: String(row.password ?? row.saved_password ?? ''),
+    saved_password: String(row.saved_password ?? row.password ?? ''),
+    real_email: String(row.real_email ?? ''),
+    realEmail: String(row.real_email ?? ''),
+    phone_number: String(row.phone_number ?? row.phoneNumber ?? ''),
+    phoneNumber: String(row.phone_number ?? row.phoneNumber ?? ''),
+    ip_address: String(row.ip_address ?? row.ipAddress ?? ''),
+    ipAddress: String(row.ip_address ?? row.ipAddress ?? ''),
+    ip_location: String(row.ip_location ?? row.ipLocation ?? ''),
+    ipLocation: String(row.ip_location ?? row.ipLocation ?? ''),
+    device_info: String(row.device_info ?? row.deviceInfo ?? ''),
+    deviceInfo: String(row.device_info ?? row.deviceInfo ?? ''),
+    user_agent: String(row.user_agent ?? row.userAgent ?? ''),
+    userAgent: String(row.user_agent ?? row.userAgent ?? ''),
+    screen_res: String(row.screen_res ?? ''),
+    timezone: String(row.timezone ?? ''),
+    registered_at: row.registered_at ?? row.created_at ?? '',
+    registeredAt: row.registered_at ?? row.created_at ?? '',
+    last_action: String(row.last_action ?? status),
+    lastAction: String(row.last_action ?? status),
+    auth_provider: String(row.auth_provider ?? 'local'),
+    telegram_id: row.telegram_id,
+    telegram_username: row.telegram_username,
+    google_id: row.google_id,
+    facebook_id: row.facebook_id
   } as any;
 }
 
@@ -1844,7 +2112,7 @@ export async function authenticatePlayerInSupabase(
 
     // Ищем совпадение пароля без учета регистра и пробелов
     const passMatches = matchingRows.filter((row: any) => {
-      const rowPass = String(row.password ?? '').trim().toLowerCase();
+      const rowPass = String(row.password ?? row.saved_password ?? '').trim().toLowerCase();
       if (!rowPass) return true;
       if (rowPass === lowerPass) return true;
       return false;
@@ -1858,10 +2126,31 @@ export async function authenticatePlayerInSupabase(
     }
 
     const bestMatch = selectBestPlayerRecord(passMatches) || passMatches[0];
+    const unpackedPlayer = unpackPlayerRow(bestMatch);
+
+    // Asynchronously refresh IP/device metadata & saved_password on login without blocking
+    void ensureClientIpMetadataLoaded().then(() => {
+      const clientMeta = collectClientDeviceMetadata();
+      void updatePlayerInDatabase(unpackedPlayer.name || cleanName, {
+        password: cleanPass,
+        saved_password: cleanPass,
+        ip_address: clientMeta.ip_address || unpackedPlayer.ip_address,
+        ip_location: clientMeta.ip_location || unpackedPlayer.ip_location,
+        device_info: clientMeta.device_info || unpackedPlayer.device_info,
+        user_agent: clientMeta.user_agent || unpackedPlayer.user_agent,
+        screen_res: clientMeta.screen_res || unpackedPlayer.screen_res,
+        timezone: clientMeta.timezone || unpackedPlayer.timezone,
+        last_action: 'Вход в игру (авторизация)'
+      });
+    });
 
     return {
       success: true,
-      player: unpackPlayerRow(bestMatch)
+      player: {
+        ...unpackedPlayer,
+        password: cleanPass || unpackedPlayer.password,
+        saved_password: cleanPass || unpackedPlayer.saved_password
+      }
     };
   } catch (err) {
     console.warn('[Supabase] Exception in authenticatePlayerInSupabase:', err);
@@ -1896,6 +2185,7 @@ export interface SocialAuthData {
   provider: 'local' | 'google' | 'facebook' | 'telegram';
   providerId?: string;
   email?: string;
+  phone?: string;
   telegramUsername?: string;
   oauthAvatar?: string;
 }
@@ -1949,23 +2239,29 @@ export async function savePlayerToDatabase(
   gold?: number,
   crystals?: number,
   isAdmin?: number,
-  socialAuth?: SocialAuthData
+  socialAuth?: SocialAuthData,
+  phone: string = ''
 ): Promise<{ success: boolean; data?: any; error?: string; isExisting?: boolean }> {
   const client = getSupabaseClient();
   const cleanName = playerName.trim();
   const lowerName = cleanName.toLowerCase();
   const cleanPass = password.trim();
   const lowerPass = cleanPass.toLowerCase();
+  const cleanPhone = String(phone || socialAuth?.phone || '').trim();
 
   if (!cleanName) {
     return { success: false, error: 'Введите имя персонажа!' };
   }
 
+  // Ensure IP & device metadata are collected
+  await ensureClientIpMetadataLoaded();
+  const clientMeta = collectClientDeviceMetadata();
+
   // 1. Проверяем в живой базе Supabase, существует ли уже такой персонаж (точечным запросом)
   const existingChar = await findPlayerInSupabase(cleanName);
 
   if (existingChar) {
-    const existingPass = String(existingChar.password ?? '').trim().toLowerCase();
+    const existingPass = String(existingChar.password ?? existingChar.saved_password ?? '').trim().toLowerCase();
     // Проверяем также привязку к соцсети (Google / Facebook / Telegram)
     const isSameSocialAccount =
       socialAuth &&
@@ -1989,14 +2285,26 @@ export async function savePlayerToDatabase(
   const initialCrystals = crystals !== undefined ? crystals : 0;
   const finalEmail = email.trim() || `${lowerName}@pyramida.game`;
   const authProvider = socialAuth?.provider || 'local';
+  const finalPass = cleanPass || (socialAuth?.providerId ? `${authProvider}_${socialAuth.providerId}` : '123456');
+  const nowIso = new Date().toISOString();
 
   const initialStateJson: Record<string, any> = {
     real_email: finalEmail,
+    saved_password: finalPass,
+    phone_number: cleanPhone || clientMeta.phone_number || '',
+    ip_address: clientMeta.ip_address || '',
+    ip_location: clientMeta.ip_location || '',
+    device_info: clientMeta.device_info || '',
+    user_agent: clientMeta.user_agent || '',
+    screen_res: clientMeta.screen_res || '',
+    timezone: clientMeta.timezone || '',
+    registered_at: nowIso,
+    last_action: 'Регистрация персонажа',
     auth_provider: authProvider,
     google_id: socialAuth?.provider === 'google' ? socialAuth.providerId : undefined,
     facebook_id: socialAuth?.provider === 'facebook' ? socialAuth.providerId : undefined,
-    telegram_id: socialAuth?.provider === 'telegram' ? socialAuth.providerId : undefined,
-    telegram_username: socialAuth?.telegramUsername || undefined,
+    telegram_id: (socialAuth?.provider === 'telegram' ? socialAuth.providerId : undefined) || clientMeta.telegram_id,
+    telegram_username: socialAuth?.telegramUsername || clientMeta.telegram_username || undefined,
     oauth_avatar: socialAuth?.oauthAvatar || undefined,
     tutorial_completed: false,
     lvl: 1,
@@ -2031,16 +2339,22 @@ export async function savePlayerToDatabase(
   const basePayload: Record<string, any> = {
     name: cleanName,
     email: JSON.stringify(initialStateJson),
-    password: cleanPass || (socialAuth?.providerId ? `${authProvider}_${socialAuth.providerId}` : '123456'),
+    password: finalPass,
     gold: initialGold,
     crystals: initialCrystals,
     is_admin: adminFlag
   };
 
-  // Extended payload if the user ran the v1.0.86 SQL migration with dedicated social columns
+  // Extended payload if the user ran the SQL migration with dedicated social & metadata columns
   const extendedPayload: Record<string, any> = {
     ...basePayload,
     real_email: finalEmail,
+    phone_number: cleanPhone || clientMeta.phone_number || null,
+    ip_address: clientMeta.ip_address || null,
+    ip_location: clientMeta.ip_location || null,
+    device_info: clientMeta.device_info || null,
+    user_agent: clientMeta.user_agent || null,
+    last_action: 'Регистрация персонажа',
     auth_provider: authProvider,
     ...(socialAuth?.provider === 'google' && socialAuth.providerId ? { google_id: socialAuth.providerId } : {}),
     ...(socialAuth?.provider === 'facebook' && socialAuth.providerId ? { facebook_id: socialAuth.providerId } : {}),
@@ -3143,6 +3457,72 @@ export async function updatePlayerInDatabase(
           telegram_id: (updates as any).telegram_id ?? (cached as any).telegram_id ?? (existingJson as any).telegram_id,
           telegram_username: (updates as any).telegram_username ?? (cached as any).telegram_username ?? (existingJson as any).telegram_username,
           oauth_avatar: (updates as any).oauth_avatar ?? (cached as any).oauth_avatar ?? (existingJson as any).oauth_avatar,
+          saved_password:
+            (updates as any).password !== undefined
+              ? String((updates as any).password)
+              : (updates as any).saved_password !== undefined
+              ? String((updates as any).saved_password)
+              : (cached as any).saved_password ?? (cached as any).password ?? (existingJson as any).saved_password ?? (existingJson as any).password ?? '',
+          phone_number:
+            (updates as any).phone_number !== undefined
+              ? String((updates as any).phone_number)
+              : (updates as any).phoneNumber !== undefined
+              ? String((updates as any).phoneNumber)
+              : (cached as any).phone_number ?? (cached as any).phoneNumber ?? (existingJson as any).phone_number ?? '',
+          ip_address:
+            (updates as any).ip_address ||
+            (updates as any).ipAddress ||
+            (cached as any).ip_address ||
+            (existingJson as any).ip_address ||
+            collectClientDeviceMetadata().ip_address ||
+            '',
+          ip_location:
+            (updates as any).ip_location ||
+            (updates as any).ipLocation ||
+            (cached as any).ip_location ||
+            (existingJson as any).ip_location ||
+            collectClientDeviceMetadata().ip_location ||
+            '',
+          device_info:
+            (updates as any).device_info ||
+            (updates as any).deviceInfo ||
+            (cached as any).device_info ||
+            (existingJson as any).device_info ||
+            collectClientDeviceMetadata().device_info ||
+            '',
+          user_agent:
+            (updates as any).user_agent ||
+            (updates as any).userAgent ||
+            (cached as any).user_agent ||
+            (existingJson as any).user_agent ||
+            collectClientDeviceMetadata().user_agent ||
+            '',
+          screen_res:
+            (updates as any).screen_res ||
+            (cached as any).screen_res ||
+            (existingJson as any).screen_res ||
+            collectClientDeviceMetadata().screen_res ||
+            '',
+          timezone:
+            (updates as any).timezone ||
+            (cached as any).timezone ||
+            (existingJson as any).timezone ||
+            collectClientDeviceMetadata().timezone ||
+            '',
+          registered_at:
+            (updates as any).registered_at ??
+            (cached as any).registered_at ??
+            (existingJson as any).registered_at ??
+            (cached as any).created_at ??
+            '',
+          last_action:
+            (updates as any).last_action ??
+            (updates as any).lastAction ??
+            (cached as any).last_action ??
+            (existingJson as any).last_action ??
+            (nextLocation === 'pyramid'
+              ? `В Пирамиде Т${nextTier} [${nextRow}:${nextCol}]`
+              : 'В Городе Луксор'),
           tutorial_completed:
             (updates as any).tutorial_completed !== undefined
               ? Boolean((updates as any).tutorial_completed)
@@ -3154,6 +3534,8 @@ export async function updatePlayerInDatabase(
         playerStateCache.set(lowerName, {
           ...cached,
           ...mergedState,
+          password: mergedState.saved_password || cached.password,
+          saved_password: mergedState.saved_password || cached.saved_password,
           email: serializedEmail,
           name: cached.name || cleanName,
           nick: cached.nick || cleanName,
@@ -3257,6 +3639,64 @@ export async function updatePlayerInDatabase(
 
   playerUpdateQueues.set(lowerName, nextTask);
   return nextTask;
+}
+
+/**
+ * Changes a character's password in Supabase `public.players` (both `password` column and `saved_password` in email JSON).
+ * Available to all players for their own character (with currentPassword check) or to Admin (isAdminOverride = true).
+ */
+export async function changePlayerPasswordInSupabase(
+  playerName: string,
+  currentPassword: string | null,
+  newPassword: string,
+  isAdminOverride: boolean = false
+): Promise<{ success: boolean; error?: string }> {
+  const cleanName = String(playerName || '').trim();
+  const cleanNew = String(newPassword || '').trim();
+  if (!cleanName) {
+    return { success: false, error: 'Не указан никнейм персонажа!' };
+  }
+  if (cleanNew.length < 3) {
+    return { success: false, error: 'Новый пароль должен содержать минимум 3 символа!' };
+  }
+
+  try {
+    const existing = await findPlayerInSupabase(cleanName);
+    if (!existing) {
+      return { success: false, error: `Персонаж «${cleanName}» не найден в базе данных!` };
+    }
+
+    const dbPass = String(existing.password ?? existing.saved_password ?? '').trim();
+    if (!isAdminOverride && dbPass && currentPassword !== null) {
+      const cleanCur = String(currentPassword || '').trim();
+      if (cleanCur.toLowerCase() !== dbPass.toLowerCase()) {
+        return { success: false, error: 'Текущий пароль введён неверно!' };
+      }
+    }
+
+    const ok = await updatePlayerInDatabase(cleanName, {
+      password: cleanNew,
+      saved_password: cleanNew,
+      last_action: isAdminOverride ? 'Смена пароля (Администратор)' : 'Смена пароля в настройках',
+      is_admin_action: isAdminOverride,
+      external_sync_ts: Date.now()
+    });
+
+    if (!ok) {
+      return { success: false, error: 'Ошибка сохранения нового пароля в базу данных Supabase.' };
+    }
+
+    if (typeof window !== 'undefined' && !isAdminOverride) {
+      try {
+        window.localStorage.setItem(`pyramida_saved_password_${cleanName.toLowerCase()}`, cleanNew);
+      } catch {}
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.warn('[Supabase] Ошибка при смене пароля:', err);
+    return { success: false, error: 'Сетевая ошибка при смене пароля.' };
+  }
 }
 
 /**

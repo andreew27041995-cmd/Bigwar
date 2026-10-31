@@ -18,8 +18,18 @@ import {
   sendMailInSupabase,
   recalculateAllPlayersByExpTableInSupabase,
   fetchPyramidTierFromSupabase,
-  updatePlayerInDatabase
+  updatePlayerInDatabase,
+  changePlayerPasswordInSupabase,
+  ADMIN_PLAYER_METADATA_SQL_SCRIPT
 } from '../../utils/supabase';
+import {
+  BotSimulationConfig,
+  getBotSimulationConfig,
+  saveBotSimulationConfig,
+  getRuntimeBots,
+  tickBotSimulation,
+  BotCharacter
+} from '../../utils/botSimulation';
 import {
   DEFAULT_NPC_CONFIG,
   NpcTemplate,
@@ -39,7 +49,9 @@ import {
   getPyramidTierForLevel,
   normalizeStatsForLevel,
   getHeroMaxHpFromVit,
-  sanitizePyramidCellsForStorage
+  sanitizePyramidCellsForStorage,
+  formatLastSeen,
+  formatFullDateTime
 } from '../../utils/gameData';
 import {
   MonsterConfig,
@@ -115,7 +127,7 @@ import {
 
 interface AdminModalProps {
   onClose: () => void;
-  initialTab?: 'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots';
+  initialTab?: 'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots';
   hero: HeroState;
   setHero: React.Dispatch<React.SetStateAction<HeroState>>;
   equipped?: EquippedGear;
@@ -170,7 +182,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onShopAndFeaturesUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'ai' | 'aiMonitoring' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
+    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
   >(initialTab);
   const [scarabTourneyCfg, setScarabTourneyCfg] = useState<ScarabTournamentGlobalConfig>(() =>
     getScarabTournamentConfig()
@@ -315,6 +327,63 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [selectedSkinToGrant, setSelectedSkinToGrant] = useState<string>('');
   const [playerSearchQuery, setPlayerSearchQuery] = useState('');
   const [playerOriginFilter, setPlayerOriginFilter] = useState<'all' | 'real' | 'bot'>('all');
+
+  // Online Statistics & Bot Simulation state inside AdminModal
+  const [onlineStatsTypeFilter, setOnlineStatsTypeFilter] = useState<'all' | 'real' | 'bots'>('all');
+  const [onlineStatsStatusFilter, setOnlineStatsStatusFilter] = useState<'all' | 'online' | 'offline'>('all');
+  const [onlineStatsSearch, setOnlineStatsSearch] = useState('');
+  const [adminBotCfg, setAdminBotCfg] = useState<BotSimulationConfig>(() => getBotSimulationConfig());
+  const [adminRuntimeBots, setAdminRuntimeBots] = useState<BotCharacter[]>(() => getRuntimeBots());
+
+  // "О нём" (Admin Account/Device Credentials) state for selected player
+  const [editPlayerPasswordValue, setEditPlayerPasswordValue] = useState('');
+  const [editPlayerPhoneValue, setEditPlayerPhoneValue] = useState('');
+  const [editPlayerEmailValue, setEditPlayerEmailValue] = useState('');
+  const [showSqlMigrationBlock, setShowSqlMigrationBlock] = useState(false);
+
+  useEffect(() => {
+    const syncBotState = () => {
+      setAdminBotCfg(getBotSimulationConfig());
+      setAdminRuntimeBots([...getRuntimeBots()]);
+    };
+    window.addEventListener('bigwar_bot_config_updated', syncBotState);
+    window.addEventListener('bigwar_bots_ticked', syncBotState);
+    return () => {
+      window.removeEventListener('bigwar_bot_config_updated', syncBotState);
+      window.removeEventListener('bigwar_bots_ticked', syncBotState);
+    };
+  }, []);
+
+  const handleAdminToggleBotSimulation = (enabled: boolean) => {
+    const nextCfg: BotSimulationConfig = { ...adminBotCfg, enabled };
+    setAdminBotCfg(nextCfg);
+    saveBotSimulationConfig(nextCfg);
+    const updatedBots = tickBotSimulation(nextCfg);
+    setAdminRuntimeBots([...updatedBots]);
+    if (onRefreshOnlinePlayers) onRefreshOnlinePlayers();
+    showToast(
+      enabled
+        ? `🟢 Зеркальные онлайн-боты ВКЛЮЧЕНЫ (активно ~${nextCfg.targetOnlineCount} ботов в игре)!`
+        : '🔴 Зеркальные онлайн-боты ВЫКЛЮЧЕНЫ (в онлайне остались только реальные игроки)!'
+    );
+  };
+
+  const handleAdminChangeTargetBots = (targetCount: number) => {
+    const safeVal = Math.max(5, Math.min(60, targetCount));
+    const nextCfg: BotSimulationConfig = { ...adminBotCfg, targetOnlineCount: safeVal };
+    setAdminBotCfg(nextCfg);
+    saveBotSimulationConfig(nextCfg);
+    const updatedBots = tickBotSimulation(nextCfg);
+    setAdminRuntimeBots([...updatedBots]);
+    if (onRefreshOnlinePlayers) onRefreshOnlinePlayers();
+  };
+
+  const handleAdminToggleBotChat = (chatEnabled: boolean) => {
+    const nextCfg: BotSimulationConfig = { ...adminBotCfg, chatEnabled };
+    setAdminBotCfg(nextCfg);
+    saveBotSimulationConfig(nextCfg);
+    showToast(chatEnabled ? '💬 Авто-чат ботов ВКЛЮЧЕН!' : '🔇 Авто-чат ботов ВЫКЛЮЧЕН!');
+  };
 
   //Additive bonus fields
   const [addGoldDelta, setAddGoldDelta] = useState('');
@@ -734,6 +803,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
       setEditBagCapValue(String(p.bag_capacity ?? p.bagCapacity ?? 100));
       setEditMobsKilledValue(String(p.mobs_killed ?? p.mobsKilled ?? p.mob_kills ?? 0));
       setEditTotalGoldValue(String(p.total_gold_collected ?? p.totalGoldCollected ?? p.gold ?? 0));
+      setEditPlayerPasswordValue(String(p.password || p.saved_password || ''));
+      setEditPlayerPhoneValue(String(p.phone_number || ''));
+      const rawMail = String(p.real_email || p.email || '');
+      setEditPlayerEmailValue(rawMail && !rawMail.startsWith('{') ? rawMail : '');
 
       const rawBan: PlayerBanInfo | null = p.banInfo ?? p.ban_info ?? null;
       if (rawBan && typeof rawBan === 'object') {
@@ -3064,13 +3137,28 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         gold: Number(p.gold ?? 0),
         crystals: Number(p.crystals ?? 0),
         isOnline,
+        lastSeen: rawLastSeen,
         isPremium: isPrem,
         is_admin: adminCode,
         role: roleVal,
         isReal: true,
         playerType: 'real' as const,
         registrationSource: regSource,
-        realEmail: rawEmail || undefined
+        realEmail: rawEmail && !rawEmail.startsWith('{') ? rawEmail : undefined,
+        password: p.password || p.saved_password || undefined,
+        phoneNumber: p.phone_number || undefined,
+        ipAddress: p.ip_address || undefined,
+        ipLocation: p.ip_location || undefined,
+        deviceInfo: p.device_info || undefined,
+        screenRes: p.screen_res || undefined,
+        timezone: p.timezone || undefined,
+        userAgent: p.user_agent || undefined,
+        registeredAt: p.registered_at || undefined,
+        lastAction:
+          p.last_action ||
+          (p.location === 'pyramid'
+            ? `⚔️ В Пирамиде ${p.pyramid_tier || 1} [${p.row ?? 9}:${p.col ?? 1}]`
+            : '🏠 В Городе')
       });
     });
 
@@ -3087,20 +3175,61 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           exp: p.exp ?? 0,
           gold: p.gold ?? 0,
           crystals: p.crystals ?? 0,
-          isOnline: Boolean(p.isOnline),
+          isOnline: Boolean(adminBotCfg.enabled && p.isOnline),
+          lastSeen: p.lastSeen || p.last_seen || now,
           isPremium: Boolean(p.isPremium),
           is_admin: adminCode,
           role: adminCode === 1 ? 'admin' : adminCode === 2 ? 'mod' : p.role || 'regular',
           isReal: false,
           playerType: 'bot' as const,
           registrationSource: 'Зеркальный (Бот / Имитация)',
-          realEmail: undefined
+          realEmail: undefined,
+          lastAction:
+            p.last_action ||
+            (p.location === 'pyramid'
+              ? `⚔️ Сражается в Пирамиде ${p.pyramidTier || 1} [${p.row ?? 9}:${p.col ?? 1}]`
+              : '🏠 Гуляет в Городе')
+        });
+      }
+    });
+
+    adminRuntimeBots.forEach((b) => {
+      const key = b.nick.trim().toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, {
+          id: b.id,
+          nick: b.nick,
+          avatar: b.avatar,
+          lvl: b.lvl,
+          exp: 0,
+          gold: (b as any).gold ?? b.lvl * 120,
+          crystals: (b as any).crystals ?? Math.floor(b.lvl * 1.5),
+          location: b.location,
+          pyramidTier: b.pyramidTier,
+          row: b.row,
+          col: b.col,
+          hp: b.hp,
+          maxHp: b.maxHp,
+          isOnline: Boolean(adminBotCfg.enabled && b.isOnline),
+          lastSeen: b.lastSeen || now,
+          isPremium: b.isPremium,
+          is_admin: 0,
+          role: 'regular',
+          isReal: false,
+          playerType: 'bot' as const,
+          registrationSource: 'Зеркальный (Бот / Имитация)',
+          realEmail: undefined,
+          lastAction:
+            b.lastAction ||
+            (b.location === 'pyramid'
+              ? `⚔️ Сражается в Пирамиде ${b.pyramidTier || 1} [${b.row}:${b.col}]`
+              : '🏠 В Городе')
         });
       }
     });
 
     return Array.from(map.values());
-  }, [dbPlayers, onlinePlayers]);
+  }, [dbPlayers, onlinePlayers, adminRuntimeBots, adminBotCfg.enabled]);
 
   const realPlayersCount = React.useMemo(() => combinedPlayersList.filter((p) => p.isReal).length, [combinedPlayersList]);
   const realOnlineCount = React.useMemo(() => combinedPlayersList.filter((p) => p.isReal && p.isOnline).length, [combinedPlayersList]);
@@ -3184,6 +3313,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             📊 AI-мониторинг
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('onlineStats');
+              refreshDbPlayersList();
+              setAdminBotCfg(getBotSimulationConfig());
+              setAdminRuntimeBots([...getRuntimeBots()]);
+            }}
+            className={`rounded-lg py-1.5 px-2 transition-all ${
+              activeTab === 'onlineStats'
+                ? 'bg-gradient-to-r from-cyan-500 via-emerald-500 to-teal-500 text-slate-950 font-black shadow-[0_0_14px_rgba(16,185,129,0.65)]'
+                : 'bg-gradient-to-r from-emerald-950/85 to-slate-900 text-emerald-300 border border-emerald-500/50 hover:bg-emerald-900/60'
+            }`}
+          >
+            🌐 Онлайн-статистика ({realOnlineCount + botOnlineCount})
           </button>
           <button
             type="button"
@@ -3597,6 +3742,412 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               syncLocalSelfIfMatched={syncLocalSelfIfMatched}
               onSwitchToAiChat={() => setActiveTab('ai')}
             />
+          )}
+
+          {/* ==================== TAB 0.8: ОНЛАЙН-СТАТИСТИКА (REAL REGISTERED VS MIRROR BOTS TABLE & CONTROLS) ==================== */}
+          {activeTab === 'onlineStats' && (
+            <div className="space-y-3">
+              {/* Header & Summary Counters */}
+              <div className="rounded-xl border border-cyan-500/40 bg-gradient-to-br from-cyan-950/50 via-slate-900 to-slate-950 p-3 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div>
+                    <h3 className="text-xs sm:text-sm font-black text-cyan-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>🌐 Онлайн-статистика: Реальные игроки (Регистрация) и Зеркальные (Боты)</span>
+                    </h3>
+                    <p className="text-[10px] text-slate-300 mt-0.5">
+                      Полный мониторинг всех игроков и зеркальных ботов в реальном времени, последние действия, IP/устройства и мгновенное управление онлайном ботов.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={refreshDbPlayersList}
+                      disabled={isLoadingPlayers}
+                      className="rounded-lg border border-cyan-500/60 bg-cyan-900/50 hover:bg-cyan-800/70 px-3 py-1.5 text-[10px] font-black text-cyan-100 cursor-pointer transition-all"
+                    >
+                      {isLoadingPlayers ? '⏳ Загрузка...' : '🔄 Обновить статистику'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* 4 Metric Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                  <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-2.5">
+                    <div className="text-[9px] text-emerald-300/80 uppercase font-bold">Всего в сети (Онлайн)</div>
+                    <div className="text-lg font-black text-emerald-400 mt-0.5">
+                      🟢 {realOnlineCount + botOnlineCount}{' '}
+                      <span className="text-[10px] font-normal text-slate-400">/ {combinedPlayersList.length} всего</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-cyan-500/40 bg-cyan-950/30 p-2.5">
+                    <div className="text-[9px] text-cyan-300/80 uppercase font-bold">👤 Реальные люди (БД)</div>
+                    <div className="text-lg font-black text-cyan-300 mt-0.5">
+                      🟢 {realOnlineCount} онлайн{' '}
+                      <span className="text-[10px] font-normal text-slate-400">/ {realPlayersCount} рег.</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-fuchsia-500/40 bg-fuchsia-950/30 p-2.5">
+                    <div className="text-[9px] text-fuchsia-300/80 uppercase font-bold">🪞 Зеркальные (Боты)</div>
+                    <div className="text-lg font-black text-fuchsia-300 mt-0.5">
+                      🤖 {botOnlineCount} онлайн{' '}
+                      <span className="text-[10px] font-normal text-slate-400">/ {botPlayersCount} в пуле</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-2.5">
+                    <div className="text-[9px] text-amber-300/80 uppercase font-bold">Статус симуляции ботов</div>
+                    <div className="text-sm font-black mt-1 flex items-center gap-1.5">
+                      {adminBotCfg.enabled ? (
+                        <span className="text-emerald-400">🟢 ВКЛЮЧЕНА ({adminBotCfg.targetOnlineCount} цель)</span>
+                      ) : (
+                        <span className="text-rose-400">🔴 ВЫКЛЮЧЕНА (0 ботов)</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Direct Bot Simulation ON / OFF Control Bar */}
+                <div className="rounded-xl border border-fuchsia-500/40 bg-slate-950/90 p-2.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[11px] font-black text-fuchsia-300">
+                      🤖 Управление онлайн-ботами:
+                    </span>
+                    <div className="flex items-center rounded-lg bg-slate-900 p-0.5 border border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => handleAdminToggleBotSimulation(true)}
+                        className={`rounded-md px-3 py-1 text-[10px] font-black transition-all cursor-pointer ${
+                          adminBotCfg.enabled
+                            ? 'bg-emerald-600 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🟢 ВКЛ ботов
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAdminToggleBotSimulation(false)}
+                        className={`rounded-md px-3 py-1 text-[10px] font-black transition-all cursor-pointer ${
+                          !adminBotCfg.enabled
+                            ? 'bg-rose-600 text-white shadow-[0_0_10px_rgba(225,29,72,0.5)]'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🔴 ВЫКЛ ботов
+                      </button>
+                    </div>
+
+                    <div className="flex items-center rounded-lg bg-slate-900 p-0.5 border border-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => handleAdminToggleBotChat(true)}
+                        disabled={!adminBotCfg.enabled}
+                        className={`rounded-md px-2.5 py-1 text-[10px] font-black transition-all cursor-pointer disabled:opacity-40 ${
+                          adminBotCfg.enabled && adminBotCfg.chatEnabled
+                            ? 'bg-amber-600 text-slate-950'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        💬 Авто-чат ВКЛ
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAdminToggleBotChat(false)}
+                        disabled={!adminBotCfg.enabled}
+                        className={`rounded-md px-2.5 py-1 text-[10px] font-black transition-all cursor-pointer disabled:opacity-40 ${
+                          !adminBotCfg.chatEnabled
+                            ? 'bg-slate-700 text-white'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        🔇 Авто-чат ВЫКЛ
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] text-slate-300 font-bold">
+                      Целевой онлайн ботов: <strong className="text-fuchsia-300">{adminBotCfg.targetOnlineCount}</strong>
+                    </span>
+                    <input
+                      type="range"
+                      min={5}
+                      max={60}
+                      value={adminBotCfg.targetOnlineCount}
+                      onChange={(e) => handleAdminChangeTargetBots(Number(e.target.value))}
+                      className="w-28 accent-fuchsia-500 cursor-pointer"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated = tickBotSimulation(adminBotCfg);
+                        setAdminRuntimeBots([...updated]);
+                        showToast('⚡ Активность и позиции зеркальных ботов обновлены!');
+                      }}
+                      disabled={!adminBotCfg.enabled}
+                      className="rounded-lg border border-fuchsia-500/40 bg-fuchsia-950/60 hover:bg-fuchsia-900/70 px-2.5 py-1 text-[10px] font-bold text-fuchsia-200 disabled:opacity-40 cursor-pointer"
+                    >
+                      🎲 Шаг симуляции
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Filter Bar: Type (All / Real / Bots), Status (All / Online / Offline), Search */}
+              <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-3 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  {/* Type Filter */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 mr-1">Тип игроков:</span>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsTypeFilter('all')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-black transition-all cursor-pointer ${
+                        onlineStatsTypeFilter === 'all'
+                          ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      🌐 Все ({combinedPlayersList.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsTypeFilter('real')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-black transition-all cursor-pointer ${
+                        onlineStatsTypeFilter === 'real'
+                          ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                          : 'bg-cyan-950/70 border border-cyan-500/40 text-cyan-200 hover:bg-cyan-900/60'
+                      }`}
+                    >
+                      👤 Реальные игроки ({realPlayersCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsTypeFilter('bots')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-black transition-all cursor-pointer ${
+                        onlineStatsTypeFilter === 'bots'
+                          ? 'bg-fuchsia-500 text-slate-950 shadow-sm'
+                          : 'bg-fuchsia-950/70 border border-fuchsia-500/40 text-fuchsia-200 hover:bg-fuchsia-900/60'
+                      }`}
+                    >
+                      🪞 Зеркальные боты ({botPlayersCount})
+                    </button>
+                  </div>
+
+                  {/* Online Status Filter */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 mr-1">Статус:</span>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsStatusFilter('all')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-bold cursor-pointer ${
+                        onlineStatsStatusFilter === 'all'
+                          ? 'bg-amber-500 text-slate-950 font-black'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      Все
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsStatusFilter('online')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-bold cursor-pointer ${
+                        onlineStatsStatusFilter === 'online'
+                          ? 'bg-emerald-500 text-slate-950 font-black'
+                          : 'bg-slate-800 text-emerald-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      🟢 Только Онлайн ({realOnlineCount + botOnlineCount})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOnlineStatsStatusFilter('offline')}
+                      className={`rounded-lg px-2.5 py-1 text-[10px] font-bold cursor-pointer ${
+                        onlineStatsStatusFilter === 'offline'
+                          ? 'bg-slate-600 text-white font-black'
+                          : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                      }`}
+                    >
+                      ⚪ Оффлайн
+                    </button>
+                  </div>
+
+                  {/* Search Input */}
+                  <input
+                    type="text"
+                    value={onlineStatsSearch}
+                    onChange={(e) => setOnlineStatsSearch(e.target.value)}
+                    placeholder="🔍 Поиск по нику, IP, действию..."
+                    className="w-full sm:w-56 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-[10px] text-white outline-none focus:border-cyan-500"
+                  />
+                </div>
+
+                {/* Online Statistics Table */}
+                <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/90 max-h-[520px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse text-[10px]">
+                    <thead className="sticky top-0 z-10 bg-slate-900 text-slate-300 border-b border-slate-800 uppercase text-[9px]">
+                      <tr>
+                        <th className="py-2 px-2.5">Игрок</th>
+                        <th className="py-2 px-2">Тип аккаунта</th>
+                        <th className="py-2 px-2">Статус / Активность</th>
+                        <th className="py-2 px-2">Локация и Последние действия</th>
+                        <th className="py-2 px-2">Устройство / IP / Контакты</th>
+                        <th className="py-2 px-2 text-right">Действия</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/70">
+                      {combinedPlayersList
+                        .filter((p) => {
+                          if (onlineStatsTypeFilter === 'real' && !p.isReal) return false;
+                          if (onlineStatsTypeFilter === 'bots' && p.isReal) return false;
+                          if (onlineStatsStatusFilter === 'online' && !p.isOnline) return false;
+                          if (onlineStatsStatusFilter === 'offline' && p.isOnline) return false;
+                          if (onlineStatsSearch.trim()) {
+                            const q = onlineStatsSearch.trim().toLowerCase();
+                            const matchNick = p.nick.toLowerCase().includes(q);
+                            const matchIp = (p.ipAddress || '').toLowerCase().includes(q);
+                            const matchAct = (p.lastAction || '').toLowerCase().includes(q);
+                            const matchDev = (p.deviceInfo || '').toLowerCase().includes(q);
+                            return matchNick || matchIp || matchAct || matchDev;
+                          }
+                          return true;
+                        })
+                        .sort((a, b) => {
+                          if (a.isOnline !== b.isOnline) return a.isOnline ? -1 : 1;
+                          if (Boolean(a.isReal) !== Boolean(b.isReal)) {
+                            return a.isReal ? -1 : 1;
+                          }
+                          return b.lvl - a.lvl;
+                        })
+                        .map((p) => {
+                          const lastSeenStr = p.lastSeen
+                            ? new Date(p.lastSeen).toLocaleString('ru-RU', {
+                                day: '2-digit',
+                                month: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })
+                            : 'Неизвестно';
+                          return (
+                            <tr
+                              key={`${p.isReal ? 'real' : 'bot'}_${p.nick}`}
+                              className={`transition-colors ${
+                                p.isOnline
+                                  ? 'bg-emerald-950/10 hover:bg-emerald-950/25'
+                                  : 'hover:bg-slate-900/70 opacity-80'
+                              }`}
+                            >
+                              {/* Player */}
+                              <td className="py-2 px-2.5 font-bold text-white whitespace-nowrap">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-base">{p.avatar || '🧙‍♂️'}</span>
+                                  <div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-amber-300 font-black">{p.nick}</span>
+                                      <span className="rounded bg-slate-800 px-1 py-0.2 text-[8.5px] text-slate-300">
+                                        Ур. {p.lvl}
+                                      </span>
+                                    </div>
+                                    <div className="text-[8.5px] text-slate-400">
+                                      🪙 {Number(p.gold || 0).toLocaleString()} | 💎 {p.crystals || 0}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* Account Type */}
+                              <td className="py-2 px-2 whitespace-nowrap">
+                                {!p.isReal ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-fuchsia-500/40 bg-fuchsia-950/60 px-2 py-0.5 text-[9px] font-black text-fuchsia-300">
+                                    🪞 Зеркальный (Бот)
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-cyan-500/40 bg-cyan-950/60 px-2 py-0.5 text-[9px] font-black text-cyan-300">
+                                    👤 Реальный (Регистрация)
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Online Status */}
+                              <td className="py-2 px-2 whitespace-nowrap">
+                                {p.isOnline ? (
+                                  <div>
+                                    <span className="inline-flex items-center gap-1 text-emerald-400 font-black">
+                                      <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                                      Онлайн сейчас
+                                    </span>
+                                    <div className="text-[8.5px] text-slate-400">Активен: {lastSeenStr}</div>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <span className="text-slate-400 font-bold">⚪ Оффлайн</span>
+                                    <div className="text-[8.5px] text-slate-500">Был: {lastSeenStr}</div>
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Location & Last Action */}
+                              <td className="py-2 px-2">
+                                <div className="font-bold text-slate-200">
+                                  {p.location === 'pyramid'
+                                    ? `🔺 Пирамида (Ярус ${p.pyramidTier || 1}${
+                                        p.row !== undefined ? ` • ряд ${(p.row || 0) + 1}` : ''
+                                      })`
+                                    : '🏰 Город Фараонов'}
+                                </div>
+                                <div className="text-[9px] text-amber-300/90 mt-0.5">
+                                  ⚡ {p.lastAction || (p.isOnline ? 'Исследует мир' : 'Вышел из игры')}
+                                </div>
+                              </td>
+
+                              {/* Device / IP / Contacts */}
+                              <td className="py-2 px-2">
+                                {!p.isReal ? (
+                                  <span className="text-[9px] text-fuchsia-300/70 italic">
+                                    Виртуальный ИИ-профиль симуляции
+                                  </span>
+                                ) : (
+                                  <div className="space-y-0.5 text-[9px]">
+                                    <div className="text-cyan-300 font-mono">
+                                      🌐 IP: {p.ipAddress || 'Не зафиксирован'}{' '}
+                                      {p.ipLocation ? `(${p.ipLocation})` : ''}
+                                    </div>
+                                    <div className="text-slate-300 truncate max-w-[210px]" title={p.deviceInfo}>
+                                      📱 {p.deviceInfo || 'Устройство не указано'}
+                                    </div>
+                                    {(p.realEmail || p.phoneNumber || p.password) && (
+                                      <div className="text-amber-200/90 font-mono">
+                                        {p.password ? `🔑 Пароль: ${p.password} ` : ''}
+                                        {p.phoneNumber ? `• 📞 ${p.phoneNumber}` : ''}
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="py-2 px-2 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setTargetPlayerNick(p.nick);
+                                    if (p.isReal) {
+                                      loadTargetPlayerData(p.nick);
+                                    }
+                                    setActiveTab('players');
+                                  }}
+                                  className="rounded-lg border border-amber-500/60 bg-amber-950/70 hover:bg-amber-800/80 px-2.5 py-1 text-[9.5px] font-black text-amber-200 cursor-pointer transition-all"
+                                >
+                                  🔐 О нём / Профиль
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ==================== TAB 1: PLAYERS & CHARACTER GEAR ==================== */}
@@ -4430,6 +4981,223 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* 🔐 О НЁМ (ВСЕ ДАННЫЕ РЕГИСТРАЦИИ ПЕРСОНАЖА: ПАРОЛЬ, IP, УСТРОЙСТВО, ТЕЛЕФОН, EMAIL) — ДОСТУПНО ТОЛЬКО АДМИНУ */}
+              {!isModeratorOnly && (
+                <div className="rounded-xl border-2 border-rose-500/60 bg-gradient-to-b from-rose-950/35 via-slate-900 to-slate-950 p-3 space-y-2.5 shadow-lg">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-500/30 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">🔐</span>
+                      <div>
+                        <div className="text-xs sm:text-sm font-black text-rose-300 flex items-center gap-1.5">
+                          <span>О нём: Все данные персонажа ({selectedPlayerStats?.name || targetPlayerNick || hero.nick})</span>
+                          <span className="rounded bg-rose-500/20 border border-rose-500/50 px-1.5 py-0.5 text-[8.5px] font-black text-rose-200">
+                            ТОЛЬКО ДЛЯ АДМИНА
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          Пароль, IP-адрес, геолокация, модель устройства, ОС, браузер, номер телефона и E-mail при регистрации и входе
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSqlMigrationBlock((prev) => !prev)}
+                      className="rounded-lg border border-cyan-500/50 bg-cyan-950/70 px-2.5 py-1 text-[10px] font-bold text-cyan-200 hover:bg-cyan-900 cursor-pointer"
+                    >
+                      {showSqlMigrationBlock ? '🔼 Скрыть SQL колонки БД' : '🗄️ SQL столбцы для Supabase'}
+                    </button>
+                  </div>
+
+                  {showSqlMigrationBlock && (
+                    <div className="rounded-lg border border-cyan-500/40 bg-slate-950 p-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-cyan-300">
+                          🗄️ SQL-запрос для добавления отдельных столбцов в таблицу public.players (помимо авто-сохранения в JSON):
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (navigator.clipboard) {
+                              navigator.clipboard.writeText(ADMIN_PLAYER_METADATA_SQL_SCRIPT);
+                              showToast('📋 SQL-скрипт скопирован в буфер обмена!');
+                            }
+                          }}
+                          className="rounded bg-cyan-600 px-2 py-0.5 text-[9.5px] font-black text-white hover:bg-cyan-500 cursor-pointer"
+                        >
+                          📋 Копировать SQL
+                        </button>
+                      </div>
+                      <pre className="max-h-36 overflow-y-auto rounded border border-slate-800 bg-black/80 p-2 text-[9px] font-mono text-emerald-300 select-all whitespace-pre-wrap">
+                        {ADMIN_PLAYER_METADATA_SQL_SCRIPT}
+                      </pre>
+                    </div>
+                  )}
+
+                  {selectedPlayerStats && !dbPlayers.some((r) => String(r.name || r.nick || '').toLowerCase() === String(selectedPlayerStats.name || selectedPlayerStats.nick || '').toLowerCase()) ? (
+                    <div className="rounded-lg border border-purple-500/50 bg-purple-950/40 p-2.5 text-[10.5px] text-purple-200">
+                      🪞 <strong>Зеркальный персонаж (Бот):</strong> этот игрок создаётся системой живого онлайна и не существует в таблице <code>players</code>.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 text-[10.5px]">
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">🔑 Пароль в БД:</span>
+                          <span className="font-mono font-black text-amber-300 select-all">
+                            {selectedPlayerStats?.password || selectedPlayerStats?.saved_password || editPlayerPasswordValue || 'Не сохранён'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">✉️ E-mail:</span>
+                          <span className="font-mono font-bold text-cyan-300 select-all truncate max-w-[200px]">
+                            {selectedPlayerStats?.real_email ||
+                              (selectedPlayerStats?.email && !String(selectedPlayerStats.email).startsWith('{')
+                                ? selectedPlayerStats.email
+                                : 'Не указан')}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">📱 Номер телефона:</span>
+                          <span className="font-mono font-bold text-emerald-300 select-all">
+                            {selectedPlayerStats?.phone_number || 'Не указан'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">🌐 IP-адрес:</span>
+                          <span className="font-mono font-black text-rose-300 select-all">
+                            {selectedPlayerStats?.ip_address || 'Определяется при входе'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">📍 Геолокация IP:</span>
+                          <span className="font-mono text-slate-200 select-all truncate max-w-[200px]">
+                            {selectedPlayerStats?.ip_location || '—'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">📱 Устройство / ОС:</span>
+                          <span className="font-bold text-purple-300 text-right truncate max-w-[210px]">
+                            {selectedPlayerStats?.device_info || 'Определяется при входе'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">🖥️ Экран / Таймзона:</span>
+                          <span className="font-mono text-slate-300">
+                            {selectedPlayerStats?.screen_res || '—'} • {selectedPlayerStats?.timezone || '—'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">🛡️ Способ регистрации:</span>
+                          <span className="font-bold text-amber-200">
+                            {selectedPlayerStats?.auth_provider || 'password'}
+                            {selectedPlayerStats?.telegram_username
+                              ? ` (@${selectedPlayerStats.telegram_username})`
+                              : selectedPlayerStats?.telegram_id
+                              ? ` (ID: ${selectedPlayerStats.telegram_id})`
+                              : ''}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">📅 Дата регистрации:</span>
+                          <span className="font-mono text-slate-300">
+                            {selectedPlayerStats?.registered_at
+                              ? formatFullDateTime(selectedPlayerStats.registered_at)
+                              : '—'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">⚡ Последнее действие:</span>
+                          <span className="font-bold text-emerald-300 truncate max-w-[200px]">
+                            {selectedPlayerStats?.last_action ||
+                              (selectedPlayerStats?.location === 'pyramid'
+                                ? `В Пирамиде ${selectedPlayerStats?.pyramid_tier || 1}`
+                                : 'В Городе')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {selectedPlayerStats?.user_agent && (
+                        <div className="rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-[9px] text-slate-400 font-mono break-all">
+                          <strong className="text-slate-300">User-Agent устройства:</strong> {selectedPlayerStats.user_agent}
+                        </div>
+                      )}
+
+                      {/* Редактирование пароля, телефона и email выбранного персонажа администратором */}
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 pt-1">
+                        <div>
+                          <label className="text-[9.5px] font-bold text-amber-300">🔑 Пароль персонажа:</label>
+                          <input
+                            type="text"
+                            value={editPlayerPasswordValue}
+                            onChange={(e) => setEditPlayerPasswordValue(e.target.value)}
+                            placeholder="Новый пароль..."
+                            className="mt-0.5 w-full rounded border border-amber-500/50 bg-slate-950 px-2 py-1 text-xs font-bold text-amber-200 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9.5px] font-bold text-emerald-300">📱 Номер телефона:</label>
+                          <input
+                            type="text"
+                            value={editPlayerPhoneValue}
+                            onChange={(e) => setEditPlayerPhoneValue(e.target.value)}
+                            placeholder="+7 (999) 000-00-00"
+                            className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-emerald-200 outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9.5px] font-bold text-cyan-300">✉️ E-mail:</label>
+                          <input
+                            type="text"
+                            value={editPlayerEmailValue}
+                            onChange={(e) => setEditPlayerEmailValue(e.target.value)}
+                            placeholder="example@gmail.com"
+                            className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs text-cyan-200 outline-none"
+                          />
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            type="button"
+                            disabled={isUpdatingDb}
+                            onClick={async () => {
+                              const nickToSave = (targetPlayerNick || hero.nick || '').trim();
+                              if (!nickToSave) return;
+                              setIsUpdatingDb(true);
+                              try {
+                                if (editPlayerPasswordValue.trim() && editPlayerPasswordValue.trim().length >= 3) {
+                                  await changePlayerPasswordInSupabase(
+                                    nickToSave,
+                                    '',
+                                    editPlayerPasswordValue.trim(),
+                                    true
+                                  );
+                                }
+                                await updatePlayerInDatabase(nickToSave, {
+                                  phone_number: editPlayerPhoneValue.trim() || undefined,
+                                  real_email: editPlayerEmailValue.trim() || undefined,
+                                  ...(editPlayerPasswordValue.trim()
+                                    ? {
+                                        password: editPlayerPasswordValue.trim(),
+                                        saved_password: editPlayerPasswordValue.trim()
+                                      }
+                                    : {})
+                                });
+                                await loadTargetPlayerData(nickToSave, true);
+                                await refreshDbPlayersList();
+                                showToast(`🔐 Данные «О нём» (Пароль / Телефон / Email) для ${nickToSave} сохранены!`);
+                              } finally {
+                                setIsUpdatingDb(false);
+                              }
+                            }}
+                            className="w-full rounded-lg bg-gradient-to-r from-rose-600 to-amber-600 py-1.5 px-2 text-[10.5px] font-black text-white shadow hover:brightness-110 active:scale-95 cursor-pointer disabled:opacity-50"
+                          >
+                            💾 Сохранить «О нём»
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {/* 👮 ПОЛНОМОЧИЯ И РОЛЬ ИГРОКА (1 — АДМИНИСТРАТОР, 2 — МОДЕРАТОР) */}
               <div className="rounded-xl border-2 border-emerald-500/60 bg-gradient-to-b from-emerald-950/30 via-slate-900 to-slate-900 p-3 space-y-2.5 shadow-lg">

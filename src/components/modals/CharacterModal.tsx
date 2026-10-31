@@ -22,13 +22,18 @@ import { ItemIcon } from '../ItemIcon';
 import { CrystalIcon } from '../CurrencyIcon';
 import { CrystalOrdersMailbox } from './CrystalOrdersMailbox';
 import { NPC_CONFIG, getNpcEffectiveStats, sendNpcBrowserPushNotification } from '../../utils/npcCompanion';
+import {
+  changePlayerPasswordInSupabase,
+  findPlayerInSupabase,
+  updatePlayerInDatabase
+} from '../../utils/supabase';
 
 interface CharacterModalProps {
   currentUser?: string | null;
   hero: HeroState;
   equipped: EquippedGear;
   tradeCount: number;
-  initialTab?: 'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements';
+  initialTab?: 'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'settings';
   lootHistory?: LootHistoryEntry[];
   onClearLootHistory?: () => void;
   shopSkins?: CharacterSkinTemplate[];
@@ -107,7 +112,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   onLogout,
   showToast
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'settings'>(initialTab);
   const [lootFilter, setLootFilter] = useState<'all' | 'monster' | 'chest'>('all');
   const [achCategoryFilter, setAchCategoryFilter] = useState<'all' | AchievementCategoryKey>('all');
   const [achStatusFilter, setAchStatusFilter] = useState<'all' | 'claimable' | 'in_progress' | 'claimed'>('all');
@@ -120,6 +125,91 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   const [claimingGiftIds, setClaimingGiftIds] = useState<Record<string, boolean>>({});
   const [localClaimedGiftIds, setLocalClaimedGiftIds] = useState<Record<string, boolean>>({});
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Settings Tab State (Password change & Contact info)
+  const [currentPassInput, setCurrentPassInput] = useState('');
+  const [newPassInput, setNewPassInput] = useState('');
+  const [confirmPassInput, setConfirmPassInput] = useState('');
+  const [showPassFields, setShowPassFields] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passChangeStatus, setPassChangeStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [contactEmailInput, setContactEmailInput] = useState('');
+  const [contactPhoneInput, setContactPhoneInput] = useState('');
+  const [isSavingContacts, setIsSavingContacts] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== 'settings') return;
+    const nickToLoad = (currentUser || hero.nick || '').trim();
+    if (!nickToLoad) return;
+    findPlayerInSupabase(nickToLoad)
+      .then((raw) => {
+        if (!raw) return;
+        const rawEmail = String(raw.real_email || raw.email || '').trim();
+        if (rawEmail && !rawEmail.startsWith('{') && !rawEmail.endsWith('@pyramida.game')) {
+          setContactEmailInput(rawEmail);
+        }
+        if (raw.phone_number) {
+          setContactPhoneInput(String(raw.phone_number));
+        }
+      })
+      .catch(() => {});
+  }, [activeTab, currentUser, hero.nick]);
+
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassChangeStatus(null);
+    const activeNick = (currentUser || hero.nick || '').trim();
+    if (!activeNick) {
+      setPassChangeStatus({ ok: false, msg: 'Не удалось определить имя вашего персонажа.' });
+      return;
+    }
+    const cleanNew = newPassInput.trim();
+    const cleanConfirm = confirmPassInput.trim();
+    if (!cleanNew || cleanNew.length < 3) {
+      setPassChangeStatus({ ok: false, msg: 'Новый пароль должен содержать минимум 3 символа!' });
+      return;
+    }
+    if (cleanNew !== cleanConfirm) {
+      setPassChangeStatus({ ok: false, msg: 'Новый пароль и подтверждение пароля не совпадают!' });
+      return;
+    }
+    setIsChangingPassword(true);
+    try {
+      const res = await changePlayerPasswordInSupabase(activeNick, currentPassInput.trim(), cleanNew, false);
+      if (res.success) {
+        setPassChangeStatus({ ok: true, msg: '✅ Пароль персонажа успешно изменён и сохранён в базе данных! Весь прогресс сохранён.' });
+        setCurrentPassInput('');
+        setNewPassInput('');
+        setConfirmPassInput('');
+        if (showToast) {
+          showToast('🔑 Пароль вашего персонажа успешно изменён!');
+        }
+      } else {
+        setPassChangeStatus({ ok: false, msg: res.error || 'Не удалось сменить пароль.' });
+      }
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const handleSaveContactInfo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const activeNick = (currentUser || hero.nick || '').trim();
+    if (!activeNick) return;
+    setIsSavingContacts(true);
+    try {
+      await updatePlayerInDatabase(activeNick, {
+        real_email: contactEmailInput.trim() || undefined,
+        phone_number: contactPhoneInput.trim() || undefined,
+        last_action: 'Обновление контактных данных в настройках'
+      });
+      if (showToast) {
+        showToast('✅ Контактные данные (Email / Телефон) сохранены!');
+      }
+    } finally {
+      setIsSavingContacts(false);
+    }
+  };
 
   const achievementsSummary = useMemo(() => evaluatePlayerAchievements(hero), [hero]);
   const effectiveClaimableAchCount = Math.max(
@@ -236,8 +326,8 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
         </button>
       </div>
 
-      {/* Top Section Tabs: Экипировка vs Достижения vs Коллекция vs Почта vs Рюкзак NPC vs Loot History */}
-      <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-1 border-b border-slate-800 pb-2">
+      {/* Top Section Tabs: Экипировка vs Достижения vs Коллекция vs Почта vs Рюкзак NPC vs Loot History vs Настройки */}
+      <div className="mt-2 grid grid-cols-4 sm:grid-cols-7 gap-1 border-b border-slate-800 pb-2">
         <button
           onClick={() => setActiveTab('profile')}
           className={`relative rounded-md py-1.5 px-1 text-[9px] font-extrabold transition-all text-center truncate ${
@@ -356,6 +446,20 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               {Math.min(20, lootHistory.length)}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => {
+            setActiveTab('settings');
+            setPassChangeStatus(null);
+          }}
+          className={`relative rounded-md py-1.5 px-1 text-[9px] font-extrabold transition-all text-center truncate flex items-center justify-center gap-0.5 ${
+            activeTab === 'settings'
+              ? 'bg-amber-400 text-slate-950 shadow'
+              : 'border border-amber-500/50 bg-slate-900 text-amber-300 hover:bg-slate-800'
+          }`}
+          title="Настройки персонажа и смена пароля"
+        >
+          <span className="truncate">⚙️ Настройки</span>
         </button>
       </div>
 
@@ -2800,6 +2904,156 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                 🚪 Выйти из аккаунта (Прогресс сохранен)
               </button>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================== SETTINGS TAB (PASSWORD CHANGE FOR ALL PLAYERS) ==================== */}
+      {activeTab === 'settings' && (
+        <div className="mt-2 flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+          <div className="rounded-xl border border-amber-500/50 bg-slate-900/90 p-3.5 space-y-3 shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🔑</span>
+                <div>
+                  <div className="text-xs font-black text-amber-300 uppercase tracking-wide">
+                    Смена пароля персонажа
+                  </div>
+                  <div className="text-[9.5px] text-slate-400">
+                    Персонаж: <strong className="text-white">{currentUser || hero.nick}</strong> (Ур. {hero.level}) • Весь прогресс остаётся нетронутым
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPassFields((prev) => !prev)}
+                className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[9.5px] font-bold text-slate-300 hover:bg-slate-700 cursor-pointer"
+              >
+                {showPassFields ? '🙈 Скрыть' : '👁️ Показать'}
+              </button>
+            </div>
+
+            {passChangeStatus && (
+              <div
+                className={`rounded-lg border p-2.5 text-[10.5px] font-bold ${
+                  passChangeStatus.ok
+                    ? 'border-emerald-500/60 bg-emerald-950/70 text-emerald-200'
+                    : 'border-red-500/60 bg-red-950/80 text-red-200'
+                }`}
+              >
+                {passChangeStatus.msg}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveNewPassword} className="space-y-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                  Текущий пароль (если вы входили через соцсеть — можно оставить пустым)
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  value={currentPassInput}
+                  onChange={(e) => setCurrentPassInput(e.target.value)}
+                  placeholder="Введите текущий пароль..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-amber-200 placeholder-slate-600 focus:border-amber-500 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-amber-300 mb-1">
+                  Новый пароль персонажа (минимум 3 символа)
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  value={newPassInput}
+                  onChange={(e) => setNewPassInput(e.target.value)}
+                  placeholder="Придумайте новый пароль..."
+                  className="w-full rounded-lg border border-amber-500/50 bg-slate-950 px-3 py-2 text-xs font-bold text-amber-200 placeholder-slate-600 focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-amber-300 mb-1">
+                  Подтвердите новый пароль
+                </label>
+                <input
+                  type={showPassFields ? 'text' : 'password'}
+                  value={confirmPassInput}
+                  onChange={(e) => setConfirmPassInput(e.target.value)}
+                  placeholder="Повторите новый пароль..."
+                  className="w-full rounded-lg border border-amber-500/50 bg-slate-950 px-3 py-2 text-xs font-bold text-amber-200 placeholder-slate-600 focus:border-amber-400 focus:outline-none"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isChangingPassword}
+                className="w-full rounded-lg bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 py-2.5 text-xs font-black uppercase tracking-wider text-slate-950 shadow-[0_0_12px_rgba(245,158,11,0.5)] hover:brightness-110 active:scale-95 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {isChangingPassword ? '⏳ Сохранение нового пароля...' : '💾 Изменить и сохранить пароль'}
+              </button>
+            </form>
+          </div>
+
+          {/* Дополнительные контактные данные аккаунта */}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/80 p-3.5 space-y-2.5">
+            <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+              <span className="text-base">📱</span>
+              <div>
+                <div className="text-xs font-bold text-cyan-300">
+                  Контактные данные аккаунта (Email и Телефон)
+                </div>
+                <div className="text-[9.5px] text-slate-400">
+                  Привяжите актуальный Email или номер телефона для защиты персонажа
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveContactInfo} className="space-y-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                  ✉️ Ваш E-mail:
+                </label>
+                <input
+                  type="email"
+                  value={contactEmailInput}
+                  onChange={(e) => setContactEmailInput(e.target.value)}
+                  placeholder="example@gmail.com"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-cyan-200 placeholder-slate-600 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-300 mb-1">
+                  📱 Номер телефона:
+                </label>
+                <input
+                  type="tel"
+                  value={contactPhoneInput}
+                  onChange={(e) => setContactPhoneInput(e.target.value)}
+                  placeholder="+7 (999) 000-00-00"
+                  className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-cyan-200 placeholder-slate-600 focus:border-cyan-400 focus:outline-none"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={isSavingContacts}
+                className="w-full rounded-lg border border-cyan-500/60 bg-cyan-950/70 py-2 text-[11px] font-bold text-cyan-200 hover:bg-cyan-900/80 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSavingContacts ? '⏳ Сохранение...' : '💾 Сохранить контактные данные'}
+              </button>
+            </form>
+          </div>
+
+          {onLogout && (
+            <button
+              onClick={() => {
+                onClose();
+                onLogout();
+              }}
+              className="w-full rounded-lg bg-red-950/80 border border-red-500/50 py-2.5 text-[10.5px] font-bold text-red-300 hover:bg-red-900 active:scale-95 transition-all shadow cursor-pointer"
+            >
+              🚪 Выйти из аккаунта (Прогресс сохранен)
+            </button>
           )}
         </div>
       )}
