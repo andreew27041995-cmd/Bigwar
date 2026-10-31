@@ -41451,7 +41451,7 @@ var ItemIcon = ({ icon, name, slot, alt = "icon", fallback = "⚔️", className
 };
 //#endregion
 //#region src/assets/sprites/mummy.svg
-var mummy_default = "/Bigwar/assets/mummy-v1.1.19-CJ4Cw2Fv.svg";
+var mummy_default = "/Bigwar/assets/mummy-v1.1.20-CJ4Cw2Fv.svg";
 //#endregion
 //#region src/utils/imageUpload.ts
 var GAME_ITEM_IMAGE_SPEC = {
