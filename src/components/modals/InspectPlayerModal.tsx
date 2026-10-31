@@ -999,27 +999,37 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">🌐 IP-адрес:</span>
-                        <span className="font-bold text-rose-300 select-all">
-                          {p?.ip_address || 'Определяется при входе'}
+                        <span className="text-slate-400 font-sans">🌐 IP последнего входа:</span>
+                        <span className="font-black text-rose-300 select-all">
+                          {p?.last_login_ip || p?.ip_address || (p?.phone_telemetry as any)?.last_login_ip || 'Определяется при входе'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">📍 Геолокация IP:</span>
+                        <span className="text-slate-400 font-sans">🕒 Время посл. входа по IP:</span>
+                        <span className="font-bold text-amber-200 select-all">
+                          {p?.last_login_at
+                            ? formatFullDateTime(p.last_login_at)
+                            : p?.lastSeen || p?.last_seen
+                            ? formatFullDateTime(p?.lastSeen || p?.last_seen)
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📍 Геолокация / Провайдер IP:</span>
                         <span className="text-slate-200 select-all text-right max-w-[190px] truncate">
-                          {p?.ip_location || '—'}
+                          {p?.ip_location || (p?.phone_telemetry as any)?.ip_location || '—'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                        <span className="text-slate-400 font-sans">📱 Устройство / ОС:</span>
+                        <span className="text-slate-400 font-sans">📱 Устройство / Модель телефона:</span>
                         <span className="font-bold text-purple-300 text-right max-w-[190px] truncate">
-                          {p?.device_info || 'Определяется при входе'}
+                          {(p?.phone_telemetry as any)?.phone_model || p?.device_info || 'Определяется при входе'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
                         <span className="text-slate-400 font-sans">🖥️ Экран / Часовой пояс:</span>
                         <span className="text-slate-300 text-right">
-                          {p?.screen_res || '—'} • {p?.timezone || '—'}
+                          {p?.screen_res || (p?.phone_telemetry as any)?.screen_res || '—'} • {p?.timezone || (p?.phone_telemetry as any)?.timezone || '—'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between border-b border-slate-900 pb-1">
@@ -1046,6 +1056,97 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                         </span>
                       </div>
                     </div>
+
+                    {/* Full Phone & Device Telemetry Block */}
+                    {(() => {
+                      const tel = (p?.phone_telemetry || {}) as Record<string, any>;
+                      const hasTel = Object.keys(tel).length > 0;
+                      const localSnapshot = (tel.local_storage_snapshot || {}) as Record<string, string>;
+                      const localKeys = Object.keys(localSnapshot);
+                      return (
+                        <div className="rounded-lg border border-cyan-500/40 bg-slate-950 p-2 space-y-1.5">
+                          <div className="flex items-center justify-between border-b border-cyan-500/25 pb-1">
+                            <span className="text-[9.5px] font-black text-cyan-300">
+                              📲 Все данные с телефона / устройства игрока:
+                            </span>
+                            <span className="rounded bg-cyan-950 border border-cyan-500/40 px-1.5 py-0.2 text-[7.5px] font-bold text-cyan-200">
+                              {hasTel ? 'Сохранено в БД' : 'Ожидание входа'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 text-[8.5px] font-mono">
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Модель / Чип:</span>
+                              <span className="text-purple-200 font-bold break-all">
+                                {tel.phone_model || p?.device_info || '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">ОС / Платформа:</span>
+                              <span className="text-cyan-200 font-bold break-all">
+                                {tel.os || '—'} ({tel.platform || '—'})
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Ядра CPU / Память ОЗУ:</span>
+                              <span className="text-emerald-300 font-bold">
+                                {tel.cpu_cores ? `${tel.cpu_cores} ядер` : '—'} • {tel.ram_gb ? `${tel.ram_gb} ГБ RAM` : '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Батарея телефона:</span>
+                              <span className="text-amber-300 font-bold">
+                                {tel.battery_level !== undefined && tel.battery_level !== null
+                                  ? `🔋 ${tel.battery_level}% ${tel.battery_charging ? '(⚡ Заряжается)' : '(От батареи)'}`
+                                  : '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Сеть / Интернет:</span>
+                              <span className="text-sky-300 font-bold">
+                                {tel.network_type || '—'}
+                                {tel.network_downlink_mbps ? ` (${tel.network_downlink_mbps} Мбит/с, ${tel.network_rtt_ms || 0}мс)` : ''}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Сенсор / Экран / Языки:</span>
+                              <span className="text-slate-200 font-bold">
+                                Touch: {tel.touch_points ?? '—'} • {tel.viewport_res || tel.screen_res || '—'} • {tel.language || '—'}
+                              </span>
+                            </div>
+                            <div className="col-span-2 rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Видеочип (GPU Renderer):</span>
+                              <span className="text-amber-200 font-bold break-all">
+                                {tel.gpu_vendor ? `${tel.gpu_vendor} — ` : ''}{tel.gpu_renderer || '—'}
+                              </span>
+                            </div>
+                            {(tel.telegram_user || p?.telegram_id || p?.telegram_username) && (
+                              <div className="col-span-2 rounded bg-sky-950/50 px-1.5 py-1 border border-sky-500/40">
+                                <span className="text-sky-300 block text-[7.5px] font-bold">✈️ Аккаунт Telegram на телефоне:</span>
+                                <span className="text-white font-bold break-all">
+                                  ID: {tel.telegram_user?.id || p?.telegram_id || '—'} • @{tel.telegram_user?.username || p?.telegram_username || '—'} • Имя: {tel.telegram_user?.first_name || ''} {tel.telegram_user?.last_name || ''} {tel.telegram_user?.is_premium ? '⭐ TG Premium' : ''}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {localKeys.length > 0 && (
+                            <details className="rounded border border-slate-800 bg-slate-900/80 p-1.5 text-[8px]">
+                              <summary className="cursor-pointer font-bold text-amber-300 select-none">
+                                🗂️ Сохранённые данные на телефоне (localStorage: {localKeys.length} записей)
+                              </summary>
+                              <div className="mt-1 max-h-36 overflow-y-auto space-y-1 font-mono text-[7.5px] text-slate-300">
+                                {localKeys.map((k) => (
+                                  <div key={k} className="border-b border-slate-800/80 pb-0.5 break-all">
+                                    <span className="text-cyan-300 font-bold">{k}:</span>{' '}
+                                    <span className="text-slate-300">{String(localSnapshot[k])}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {p?.user_agent && (
                       <div className="rounded border border-slate-800 bg-slate-950 p-1.5 text-[8px] text-slate-400 font-mono break-all">

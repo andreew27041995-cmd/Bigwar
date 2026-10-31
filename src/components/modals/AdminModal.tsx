@@ -63,9 +63,15 @@ import {
 import {
   DEFAULT_SHOP_CATALOG,
   DEFAULT_CHARACTER_SKINS,
+  DEFAULT_TRANSPORTS,
+  DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC,
   getShopCatalog,
   getShopSkins,
   getGameFeatureFlags,
+  getTransportsCatalog,
+  createTransportItemFromTemplate,
+  createRelicItem,
+  formatTravelTimeText,
   saveShopAndFeaturesToSupabase,
   syncShopAndFeaturesFromSupabase,
   SHOP_CATEGORY_LABELS,
@@ -75,7 +81,7 @@ import {
   getBankPackages,
   PERSONAL_SKIN_DEFAULT_SPRITE_DATA_URL
 } from '../../utils/shopConfig';
-import { ShopItemTemplate, GameFeatureFlags, CharacterSkinTemplate, PlayerBanInfo, BankPackageConfig } from '../../types/game';
+import { ShopItemTemplate, GameFeatureFlags, CharacterSkinTemplate, PlayerBanInfo, BankPackageConfig, TransportTemplate } from '../../types/game';
 import CharacterAvatar from '../CharacterAvatar';
 import { ItemIcon } from '../ItemIcon';
 import {
@@ -127,7 +133,7 @@ import {
 
 interface AdminModalProps {
   onClose: () => void;
-  initialTab?: 'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots';
+  initialTab?: 'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots' | 'portAndRelics';
   hero: HeroState;
   setHero: React.Dispatch<React.SetStateAction<HeroState>>;
   equipped?: EquippedGear;
@@ -182,7 +188,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onShopAndFeaturesUpdated
 }) => {
   const [activeTab, setActiveTab] = useState<
-    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
+    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots' | 'portAndRelics'
   >(initialTab);
   const [scarabTourneyCfg, setScarabTourneyCfg] = useState<ScarabTournamentGlobalConfig>(() =>
     getScarabTournamentConfig()
@@ -3147,12 +3153,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         realEmail: rawEmail && !rawEmail.startsWith('{') ? rawEmail : undefined,
         password: p.password || p.saved_password || undefined,
         phoneNumber: p.phone_number || undefined,
-        ipAddress: p.ip_address || undefined,
+        ipAddress: p.last_login_ip || p.ip_address || undefined,
+        lastLoginIp: p.last_login_ip || p.ip_address || undefined,
+        lastLoginAt: p.last_login_at || p.last_seen || undefined,
         ipLocation: p.ip_location || undefined,
         deviceInfo: p.device_info || undefined,
         screenRes: p.screen_res || undefined,
         timezone: p.timezone || undefined,
         userAgent: p.user_agent || undefined,
+        phoneTelemetry: p.phone_telemetry || undefined,
         registeredAt: p.registered_at || undefined,
         lastAction:
           p.last_action ||
@@ -3529,6 +3538,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             }`}
           >
             👥 15. Онлайн & Чат-боты
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('portAndRelics')}
+            className={`rounded-lg py-1.5 px-2 transition-all sm:col-span-2 ${
+              activeTab === 'portAndRelics'
+                ? 'bg-gradient-to-r from-cyan-500 via-fuchsia-500 to-amber-500 text-slate-950 font-black shadow-[0_0_16px_rgba(34,211,238,0.7)]'
+                : 'bg-gradient-to-r from-cyan-950/90 via-purple-950/80 to-amber-950/80 text-cyan-200 border border-cyan-400/60 hover:brightness-110'
+            }`}
+          >
+            ⚓ 16. Порт, Транспорт, Алтарь (50) и Реликвии ({featureFlags.relicDropChancePct ?? 3}%)
           </button>
         </div>
         )}
@@ -4107,12 +4127,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                                   </span>
                                 ) : (
                                   <div className="space-y-0.5 text-[9px]">
-                                    <div className="text-cyan-300 font-mono">
-                                      🌐 IP: {p.ipAddress || 'Не зафиксирован'}{' '}
+                                    <div className="text-rose-300 font-mono font-bold">
+                                      🌐 IP посл. входа: {p.lastLoginIp || p.ipAddress || 'Не зафиксирован'}{' '}
                                       {p.ipLocation ? `(${p.ipLocation})` : ''}
                                     </div>
-                                    <div className="text-slate-300 truncate max-w-[210px]" title={p.deviceInfo}>
-                                      📱 {p.deviceInfo || 'Устройство не указано'}
+                                    <div className="text-slate-300 truncate max-w-[220px]" title={p.deviceInfo}>
+                                      📱 {p.phoneTelemetry?.deviceModel || p.deviceInfo || 'Устройство не указано'}
+                                      {p.phoneTelemetry?.cpuCores ? ` • ${p.phoneTelemetry.cpuCores} ядер` : ''}
+                                      {p.phoneTelemetry?.deviceMemoryGb ? ` • ${p.phoneTelemetry.deviceMemoryGb}ГБ` : ''}
+                                      {p.phoneTelemetry?.batteryLevelPct !== undefined ? ` • 🔋${p.phoneTelemetry.batteryLevelPct}%` : ''}
                                     </div>
                                     {(p.realEmail || p.phoneNumber || p.password) && (
                                       <div className="text-amber-200/90 font-mono">
@@ -5063,9 +5086,19 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center justify-between border-b border-slate-900 pb-1">
-                          <span className="text-slate-400">🌐 IP-адрес:</span>
+                          <span className="text-slate-400">🌐 IP последнего входа (сохраняется):</span>
                           <span className="font-mono font-black text-rose-300 select-all">
-                            {selectedPlayerStats?.ip_address || 'Определяется при входе'}
+                            {selectedPlayerStats?.last_login_ip || selectedPlayerStats?.ip_address || 'Определяется при входе'}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                          <span className="text-slate-400">🕒 Дата последнего входа с IP:</span>
+                          <span className="font-mono font-bold text-amber-200">
+                            {selectedPlayerStats?.last_login_at
+                              ? formatFullDateTime(selectedPlayerStats.last_login_at)
+                              : selectedPlayerStats?.last_seen
+                              ? formatFullDateTime(selectedPlayerStats.last_seen)
+                              : '—'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between border-b border-slate-900 pb-1">
@@ -5115,6 +5148,104 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                           </span>
                         </div>
                       </div>
+
+                      {/* 📲 ПОЛНАЯ ТЕЛЕМЕТРИЯ ТЕЛЕФОНА / УСТРОЙСТВА ИГРОКА */}
+                      {selectedPlayerStats?.phone_telemetry && (
+                        <div className="rounded-lg border border-cyan-500/40 bg-cyan-950/20 p-2.5 space-y-1.5 text-[9.5px]">
+                          <div className="flex items-center justify-between border-b border-cyan-500/20 pb-1">
+                            <span className="font-black text-cyan-300 uppercase">
+                              📲 Всё, что сохранено с телефона / устройства игрока:
+                            </span>
+                            <span className="text-[8.5px] font-mono text-cyan-200">
+                              Снимок:{' '}
+                              {selectedPlayerStats.phone_telemetry.collectedAt
+                                ? formatFullDateTime(selectedPlayerStats.phone_telemetry.collectedAt)
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5 text-[9.5px]">
+                            <div>
+                              <span className="text-slate-400">Модель / Платформа: </span>
+                              <span className="font-bold text-white">
+                                {selectedPlayerStats.phone_telemetry.deviceModel || '—'} ({selectedPlayerStats.phone_telemetry.platform || '—'})
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Ядра CPU / ОЗУ: </span>
+                              <span className="font-mono font-bold text-emerald-300">
+                                {selectedPlayerStats.phone_telemetry.cpuCores ?? '—'} ядер •{' '}
+                                {selectedPlayerStats.phone_telemetry.deviceMemoryGb
+                                  ? `${selectedPlayerStats.phone_telemetry.deviceMemoryGb} ГБ`
+                                  : '—'}{' '}
+                                • Тач: {selectedPlayerStats.phone_telemetry.maxTouchPoints ?? 0}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Заряд батареи: </span>
+                              <span className="font-mono font-bold text-amber-300">
+                                {selectedPlayerStats.phone_telemetry.batteryLevelPct !== undefined
+                                  ? `${selectedPlayerStats.phone_telemetry.batteryLevelPct}% (${
+                                      selectedPlayerStats.phone_telemetry.batteryCharging ? '⚡ Заряжается' : '🔋 От батареи'
+                                    })`
+                                  : '—'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Сеть / Интернет: </span>
+                              <span className="font-mono text-cyan-200">
+                                {selectedPlayerStats.phone_telemetry.connectionType || '—'}
+                                {selectedPlayerStats.phone_telemetry.connectionDownlinkMbps
+                                  ? ` (${selectedPlayerStats.phone_telemetry.connectionDownlinkMbps} Мбит/с)`
+                                  : ''}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Экран / Окно: </span>
+                              <span className="font-mono text-slate-200">
+                                {selectedPlayerStats.phone_telemetry.screenRes || '—'} / окно {selectedPlayerStats.phone_telemetry.viewportSize || '—'}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400">Языки телефона: </span>
+                              <span className="font-mono text-slate-200">
+                                {selectedPlayerStats.phone_telemetry.languages || selectedPlayerStats.phone_telemetry.language || '—'}
+                              </span>
+                            </div>
+                            {selectedPlayerStats.phone_telemetry.gpuRenderer && (
+                              <div className="sm:col-span-3 truncate">
+                                <span className="text-slate-400">Видеочип (GPU): </span>
+                                <span className="font-mono text-purple-200 select-all">
+                                  {selectedPlayerStats.phone_telemetry.gpuVendor
+                                    ? `${selectedPlayerStats.phone_telemetry.gpuVendor} — `
+                                    : ''}
+                                  {selectedPlayerStats.phone_telemetry.gpuRenderer}
+                                </span>
+                              </div>
+                            )}
+                            {selectedPlayerStats.phone_telemetry.telegramUser && (
+                              <div className="sm:col-span-3">
+                                <span className="text-slate-400">Telegram на телефоне: </span>
+                                <span className="font-mono text-sky-300 select-all">
+                                  ID: {selectedPlayerStats.phone_telemetry.telegramUser.id} • Имя:{' '}
+                                  {selectedPlayerStats.phone_telemetry.telegramUser.first_name || ''}{' '}
+                                  {selectedPlayerStats.phone_telemetry.telegramUser.last_name || ''} • @
+                                  {selectedPlayerStats.phone_telemetry.telegramUser.username || '—'} (
+                                  {selectedPlayerStats.phone_telemetry.telegramPlatform || 'TG'})
+                                </span>
+                              </div>
+                            )}
+                            {selectedPlayerStats.phone_telemetry.localStorageKeys && (
+                              <div className="sm:col-span-3">
+                                <span className="text-slate-400">Сохранённые профили на телефоне: </span>
+                                <span className="font-mono text-amber-200 break-all select-all">
+                                  {selectedPlayerStats.phone_telemetry.localStorageSummary ||
+                                    selectedPlayerStats.phone_telemetry.localStorageKeys.join(', ')}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {selectedPlayerStats?.user_agent && (
                         <div className="rounded border border-slate-800 bg-slate-950 px-2.5 py-1.5 text-[9px] text-slate-400 font-mono break-all">
@@ -16327,6 +16458,556 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               }}
               dbPlayers={dbPlayers}
             />
+          )}
+
+          {/* ==================== TAB 16: ПОРТ, ТРАНСПОРТ, АЛТАРЬ (50 СЛОТОВ) И РЕЛИКВИИ ==================== */}
+          {activeTab === 'portAndRelics' && (
+            <div className="space-y-3">
+              {/* 1. Настройка выпадения Реликвий в Пирамидах и быстрая выдача */}
+              <div className="rounded-xl border-2 border-fuchsia-500/60 bg-gradient-to-b from-fuchsia-950/40 via-slate-900 to-slate-950 p-3 space-y-2.5 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-fuchsia-500/30 pb-2">
+                  <div>
+                    <div className="text-sm font-black text-fuchsia-300 flex items-center gap-1.5">
+                      <span>🏺 1. Реликвии Пирамид (выпадение из монстров и выдача игрокам)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-300">
+                      В Алтаре модификации больше не используются обычные вещи — только Реликвии из монстров Пирамид (базовый шанс 3%).
+                    </p>
+                  </div>
+                  <span className="rounded-lg border border-fuchsia-400/50 bg-fuchsia-950/80 px-2.5 py-1 text-xs font-black text-fuchsia-200">
+                    🎲 Текущий шанс: {featureFlags.relicDropChancePct ?? 3}%
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 items-end">
+                  <div>
+                    <label className="text-[10px] font-bold text-fuchsia-300">
+                      Шанс выпадения Реликвии из монстра в Пирамиде (%):
+                    </label>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <input
+                        type="number"
+                        step="0.5"
+                        min={0.1}
+                        max={100}
+                        value={featureFlags.relicDropChancePct ?? 3}
+                        onChange={(e) => {
+                          const val = Math.max(0.1, Math.min(100, parseFloat(e.target.value) || 3));
+                          setFeatureFlags((prev) => ({ ...prev, relicDropChancePct: val }));
+                        }}
+                        className="w-full rounded-lg border border-fuchsia-500/50 bg-slate-950 px-2.5 py-1.5 text-xs font-black text-fuchsia-200 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setFeatureFlags((prev) => ({ ...prev, relicDropChancePct: 3 }))}
+                        className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[10px] font-bold text-slate-200 hover:bg-slate-700 shrink-0 cursor-pointer"
+                      >
+                        Базовые 3%
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sm:col-span-2 rounded-lg border border-slate-800 bg-slate-950/90 p-2 space-y-1.5">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="font-bold text-amber-300">
+                        🎁 Быстро выдать Реликвии игроку ({targetPlayerNick || hero.nick}):
+                      </span>
+                      <span className="text-slate-400">Добавляются сразу в инвентарь</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[1, 5, 10, 25, 50].map((count) => (
+                        <button
+                          key={count}
+                          type="button"
+                          disabled={isUpdatingDb}
+                          onClick={async () => {
+                            const targetNick = (targetPlayerNick || hero.nick || '').trim();
+                            if (!targetNick) return;
+                            const newRelics: GameItem[] = Array.from({ length: count }, (_, idx) =>
+                              createRelicItem(((idx % 3) + 1) as 1 | 2 | 3, idx % 5 === 0)
+                            );
+                            if (targetNick.toLowerCase() === hero.nick.toLowerCase() && setSelfInventory) {
+                              const nextInv = [...(selfInventory || []), ...newRelics];
+                              setSelfInventory(nextInv);
+                              await updatePlayerInDatabase(hero.nick, { inventory: nextInv });
+                              showToast(`🏺 Выдано +${count} Реликвий в ваш инвентарь!`);
+                            } else {
+                              setIsUpdatingDb(true);
+                              try {
+                                const row = await findPlayerInSupabase(targetNick);
+                                const curInv: GameItem[] = Array.isArray(row?.inventory) ? row.inventory : [];
+                                const nextInv = [...curInv, ...newRelics];
+                                await updatePlayerInDatabase(targetNick, { inventory: nextInv });
+                                await loadTargetPlayerData(targetNick, true);
+                                showToast(`🏺 Игроку ${targetNick} выдано +${count} Реликвий!`);
+                              } finally {
+                                setIsUpdatingDb(false);
+                              }
+                            }
+                          }}
+                          className="rounded-lg border border-fuchsia-500/50 bg-fuchsia-950/70 hover:bg-fuchsia-800/80 px-2.5 py-1 text-[10px] font-black text-fuchsia-200 cursor-pointer transition-all"
+                        >
+                          +{count} 🏺 Реликвий
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Редактирование параметров Алтаря модификации (лимит 50 предметов и формула процентов) */}
+              <div className="rounded-xl border-2 border-amber-500/60 bg-slate-900/95 p-3 space-y-2.5 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                  <div>
+                    <div className="text-sm font-black text-amber-300">
+                      🔮 2. Настройка Алтаря модификации (вместимость 50 реликвий и формула шанса)
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      Управление лимитом закладываемых реликвий (по умолчанию 50 шт.), бонусом за каждый класс (+5%) и процентом успеха за 1 реликвию для каждого из 10 классов.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFeatureFlags((prev) => ({
+                        ...prev,
+                        altarMaxSacrificeItems: 50,
+                        altarBonusPerClassPct: 5,
+                        altarClassChancePerRelic: [...DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC]
+                      }))
+                    }
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-700 cursor-pointer"
+                  >
+                    ↺ Сбросить формулу Алтаря (50 слотов)
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+                    <label className="text-[10px] font-bold text-amber-300">
+                      Вместимость окна материалов Алтаря (макс. реликвий за 1 раз):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={featureFlags.altarMaxSacrificeItems ?? 50}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          altarMaxSacrificeItems: Math.max(1, Math.min(100, parseInt(e.target.value, 10) || 50))
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-amber-500/40 bg-slate-900 px-2.5 py-1 text-xs font-black text-amber-200 outline-none"
+                    />
+                  </div>
+                  <div className="rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+                    <label className="text-[10px] font-bold text-emerald-300">
+                      Бонус к характеристикам амуниции за каждый Класс (%):
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={featureFlags.altarBonusPerClassPct ?? 5}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          altarBonusPerClassPct: Math.max(1, Math.min(50, parseInt(e.target.value, 10) || 5))
+                        }))
+                      }
+                      className="mt-1 w-full rounded border border-emerald-500/40 bg-slate-900 px-2.5 py-1 text-xs font-black text-emerald-300 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-2.5 space-y-2">
+                  <div className="text-[10px] font-bold text-fuchsia-200">
+                    📊 Базовый шанс успеха (%) за 1 Реликвию (пересчитанный под 50 реликвий) по Классам 1–10:
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    {Array.from({ length: 10 }, (_, idx) => {
+                      const currentArr =
+                        Array.isArray(featureFlags.altarClassChancePerRelic) &&
+                        featureFlags.altarClassChancePerRelic.length === 10
+                          ? featureFlags.altarClassChancePerRelic
+                          : DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC;
+                      const perRelicVal = currentArr[idx] ?? DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC[idx];
+                      const maxSlots = featureFlags.altarMaxSacrificeItems ?? 50;
+                      const maxTotalPct = Math.min(100, Math.round(perRelicVal * maxSlots));
+                      return (
+                        <div key={idx} className="rounded border border-slate-800 bg-slate-900 p-1.5">
+                          <div className="flex items-center justify-between text-[9px] mb-0.5">
+                            <span className="font-black text-amber-300">Класс {idx + 1}</span>
+                            <span className="text-emerald-400 font-mono">
+                              {maxSlots} шт = {maxTotalPct}%
+                            </span>
+                          </div>
+                          <input
+                            type="number"
+                            step="0.05"
+                            min={0.05}
+                            max={20}
+                            value={perRelicVal}
+                            onChange={(e) => {
+                              const nextVal = Math.max(0.05, Math.min(20, parseFloat(e.target.value) || 0.5));
+                              const copy = [...currentArr];
+                              copy[idx] = nextVal;
+                              setFeatureFlags((prev) => ({
+                                ...prev,
+                                altarClassChancePerRelic: copy
+                              }));
+                            }}
+                            className="w-full rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-xs font-mono font-bold text-white outline-none"
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Настройка Именного транспорта (прочность 500/500 и сокращение времени в пути) */}
+              <div className="rounded-xl border-2 border-cyan-500/60 bg-slate-900/95 p-3 space-y-2.5 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                  <div>
+                    <div className="text-sm font-black text-cyan-300">
+                      🚁 3. Именной транспорт (Прочность 500/500 и ускорение пути до Порта)
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      Настройка характеристик создаваемого игроками именного транспорта в Кузнице Порта.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setFeatureFlags((prev) => ({
+                        ...prev,
+                        namedTransportEnabled: prev.namedTransportEnabled === false ? true : false
+                      }))
+                    }
+                    className={`rounded-lg border px-3 py-1 text-xs font-black cursor-pointer ${
+                      featureFlags.namedTransportEnabled !== false
+                        ? 'border-emerald-500 bg-emerald-950/70 text-emerald-300'
+                        : 'border-rose-500 bg-rose-950/70 text-rose-300'
+                    }`}
+                  >
+                    {featureFlags.namedTransportEnabled !== false
+                      ? '✅ Крафт именного транспорта: ВКЛЮЧЕН'
+                      : '⛔ Крафт именного транспорта: ВЫКЛЮЧЕН'}
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div>
+                    <label className="text-[10px] font-bold text-emerald-300">
+                      Стандартная прочность (по ТЗ 500/500):
+                    </label>
+                    <input
+                      type="number"
+                      min={50}
+                      max={10000}
+                      value={featureFlags.namedTransportDefaultDurability ?? 500}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          namedTransportDefaultDurability: Math.max(50, parseInt(e.target.value, 10) || 500)
+                        }))
+                      }
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-black text-emerald-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-cyan-300">
+                      Сокращение времени в пути до Порта (%):
+                    </label>
+                    <input
+                      type="number"
+                      min={5}
+                      max={90}
+                      value={featureFlags.namedTransportTimeReductionPct ?? 35}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          namedTransportTimeReductionPct: Math.max(5, Math.min(90, parseInt(e.target.value, 10) || 35))
+                        }))
+                      }
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-black text-cyan-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-cyan-300">
+                      Стоимость крафта в кристаллах (💎):
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={featureFlags.namedTransportCostCrystals ?? 50}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          namedTransportCostCrystals: Math.max(0, parseInt(e.target.value, 10) || 0)
+                        }))
+                      }
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-black text-cyan-300"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-amber-300">
+                      Стоимость крафта в золоте (🪙):
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={featureFlags.namedTransportCostGold ?? 5000}
+                      onChange={(e) =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          namedTransportCostGold: Math.max(0, parseInt(e.target.value, 10) || 0)
+                        }))
+                      }
+                      className="mt-0.5 w-full rounded border border-slate-700 bg-slate-950 px-2 py-1 text-xs font-black text-amber-300"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. Управление списком транспорта в Магазине (Лодка, Катер, Апач, М-8) */}
+              <div className="rounded-xl border-2 border-emerald-500/60 bg-slate-900/95 p-3 space-y-2.5 shadow-lg">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                  <div>
+                    <div className="text-sm font-black text-emerald-300">
+                      🚤 4. Управление списком Транспорта в Магазине (уровни, время в пути и цены)
+                    </div>
+                    <p className="text-[10px] text-slate-400">
+                      Лодка (1 ур. — 10 мин), Катер (3 ур. — 6 мин), Апач (5 ур. — 4 мин), М-8 (9 ур. — 3 мин). Дорога обратно из Порта занимает столько же времени.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setFeatureFlags((prev) => ({
+                          ...prev,
+                          transportsCatalog: [...DEFAULT_TRANSPORTS]
+                        }))
+                      }
+                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[10px] font-bold text-slate-300 hover:bg-slate-700 cursor-pointer"
+                    >
+                      ↺ Сбросить транспорт к стандартным
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {getTransportsCatalog(featureFlags).map((tr, idx) => {
+                    const updateTransportField = (patch: Partial<TransportTemplate>) => {
+                      const currentList = getTransportsCatalog(featureFlags);
+                      const nextList = currentList.map((item, i) =>
+                        i === idx ? { ...item, ...patch } : item
+                      );
+                      setFeatureFlags((prev) => ({
+                        ...prev,
+                        transportsCatalog: nextList
+                      }));
+                    };
+
+                    return (
+                      <div
+                        key={tr.id}
+                        className={`rounded-xl border p-2.5 space-y-2 ${
+                          tr.enabled !== false
+                            ? 'border-slate-700 bg-slate-950/90'
+                            : 'border-slate-800 bg-slate-950/40 opacity-60'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800/80 pb-1.5">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={tr.enabled !== false}
+                              onChange={(e) => updateTransportField({ enabled: e.target.checked })}
+                              className="h-4 w-4 accent-emerald-500 cursor-pointer"
+                            />
+                            <div className="h-9 w-9 rounded-lg border border-cyan-500/40 bg-slate-900 flex items-center justify-center text-lg">
+                              <ItemIcon icon={tr.icon} name={tr.name} className="text-xl" />
+                            </div>
+                            <input
+                              type="text"
+                              value={tr.icon}
+                              onChange={(e) => updateTransportField({ icon: e.target.value })}
+                              className="w-14 rounded border border-slate-700 bg-slate-900 px-1.5 py-1 text-center text-xs text-white"
+                              title="Иконка транспорта"
+                            />
+                            <input
+                              type="text"
+                              value={tr.name}
+                              onChange={(e) => updateTransportField({ name: e.target.value })}
+                              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-black text-amber-300"
+                            />
+                            <span className="rounded bg-cyan-950/80 border border-cyan-500/40 px-2 py-0.5 text-[10px] font-bold text-cyan-200">
+                              ⏱️ Путь в одну сторону: {formatTravelTimeText(tr.travelTimeSec)}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={isUpdatingDb}
+                            onClick={async () => {
+                              const targetNick = (targetPlayerNick || hero.nick || '').trim();
+                              if (!targetNick) return;
+                              const transportItem = createTransportItemFromTemplate(tr);
+                              if (targetNick.toLowerCase() === hero.nick.toLowerCase() && setSelfInventory) {
+                                const nextInv = [...(selfInventory || []), transportItem];
+                                setSelfInventory(nextInv);
+                                setHero((prev) => ({
+                                  ...prev,
+                                  activeTransportId: prev.activeTransportId || transportItem.id
+                                }));
+                                await updatePlayerInDatabase(hero.nick, { inventory: nextInv });
+                                showToast(`🚤 Транспорт «${tr.name}» выдан в ваш инвентарь!`);
+                              } else {
+                                setIsUpdatingDb(true);
+                                try {
+                                  const row = await findPlayerInSupabase(targetNick);
+                                  const curInv: GameItem[] = Array.isArray(row?.inventory) ? row.inventory : [];
+                                  const nextInv = [...curInv, transportItem];
+                                  await updatePlayerInDatabase(targetNick, { inventory: nextInv });
+                                  await loadTargetPlayerData(targetNick, true);
+                                  showToast(`🚤 Транспорт «${tr.name}» выдан игроку ${targetNick}!`);
+                                } finally {
+                                  setIsUpdatingDb(false);
+                                }
+                              }
+                            }}
+                            className="rounded-lg border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-800/80 px-2.5 py-1 text-[10px] font-black text-emerald-200 cursor-pointer"
+                          >
+                            🎁 Выдать «{tr.name}» ({targetPlayerNick || hero.nick})
+                          </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-[10px]">
+                          <div>
+                            <label className="text-purple-300 font-bold">Уровень:</label>
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={tr.lvl}
+                              onChange={(e) =>
+                                updateTransportField({
+                                  lvl: Math.max(1, Math.min(20, parseInt(e.target.value, 10) || 1))
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-purple-200"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-cyan-300 font-bold">Время до порта (мин):</label>
+                            <input
+                              type="number"
+                              step="0.5"
+                              min={0.5}
+                              max={120}
+                              value={Number((tr.travelTimeSec / 60).toFixed(1))}
+                              onChange={(e) => {
+                                const mins = Math.max(0.5, parseFloat(e.target.value) || 1);
+                                updateTransportField({ travelTimeSec: Math.round(mins * 60) });
+                              }}
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-cyan-200"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-slate-300 font-bold">Время (в секундах):</label>
+                            <input
+                              type="number"
+                              min={10}
+                              max={7200}
+                              value={tr.travelTimeSec}
+                              onChange={(e) =>
+                                updateTransportField({
+                                  travelTimeSec: Math.max(10, parseInt(e.target.value, 10) || 60)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-mono font-bold text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-emerald-300 font-bold">Прочность:</label>
+                            <input
+                              type="number"
+                              min={10}
+                              max={5000}
+                              value={tr.maxDurability}
+                              onChange={(e) =>
+                                updateTransportField({
+                                  maxDurability: Math.max(10, parseInt(e.target.value, 10) || 100)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-emerald-200"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-amber-300 font-bold">Цена в Золоте (🪙):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={tr.priceGold}
+                              onChange={(e) =>
+                                updateTransportField({
+                                  priceGold: Math.max(0, parseInt(e.target.value, 10) || 0)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-amber-300"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-cyan-300 font-bold">Цена в Кристаллах (💎):</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={tr.priceCrystals ?? 0}
+                              onChange={(e) =>
+                                updateTransportField({
+                                  priceCrystals: Math.max(0, parseInt(e.target.value, 10) || 0)
+                                })
+                              }
+                              className="mt-0.5 w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-cyan-300"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isSavingShop}
+                  onClick={async () => {
+                    setIsSavingShop(true);
+                    try {
+                      const ok = await saveShopAndFeaturesToSupabase(shopCatalog, featureFlags, shopSkins);
+                      if (onShopAndFeaturesUpdated) {
+                        onShopAndFeaturesUpdated(shopCatalog, featureFlags, shopSkins);
+                      }
+                      showToast(
+                        ok
+                          ? '⚓ Все настройки Порта, Транспорта, Алтаря (50 слотов) и Реликвий (3%) сохранены в БД!'
+                          : '⚠️ Сохранено локально'
+                      );
+                    } finally {
+                      setIsSavingShop(false);
+                    }
+                  }}
+                  className="w-full rounded-xl bg-gradient-to-r from-cyan-500 via-fuchsia-500 to-amber-500 py-2.5 text-xs font-black uppercase tracking-wider text-slate-950 shadow-lg hover:brightness-110 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingShop
+                    ? '⏳ Сохранение...'
+                    : '💾 Сохранить все настройки Порта, Транспорта, Алтаря и Реликвий в БД'}
+                </button>
+              </div>
+            </div>
           )}
             </>
           )}

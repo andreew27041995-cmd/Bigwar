@@ -26,6 +26,7 @@ interface CityScreenProps {
   onOpenBank: () => void;
   onOpenShop?: () => void;
   onOpenAltar?: () => void;
+  onOpenPort?: () => void;
   onUsePotion: (type: 'hp' | 'en' | 'exp') => void;
   onOpenLeaderboard?: () => void;
   onOpenDailyReward?: () => void;
@@ -65,6 +66,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
   onOpenBank,
   onOpenShop,
   onOpenAltar,
+  onOpenPort,
   onOpenLeaderboard,
   onOpenDailyReward,
   onOpenDailyQuests,
@@ -115,12 +117,14 @@ export const CityScreen: React.FC<CityScreenProps> = ({
   }, [hero.hp, hero.energy, lastRegenTickAt]);
 
   useEffect(() => {
-    if (!isRegenNeeded) return;
+    const hasActivePortTravel =
+      hero.portTravel?.status === 'to_port' || hero.portTravel?.status === 'from_port';
+    if (!isRegenNeeded && !hasActivePortTravel) return;
     const timer = setInterval(() => {
       setRegenNowMs(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, [isRegenNeeded, regenStepMs]);
+  }, [isRegenNeeded, regenStepMs, hero.portTravel?.status]);
 
   const elapsedInCycleMs = isRegenNeeded
     ? Math.max(0, (regenNowMs - localTickAnchorRef.current) % regenStepMs)
@@ -508,7 +512,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
           </div>
         </button>
 
-        {/* 2. Core Player & City Facilities: Character, Shop, Altar, Bank */}
+        {/* 2. Core Player & City Facilities: Character, Shop, Port (Forge + Altar), Bank */}
         <div className="grid grid-cols-4 gap-1.5">
           {/* Character / Bag */}
           <button
@@ -533,25 +537,41 @@ export const CityScreen: React.FC<CityScreenProps> = ({
               data-tutorial="btn-shop"
               onClick={onOpenShop}
               className="group relative flex flex-col items-center justify-center rounded-lg border border-emerald-500/70 bg-gradient-to-b from-emerald-950/90 via-slate-900/95 to-slate-950 px-1 py-2 text-center shadow-md transition-all active:scale-95 hover:border-emerald-400"
-              title="Магазин, Аукцион и Создание оружия"
+              title="Магазин, Транспорт и Аукцион"
             >
               <div className="text-base leading-none mb-0.5">🛒</div>
               <span className="text-[10px] font-black text-emerald-200 group-hover:text-emerald-100">Магазин</span>
-              <span className="text-[7.5px] text-emerald-300/60 leading-none">Аукцион, крафт</span>
+              <span className="text-[7.5px] text-emerald-300/60 leading-none">Вещи, транспорт</span>
             </button>
           )}
 
-          {/* Modification Altar */}
-          {onOpenAltar && (
+          {/* Port (Create Weapon + Modification Altar) */}
+          {(onOpenPort || onOpenAltar) && (
             <button
-              data-tutorial="btn-altar"
-              onClick={onOpenAltar}
-              className="group relative flex flex-col items-center justify-center rounded-lg border border-fuchsia-500/80 bg-gradient-to-b from-fuchsia-950/90 via-slate-900/95 to-slate-950 px-1 py-2 text-center shadow-[0_0_12px_rgba(217,70,239,0.25)] transition-all active:scale-95 hover:border-fuchsia-400"
-              title="Алтарь модификации предметов (Классы 1–10, до +50% к статам)"
+              data-tutorial="btn-port"
+              onClick={onOpenPort || onOpenAltar}
+              className="group relative flex flex-col items-center justify-center rounded-lg border border-cyan-400/80 bg-gradient-to-b from-cyan-950/90 via-indigo-950/90 to-slate-950 px-1 py-2 text-center shadow-[0_0_12px_rgba(34,211,238,0.28)] transition-all active:scale-95 hover:border-cyan-300"
+              title="Порт: Создать оружие / Именной транспорт и Алтарь Модификации по Реликвиям"
             >
-              <div className="text-base leading-none mb-0.5">🔮</div>
-              <span className="text-[10px] font-black text-fuchsia-200 group-hover:text-fuchsia-100">Алтарь</span>
-              <span className="text-[7.5px] text-fuchsia-300/70 leading-none">Модиф. +50%</span>
+              {hero.portTravel?.status && hero.portTravel.status !== 'idle' && (
+                <span
+                  className={`absolute -top-1.5 -right-1 rounded-full px-1 py-0.2 text-[7px] font-black ring-1 ring-slate-950 ${
+                    hero.portTravel.status === 'in_port'
+                      ? 'bg-emerald-500 text-slate-950 animate-pulse'
+                      : 'bg-amber-500 text-slate-950'
+                  }`}
+                >
+                  {hero.portTravel.status === 'in_port'
+                    ? 'В ПОРТУ'
+                    : `${Math.max(
+                        0,
+                        Math.ceil(((hero.portTravel.arrivalTime || regenNowMs) - regenNowMs) / 1000)
+                      )}с`}
+                </span>
+              )}
+              <div className="text-base leading-none mb-0.5">⚓</div>
+              <span className="text-[10px] font-black text-cyan-200 group-hover:text-cyan-100">Порт</span>
+              <span className="text-[7.5px] text-cyan-300/75 leading-none">Крафт и Алтарь</span>
             </button>
           )}
 

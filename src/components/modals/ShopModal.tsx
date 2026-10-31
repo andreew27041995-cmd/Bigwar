@@ -1,6 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { HeroState, ShopItemTemplate, ItemSlot, GameItem, CharacterSkinTemplate, NpcTemplate } from '../../types/game';
-import { SHOP_CATEGORY_LABELS, getShopSkins, getActiveSkinBonuses, getPremiumConfig } from '../../utils/shopConfig';
+import {
+  HeroState,
+  ShopItemTemplate,
+  ItemSlot,
+  GameItem,
+  CharacterSkinTemplate,
+  NpcTemplate,
+  TransportTemplate,
+  GameFeatureFlags
+} from '../../types/game';
+import {
+  SHOP_CATEGORY_LABELS,
+  getShopSkins,
+  getActiveSkinBonuses,
+  getPremiumConfig,
+  getTransportsCatalog,
+  formatTravelTimeText,
+  isTransportItem
+} from '../../utils/shopConfig';
 import {
   EGYPTIAN_SLOT_SVGS,
   KILLER_LICENSE_CONFIG,
@@ -16,14 +33,18 @@ import { ELIXIR_EN_IMG, ELIXIR_HP_IMG, ELIXIR_EXP_IMG } from '../../utils/elixir
 
 import { NPC_CONFIG, getNpcEffectiveStats, getNpcTemplates, getNpcRequiredLevel, getNpcGlobalConfig } from '../../utils/npcCompanion';
 
-type ShopTabId = ItemSlot | 'elixirs' | 'skins' | 'licenses' | 'npc';
+export type ShopTabId = ItemSlot | 'transport' | 'elixirs' | 'skins' | 'licenses' | 'npc';
 
 interface ShopModalProps {
   hero: HeroState;
   inventory?: GameItem[];
   shopItems: ShopItemTemplate[];
   shopSkins?: CharacterSkinTemplate[];
+  featureFlags?: GameFeatureFlags;
+  initialCategory?: ShopTabId;
   onBuyItem: (template: ShopItemTemplate) => void;
+  onBuyTransport?: (template: TransportTemplate) => void;
+  onSelectTransport?: (transportId: string) => void;
   onBuyElixir?: (type: 'hp' | 'en' | 'exp', quantity: number) => void;
   onBuySkin?: (skin: CharacterSkinTemplate) => void;
   onEquipSkin?: (skin: CharacterSkinTemplate | null) => void;
@@ -35,6 +56,7 @@ interface ShopModalProps {
   onOpenNpcBackpack?: () => void;
   onOpenAuction?: () => void;
   onOpenCreateItem?: () => void;
+  onOpenPort?: () => void;
   onClose: () => void;
 }
 
@@ -45,6 +67,7 @@ const SHOP_CATEGORIES: { id: ShopTabId; label: string; icon: string }[] = [
   { id: 'boots', label: 'Сапоги', icon: EGYPTIAN_SLOT_SVGS.boots },
   { id: 'gloves', label: 'Перчатки', icon: EGYPTIAN_SLOT_SVGS.gloves },
   { id: 'ring', label: 'Кольцо', icon: EGYPTIAN_SLOT_SVGS.ring },
+  { id: 'transport', label: 'Транспорт', icon: '🚤' },
   { id: 'licenses', label: 'Лицензии', icon: KILLER_LICENSE_CONFIG.icon },
   { id: 'elixirs', label: 'Эликсиры', icon: ELIXIR_HP_IMG },
   { id: 'skins', label: 'Скины', icon: '🎨' },
@@ -56,7 +79,11 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   inventory = [],
   shopItems,
   shopSkins,
+  featureFlags,
+  initialCategory = 'weapon',
   onBuyItem,
+  onBuyTransport,
+  onSelectTransport,
   onBuyElixir,
   onBuySkin,
   onEquipSkin,
@@ -68,9 +95,10 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   onOpenNpcBackpack,
   onOpenAuction,
   onOpenCreateItem,
+  onOpenPort,
   onClose
 }) => {
-  const [activeCategory, setActiveCategory] = useState<ShopTabId>('weapon');
+  const [activeCategory, setActiveCategory] = useState<ShopTabId>(initialCategory);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
   const [pendingPurchase, setPendingPurchase] = useState<{
     title: string;
@@ -104,11 +132,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const activeSkinId = hero.activeSkinId || null;
   const activeSkinData = getActiveSkinBonuses(activeSkinId, allSkins);
 
+  const transportsList = getTransportsCatalog(featureFlags as any).filter((t) => t.enabled !== false);
+
   const bagItems = Array.isArray(inventory)
     ? inventory
     : Array.isArray((hero as any).inventory)
     ? (hero as any).inventory
     : [];
+  const ownedTransports = bagItems.filter((it: GameItem) => isTransportItem(it));
   const isVip = Boolean(hero.isPremium && hero.premiumUntil && hero.premiumUntil > Date.now());
   const premCfg = getPremiumConfig();
   const bagCapacity =
@@ -118,7 +149,11 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   const isBagFull = bagItems.length >= bagCapacity;
 
   const filteredItems =
-    activeCategory === 'elixirs' || activeCategory === 'skins' || activeCategory === 'licenses' || activeCategory === 'npc'
+    activeCategory === 'transport' ||
+    activeCategory === 'elixirs' ||
+    activeCategory === 'skins' ||
+    activeCategory === 'licenses' ||
+    activeCategory === 'npc'
       ? []
       : shopItems
           .filter((item) => {
@@ -136,7 +171,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       <div className="flex flex-wrap justify-between items-center gap-2 mb-2.5 pb-2 border-b border-yellow-600/30">
         <div>
           <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
-            🛒 Магазин экипировки, эликсиров и скинов
+            🛒 Магазин экипировки, транспорта, эликсиров и скинов
           </h2>
           <p className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap mt-0.5">
             <span>
@@ -165,14 +200,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               🏛️ Аукцион
             </button>
           )}
-          {onOpenCreateItem && (
+          {onOpenPort && (
             <button
               type="button"
-              onClick={onOpenCreateItem}
+              onClick={onOpenPort}
               className="rounded-lg border-2 border-cyan-400/90 bg-gradient-to-b from-cyan-900/90 to-slate-950 px-2.5 py-1 text-[10px] font-extrabold text-cyan-200 shadow-[0_0_10px_rgba(34,211,238,0.3)] hover:border-cyan-300 active:scale-95 cursor-pointer"
-              title="Кузница: создать своё оружие или амуницию"
+              title="Порт: отправиться в Порт к Кузнице и Алтарю"
             >
-              ⚒️ Создать оружие
+              ⚓ В Порт
             </button>
           )}
           <button
@@ -246,11 +281,13 @@ export const ShopModal: React.FC<ShopModalProps> = ({
       </div>
 
       {/* Category tabs */}
-      <div className="grid grid-cols-5 sm:grid-cols-10 gap-1 mb-2 shrink-0">
+      <div className="grid grid-cols-6 sm:grid-cols-11 gap-1 mb-2 shrink-0">
         {SHOP_CATEGORIES.map((cat) => {
           const isActive = activeCategory === cat.id;
           const count =
-            cat.id === 'npc'
+            cat.id === 'transport'
+              ? transportsList.length
+              : cat.id === 'npc'
               ? hero.npcCompanion?.unlocked
                 ? '✓'
                 : '2.9k'
@@ -272,11 +309,15 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               onClick={() => setActiveCategory(cat.id)}
               className={`py-1.5 px-0.5 rounded-lg text-[9px] font-bold flex flex-col items-center justify-center gap-0.5 border transition-all cursor-pointer ${
                 isActive
-                  ? cat.id === 'npc'
+                  ? cat.id === 'transport'
+                    ? 'bg-gradient-to-b from-cyan-400 to-blue-500 border-cyan-300 text-slate-950 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
+                    : cat.id === 'npc'
                     ? 'bg-gradient-to-b from-emerald-400 to-teal-500 border-emerald-300 text-slate-950 shadow-[0_0_12px_rgba(16,185,129,0.5)]'
                     : cat.id === 'licenses'
                     ? 'bg-gradient-to-b from-red-500 to-amber-500 border-red-300 text-slate-950 shadow-[0_0_12px_rgba(239,68,68,0.5)]'
                     : 'bg-amber-500 border-amber-400 text-slate-950 shadow-md'
+                  : cat.id === 'transport'
+                  ? 'bg-cyan-950/60 border-cyan-500/60 text-cyan-300 hover:border-cyan-400'
                   : cat.id === 'npc'
                   ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-300 hover:border-emerald-400'
                   : cat.id === 'licenses'
@@ -294,9 +335,138 @@ export const ShopModal: React.FC<ShopModalProps> = ({
         })}
       </div>
 
-      {/* Items / Licenses / Elixirs / Skins list */}
+      {/* Items / Transport / Licenses / Elixirs / Skins list */}
       <div className="flex-1 overflow-y-auto space-y-2 pr-1">
-        {activeCategory === 'licenses' ? (
+        {activeCategory === 'transport' ? (
+          <div className="space-y-3">
+            {/* Banner about Transport & Port */}
+            <div className="rounded-xl border-2 border-cyan-500/60 bg-gradient-to-r from-cyan-950/80 via-slate-900 to-slate-950 p-3 flex flex-wrap items-center justify-between gap-2.5 shadow-lg">
+              <div className="space-y-1 min-w-0 flex-1">
+                <div className="text-xs sm:text-sm font-black text-cyan-300 flex items-center gap-1.5">
+                  <span>🚤 Система Транспорта для перемещения в Порт</span>
+                </div>
+                <p className="text-[10px] text-slate-300 leading-snug">
+                  Чтобы добраться до локации <strong>«⚓ Порт»</strong> (где находятся <strong>Кузница оружия / Именного транспорта</strong> и <strong>Алтарь Реликвий</strong>), вам обязательно нужен Транспорт. Время пути обратно из Порта равно времени пути туда!
+                </p>
+              </div>
+              {onOpenPort && (
+                <button
+                  type="button"
+                  onClick={onOpenPort}
+                  className="shrink-0 rounded-xl border-2 border-cyan-300 bg-gradient-to-r from-cyan-500 to-blue-600 px-3.5 py-2 text-[10.5px] font-black text-white shadow-[0_0_15px_rgba(34,211,238,0.4)] hover:brightness-110 active:scale-95 cursor-pointer"
+                >
+                  ⚓ Открыть Порт ({ownedTransports.length} трансп.)
+                </button>
+              )}
+            </div>
+
+            {/* Catalog of 4 Transports: Лодка (1 ур., 10 мин), Катер (3 ур., 6 мин), Апач (5 ур., 4 мин), М-8 (9 ур., 3 мин) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {transportsList.map((tr) => {
+                const meetsLevel = heroLvl >= Number(tr.lvl || 1);
+                const isCrystals = tr.currency === 'crystals';
+                const priceVal = isCrystals
+                  ? Math.max(0, Number(tr.priceCrystals || tr.price || 0))
+                  : Math.max(0, Number(tr.price || 0));
+                const canAfford = isCrystals ? heroCrystals >= priceVal : heroGold >= priceVal;
+                const ownedMatching = ownedTransports.filter(
+                  (it: GameItem) => it.transportTemplateId === tr.id || it.name === tr.name
+                );
+
+                return (
+                  <div
+                    key={tr.id}
+                    className="rounded-xl border-2 border-cyan-500/45 bg-gradient-to-b from-slate-900 via-slate-950 to-black p-3 flex flex-col justify-between gap-2.5 shadow-md"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-14 h-14 rounded-xl border-2 border-cyan-400/60 bg-slate-950 flex items-center justify-center text-2xl shrink-0 p-1 shadow-inner">
+                        <ItemIcon icon={tr.icon || '🚤'} alt={tr.name} />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                          <span className="text-sm font-black text-cyan-200">{tr.name}</span>
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-black border ${
+                              meetsLevel
+                                ? 'bg-emerald-950/70 border-emerald-500/50 text-emerald-300'
+                                : 'bg-amber-950/70 border-amber-500/50 text-amber-300'
+                            }`}
+                          >
+                            Требуется: {tr.lvl} ур.
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 text-[10px]">
+                          <span className="rounded bg-cyan-950/90 border border-cyan-400/50 px-2 py-0.5 font-black text-cyan-200">
+                            ⏱️ Время до Порта: {formatTravelTimeText(tr.travelTimeSec)}
+                          </span>
+                          <span className="rounded bg-slate-900 border border-slate-700 px-2 py-0.5 font-bold text-slate-300">
+                            🔧 Прочность: {tr.maxDurability}/{tr.maxDurability}
+                          </span>
+                        </div>
+                        {tr.description && (
+                          <p className="text-[9.5px] text-slate-400 leading-snug">{tr.description}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 border-t border-slate-800 pt-2">
+                      <div>
+                        <div className="text-xs font-black text-yellow-400">
+                          {priceVal.toLocaleString()} {isCrystals ? '💎 кристаллов' : '🪙 золота'}
+                        </div>
+                        {ownedMatching.length > 0 && (
+                          <div className="text-[9px] font-bold text-emerald-400">
+                            ✓ Куплено у вас: {ownedMatching.length} шт.
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={!canAfford || isBagFull}
+                        onClick={() => onBuyTransport?.(tr)}
+                        className={`px-3.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer ${
+                          !canAfford || isBagFull
+                            ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                            : 'bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-slate-950 shadow-md active:scale-95'
+                        }`}
+                      >
+                        {isBagFull
+                          ? 'Сумка полна'
+                          : canAfford
+                          ? `Купить (${priceVal} ${isCrystals ? '💎' : '🪙'})`
+                          : isCrystals
+                          ? 'Мало кристаллов'
+                          : 'Мало золота'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Info about Named Transport */}
+            <div className="rounded-xl border border-amber-500/50 bg-gradient-to-r from-amber-950/50 via-slate-950 to-purple-950/40 p-3 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="space-y-0.5 flex-1 min-w-0">
+                <div className="text-xs font-black text-amber-300">
+                  👑 Именной транспорт (Прочность {featureFlags?.namedTransportDefaultDurability ?? 500}/{featureFlags?.namedTransportDefaultDurability ?? 500})
+                </div>
+                <p className="text-[9.5px] text-slate-300 leading-snug">
+                  Дополнительно сокращает время в пути до Порта на <strong>-{featureFlags?.namedTransportTimeReductionPct ?? 35}%</strong> и имеет повышенную прочность <strong>500 / 500</strong>! Создаётся в разделе «Создать оружие / Именной транспорт» в Порту.
+                </p>
+              </div>
+              {onOpenPort && (
+                <button
+                  type="button"
+                  onClick={onOpenPort}
+                  className="rounded-lg border border-amber-400/70 bg-amber-500/20 hover:bg-amber-500/30 px-3 py-1.5 text-[10px] font-black text-amber-200 cursor-pointer"
+                >
+                  ⚓ Перейти в Порт
+                </button>
+              )}
+            </div>
+          </div>
+        ) : activeCategory === 'licenses' ? (
           (() => {
             const killerUntil = Number(hero.killerLicenseUntil || 0);
             const isLicenseActive = killerUntil > nowMs;

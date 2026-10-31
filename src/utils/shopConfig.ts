@@ -1,6 +1,6 @@
-import { BankPackageConfig, CharacterSkinTemplate, GameItem, ItemQualityKey, ItemSlot } from '../types/game';
+import { BankPackageConfig, CharacterSkinTemplate, GameItem, ItemQualityKey, ItemSlot, TransportTemplate } from '../types/game';
 
-export type { CharacterSkinTemplate, BankPackageConfig };
+export type { CharacterSkinTemplate, BankPackageConfig, TransportTemplate };
 
 export const PERSONAL_SKIN_DEFAULT_SPRITE_DATA_URL =
   `data:image/svg+xml;utf8,` +
@@ -106,8 +106,82 @@ export const SHOP_CATEGORY_LABELS: Record<string, string> = {
   helmet: 'Шлем',
   elixirs: 'Эликсиры',
   licenses: 'Лицензии',
-  skins: 'Скины'
+  skins: 'Скины',
+  transport: 'Транспорт'
 };
+
+export const DEFAULT_TRANSPORTS: TransportTemplate[] = [
+  {
+    id: 'transport_boat_1',
+    name: 'Лодка',
+    icon: '🚣',
+    lvl: 1,
+    travelTimeSec: 600, // 10 минут
+    priceGold: 300,
+    priceCrystals: 0,
+    currency: 'gold',
+    maxDurability: 30,
+    quality: 'common',
+    description: 'Деревянная лодка Нила (1 уровень). Время в пути до Порта и обратно — 10 минут.',
+    enabled: true
+  },
+  {
+    id: 'transport_speedboat_3',
+    name: 'Катер',
+    icon: '🚤',
+    lvl: 3,
+    travelTimeSec: 360, // 6 минут
+    priceGold: 900,
+    priceCrystals: 0,
+    currency: 'gold',
+    maxDurability: 50,
+    quality: 'rare',
+    description: 'Скоростной моторный катер (3 уровень). Время в пути до Порта и обратно — 6 минут.',
+    enabled: true
+  },
+  {
+    id: 'transport_apache_5',
+    name: 'Апач',
+    icon: '🚁',
+    lvl: 5,
+    travelTimeSec: 240, // 4 минуты
+    priceGold: 2500,
+    priceCrystals: 0,
+    currency: 'gold',
+    maxDurability: 80,
+    quality: 'epic',
+    description: 'Боевой вертолёт «Апач» (5 уровень). Время в пути до Порта и обратно — 4 минуты.',
+    enabled: true
+  },
+  {
+    id: 'transport_m8_9',
+    name: 'М-8',
+    icon: '🛩️',
+    lvl: 9,
+    travelTimeSec: 180, // 3 минуты
+    priceGold: 6000,
+    priceCrystals: 0,
+    currency: 'gold',
+    maxDurability: 120,
+    quality: 'legendary',
+    description: 'Тяжёлый штурмовой транспорт «М-8» (9 уровень). Время в пути до Порта и обратно — 3 минуты.',
+    enabled: true
+  }
+];
+
+// Базовый шанс успеха за 1 реликвию для классов модификации М1..М10 (с учётом лимита до 50 реликвий)
+export const DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC: number[] = [
+  2.0,  // М1 (50 реликвий = 100%)
+  1.8,  // М2 (50 реликвий = 90%)
+  1.6,  // М3 (50 реликвий = 80%)
+  1.4,  // М4 (50 реликвий = 70%)
+  1.2,  // М5 (50 реликвий = 60%)
+  1.0,  // М6 (50 реликвий = 50%)
+  0.85, // М7 (50 реликвий = 42.5%)
+  0.7,  // М8 (50 реликвий = 35%)
+  0.55, // М9 (50 реликвий = 27.5%)
+  0.4   // М10 (50 реликвий = 20%)
+];
 
 export interface GlobalFeatureFlags {
   rouletteEnabled: boolean;
@@ -175,6 +249,18 @@ export interface GlobalFeatureFlags {
   premiumLootBonusPct?: number;
   premiumGoldWheelEnabled?: boolean;
   premiumCrownEnabled?: boolean;
+  // Relics, Modification Altar (50 slots), Port & Transport System Settings
+  relicDropChancePct?: number;
+  altarMaxSacrificeItems?: number;
+  altarBonusPerClassPct?: number;
+  altarClassChancePerRelic?: number[];
+  transportsCatalog?: TransportTemplate[];
+  namedTransportEnabled?: boolean;
+  namedTransportDefaultDurability?: number;
+  namedTransportTimeReductionPct?: number;
+  namedTransportBaseTimeSec?: number;
+  namedTransportCostCrystals?: number;
+  namedTransportCostGold?: number;
 }
 
 export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
@@ -242,7 +328,19 @@ export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
   premiumWheelMultiplier: 2,
   premiumLootBonusPct: 50,
   premiumGoldWheelEnabled: true,
-  premiumCrownEnabled: true
+  premiumCrownEnabled: true,
+  // Relics, Modification Altar (50 slots), Port & Transport System Default Values
+  relicDropChancePct: 3,
+  altarMaxSacrificeItems: 50,
+  altarBonusPerClassPct: 5,
+  altarClassChancePerRelic: [...DEFAULT_ALTAR_CLASS_CHANCE_PER_RELIC],
+  transportsCatalog: DEFAULT_TRANSPORTS.map((t) => ({ ...t })),
+  namedTransportEnabled: true,
+  namedTransportDefaultDurability: 500,
+  namedTransportTimeReductionPct: 35,
+  namedTransportBaseTimeSec: 180,
+  namedTransportCostCrystals: 35,
+  namedTransportCostGold: 15000
 };
 
 export function getBankPackages(flags?: Partial<GlobalFeatureFlags> | null): BankPackageConfig[] {
@@ -1935,6 +2033,164 @@ export function canRepairItem(item?: { durability?: number; maxDurability?: numb
   if (maxDur <= 1) return false;
   const curDur = Number(item.durability ?? maxDur);
   return curDur < maxDur;
+}
+
+export function isRelicItem(item?: Partial<GameItem> | null): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.isRelic ||
+      String(item.id || '').startsWith('relic_') ||
+      String(item.shopTemplateId || '').startsWith('relic_') ||
+      String(item.name || '').toLowerCase().includes('реликвия')
+  );
+}
+
+export function isTransportItem(item?: Partial<GameItem> | null): boolean {
+  if (!item) return false;
+  return Boolean(
+    item.isTransport ||
+      item.isNamedTransport ||
+      String(item.id || '').startsWith('transport_') ||
+      String(item.transportTemplateId || '').startsWith('transport_')
+  );
+}
+
+export function formatTravelTimeText(seconds: number): string {
+  const safeSec = Math.max(1, Math.round(Number(seconds || 60)));
+  const mins = Math.floor(safeSec / 60);
+  const secs = safeSec % 60;
+  if (mins > 0 && secs > 0) return `${mins} мин ${secs} сек`;
+  if (mins > 0) return `${mins} мин`;
+  return `${secs} сек`;
+}
+
+export function getTransportsCatalog(flags?: Partial<GlobalFeatureFlags> | null): TransportTemplate[] {
+  const f = flags || getFeatureFlags();
+  if (Array.isArray(f.transportsCatalog) && f.transportsCatalog.length > 0) {
+    return f.transportsCatalog.map((t, idx) => ({
+      id: String(t.id || `transport_${idx}`),
+      name: String(t.name || 'Транспорт'),
+      icon: String(t.icon || '🚤'),
+      lvl: Math.max(1, Number(t.lvl || 1)),
+      travelTimeSec: Math.max(5, Number(t.travelTimeSec || 600)),
+      priceGold: Math.max(0, Number(t.priceGold ?? 300)),
+      priceCrystals: Math.max(0, Number(t.priceCrystals ?? 0)),
+      currency: (t.currency || 'gold') as 'gold' | 'crystals',
+      maxDurability: Math.max(1, Number(t.maxDurability || 50)),
+      quality: (t.quality || 'common') as ItemQualityKey,
+      description: t.description || '',
+      isNamed: Boolean(t.isNamed),
+      timeReductionPct: Number(t.timeReductionPct || 0),
+      enabled: t.enabled !== false
+    }));
+  }
+  return DEFAULT_TRANSPORTS.map((t) => ({ ...t }));
+}
+
+export function createTransportItemFromTemplate(tpl: TransportTemplate): GameItem {
+  const maxDur = Math.max(1, Number(tpl.maxDurability || 50));
+  return {
+    id: `transport_${tpl.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    transportTemplateId: tpl.id,
+    shopTemplateId: tpl.id,
+    name: tpl.name,
+    slot: 'boots',
+    icon: tpl.icon || '🚤',
+    quality: tpl.quality || 'common',
+    lvl: Math.max(1, Number(tpl.lvl || 1)),
+    dmg: 0,
+    hp: 0,
+    price: Number(tpl.priceGold || 300),
+    durability: maxDur,
+    maxDurability: maxDur,
+    initialMaxDurability: maxDur,
+    isTransport: true,
+    travelTimeSec: Math.max(5, Number(tpl.travelTimeSec || 600)),
+    isNamedTransport: Boolean(tpl.isNamed),
+    timeReductionPct: Number(tpl.timeReductionPct || 0),
+    origin: 'Магазин Транспорта'
+  };
+}
+
+export function createNamedTransportItem(params: {
+  name: string;
+  icon?: string;
+  creatorNick?: string;
+  lvl?: number;
+  flags?: Partial<GlobalFeatureFlags> | null;
+  paidCurrency?: 'crystals' | 'gold';
+  paidAmount?: number;
+  baseTransport?: TransportTemplate | null;
+}): GameItem {
+  const f = params.flags || getFeatureFlags();
+  const maxDur = Math.max(1, Number(f.namedTransportDefaultDurability ?? 500));
+  const reductionPct = Math.max(1, Math.min(90, Number(f.namedTransportTimeReductionPct ?? 35)));
+  const baseSec = params.baseTransport
+    ? Math.max(10, Number(params.baseTransport.travelTimeSec || 180))
+    : Math.max(10, Number(f.namedTransportBaseTimeSec ?? 180));
+  const reducedTravelSec = Math.max(10, Math.round(baseSec * (1 - reductionPct / 100)));
+  const currency = params.paidCurrency || 'crystals';
+  const amount = Number(params.paidAmount ?? (currency === 'crystals' ? f.namedTransportCostCrystals ?? 35 : f.namedTransportCostGold ?? 15000));
+
+  return {
+    id: `transport_named_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    transportTemplateId: params.baseTransport?.id || 'named_transport',
+    name: params.name.trim() || 'Именной Крейсер Фараона',
+    slot: 'boots',
+    icon: params.icon || params.baseTransport?.icon || '🚁',
+    quality: 'custom',
+    lvl: Math.max(1, Number(params.lvl || params.baseTransport?.lvl || 1)),
+    dmg: 0,
+    hp: 0,
+    price: currency === 'gold' ? amount : amount * 100,
+    forgeCurrency: currency,
+    forgeCrystalCost: currency === 'crystals' ? amount : 0,
+    forgeGoldCost: currency === 'gold' ? amount : 0,
+    durability: maxDur,
+    maxDurability: maxDur,
+    initialMaxDurability: maxDur,
+    isCustomCreated: true,
+    creatorNick: params.creatorNick || 'Герой',
+    transferable: false,
+    isTransport: true,
+    isNamedTransport: true,
+    travelTimeSec: reducedTravelSec,
+    timeReductionPct: reductionPct,
+    origin: 'Порт (Именной транспорт)'
+  };
+}
+
+export const RELIC_TEMPLATES = [
+  { tier: 1, name: 'Древняя Реликвия Осириса', icon: '🏺', quality: 'rare' as ItemQualityKey, power: 1.0, price: 150 },
+  { tier: 2, name: 'Священная Реликвия Анубиса', icon: '⚱️', quality: 'epic' as ItemQualityKey, power: 1.2, price: 300 },
+  { tier: 3, name: 'Божественная Реликвия Солнца Ра', icon: '🔱', quality: 'legendary' as ItemQualityKey, power: 1.5, price: 600 }
+];
+
+export function createRelicItem(pyramidTier: number = 1, isBoss: boolean = false): GameItem {
+  const safeTier = Math.max(1, Math.min(3, Number(pyramidTier || 1)));
+  const tpl = RELIC_TEMPLATES.find((r) => r.tier === safeTier) || RELIC_TEMPLATES[0];
+  const power = isBoss ? Number((tpl.power * 1.25).toFixed(2)) : tpl.power;
+  const relicName = isBoss ? `${tpl.name} (Королевская)` : tpl.name;
+  const relicQuality: ItemQualityKey = isBoss ? 'legendary' : tpl.quality;
+  return {
+    id: `relic_t${safeTier}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    shopTemplateId: `relic_tier_${safeTier}`,
+    name: relicName,
+    slot: 'ring',
+    icon: isBoss ? '👑' : tpl.icon,
+    quality: relicQuality,
+    lvl: safeTier === 1 ? 1 : safeTier === 2 ? 5 : 10,
+    dmg: 0,
+    hp: 0,
+    price: isBoss ? tpl.price * 2 : tpl.price,
+    durability: 1,
+    maxDurability: 1,
+    initialMaxDurability: 1,
+    isRelic: true,
+    relicTier: safeTier,
+    relicPower: power,
+    origin: `Пирамида ${safeTier}`
+  };
 }
 
 export const getGameFeatureFlags = getFeatureFlags;

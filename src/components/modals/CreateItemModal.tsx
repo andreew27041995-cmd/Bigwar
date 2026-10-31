@@ -1,7 +1,13 @@
 import React, { useRef, useState } from 'react';
 import { GameFeatureFlags, GameItem, HeroState, ItemSlot } from '../../types/game';
 import { SLOT_INFO } from '../../utils/gameData';
-import { DEFAULT_FEATURE_FLAGS, formatItemBonusesText } from '../../utils/shopConfig';
+import {
+  DEFAULT_FEATURE_FLAGS,
+  formatItemBonusesText,
+  formatTravelTimeText,
+  getTransportsCatalog,
+  createNamedTransportItem
+} from '../../utils/shopConfig';
 import { ItemIcon } from '../ItemIcon';
 import {
   GAME_ITEM_IMAGE_SPEC,
@@ -64,6 +70,17 @@ const PRESET_SLOT_ICONS: Record<ItemSlot, string[]> = {
   ring: ['💍', '💎', '🔮', '🧿', '👑', '☀️', '🌙']
 };
 
+const PRESET_TRANSPORT_ICONS: string[] = ['🛶', '🚤', '🚁', '🛩️', '⛵', '🛳️', '🛸', '🦅'];
+
+const RANDOM_TRANSPORT_NAMES: string[] = [
+  'Золотая Ладья Фараона',
+  'Штурмовой Катер Нила',
+  'Боевой Апач Анубиса',
+  'Крылатый М-8 Солнечного Ра',
+  'Призрачный Крейсер Пустыни',
+  'Императорский Перехватчик'
+];
+
 const RANDOM_ITEM_NAMES: Record<ItemSlot, string[]> = {
   weapon: [
     'Клинок Вечного Рассвета',
@@ -114,6 +131,7 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   const creationEnabled = flags.customCreationEnabled !== false || isAdmin;
   const allowedCurrency = flags.customCreationCurrency || 'both';
 
+  const [forgeMode, setForgeMode] = useState<'equipment' | 'named_transport'>('equipment');
   const [name, setName] = useState('');
   const [slot, setSlot] = useState<ItemSlot>('weapon');
   const [icon, setIcon] = useState<string>('/assets/swords/new_sword_lvl2.png');
@@ -121,6 +139,13 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   const [customUrl, setCustomUrl] = useState('');
   const [uploadedInfo, setUploadedInfo] = useState<ProcessedItemImageResult | null>(null);
   const [isProcessingImg, setIsProcessingImg] = useState(false);
+
+  // Named Transport state
+  const transportsCatalog = getTransportsCatalog(flags as any);
+  const [selectedBaseTransportId, setSelectedBaseTransportId] = useState<string>(
+    transportsCatalog[transportsCatalog.length - 1]?.id || 'transport_m8'
+  );
+  const [transportIcon, setTransportIcon] = useState<string>('🛩️');
 
   const [currency, setCurrency] = useState<'crystals' | 'gold'>(
     allowedCurrency === 'gold' ? 'gold' : 'crystals'
@@ -145,6 +170,26 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   // Стандартная прочность созданного оружия: 100/100
   const rawCfgDur = Number(flags.customDefaultDurability ?? 100);
   const defaultDurability = rawCfgDur === 25 || rawCfgDur <= 0 ? 100 : rawCfgDur;
+
+  // Характеристики Именного Транспорта: прочность 500/500 и ускорение пути до Порта
+  const namedTransportDurability = Math.max(100, Number(flags.namedTransportDefaultDurability ?? 500));
+  const namedTransportReductionPct = Math.max(5, Math.min(80, Number(flags.namedTransportTimeReductionPct ?? 35)));
+  const selectedBaseTransport =
+    transportsCatalog.find((t) => t.id === selectedBaseTransportId) ||
+    transportsCatalog[0] || {
+      id: 'transport_m8',
+      name: 'М-8',
+      lvl: 9,
+      travelTimeSec: 180,
+      icon: '🛩️'
+    };
+  const baseTransportTimeSec = Math.max(30, Number(selectedBaseTransport.travelTimeSec || flags.namedTransportBaseTimeSec || 180));
+  const reducedTransportTimeSec = Math.max(
+    15,
+    Math.round(baseTransportTimeSec * (1 - namedTransportReductionPct / 100))
+  );
+  const namedTransportCostCrystals = Math.max(1, Number(flags.namedTransportCostCrystals ?? 50));
+  const namedTransportCostGold = Math.max(50, Number(flags.namedTransportCostGold ?? 2500));
 
   const statCostCrystals = Math.max(1, Number(flags.customCostPerStatCrystals ?? 1));
   const statCostGold = Math.max(1, Number(flags.customCostPerStatGold ?? 50));
@@ -180,6 +225,11 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
   };
 
   const handleRandomName = () => {
+    if (forgeMode === 'named_transport') {
+      const picked = RANDOM_TRANSPORT_NAMES[Math.floor(Math.random() * RANDOM_TRANSPORT_NAMES.length)];
+      setName(picked);
+      return;
+    }
     const pool = RANDOM_ITEM_NAMES[slot] || RANDOM_ITEM_NAMES.weapon;
     const picked = pool[Math.floor(Math.random() * pool.length)];
     setName(picked);
@@ -197,7 +247,11 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
       return;
     }
     setUploadedInfo(res);
-    setIcon(res.dataUrl);
+    if (forgeMode === 'named_transport') {
+      setTransportIcon(res.dataUrl);
+    } else {
+      setIcon(res.dataUrl);
+    }
     setIconSourceType('upload');
     const sizeKb = res.finalSizeKb ?? res.compressedSizeKb ?? 20;
     showToast(
@@ -220,7 +274,11 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
       showToast('Ссылка должна начинаться с https://, http:// или /assets/');
       return;
     }
-    setIcon(trimmed);
+    if (forgeMode === 'named_transport') {
+      setTransportIcon(trimmed);
+    } else {
+      setIcon(trimmed);
+    }
     setIconSourceType('url');
     showToast('✅ Ссылка на картинку применена!');
   };
@@ -252,6 +310,56 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
     origin: 'Кузница игрока',
     isCustomCreated: true,
     creatorNick: hero.nick
+  };
+
+  const handleCreateNamedTransport = () => {
+    if (flags.namedTransportEnabled === false && !isAdmin) {
+      showToast('Создание именного транспорта временно отключено администратором!');
+      return;
+    }
+    const cleanName = name.trim();
+    if (!cleanName) {
+      showToast('Введите название создаваемого Именного Транспорта!');
+      return;
+    }
+    const reqLvl = Math.max(1, Number(selectedBaseTransport.lvl || 1));
+    if (Number(hero.level || 1) < reqLvl && !isAdmin) {
+      showToast(`Для базы «${selectedBaseTransport.name}» требуется ${reqLvl} уровень персонажа!`);
+      return;
+    }
+    if (effectiveCurrency === 'crystals' && hero.crystals < namedTransportCostCrystals) {
+      showToast(`Недостаточно кристаллов! Нужно: ${namedTransportCostCrystals} 💎`);
+      return;
+    }
+    if (effectiveCurrency === 'gold' && hero.gold < namedTransportCostGold) {
+      showToast(`Недостаточно золота! Нужно: ${namedTransportCostGold} 🪙`);
+      return;
+    }
+
+    const transportItem = createNamedTransportItem({
+      name: cleanName,
+      icon: transportIcon || selectedBaseTransport.icon || '🚁',
+      lvl: reqLvl,
+      creatorNick: hero.nick || 'Игрок',
+      baseTimeSec: baseTransportTimeSec,
+      timeReductionPct: namedTransportReductionPct,
+      maxDurability: namedTransportDurability,
+      currency: effectiveCurrency,
+      costCrystals: effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
+      costGold: effectiveCurrency === 'gold' ? namedTransportCostGold : 0
+    });
+
+    onForgeItem(
+      transportItem,
+      effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
+      {
+        equipImmediately: false,
+        currency: effectiveCurrency,
+        crystalCost: effectiveCurrency === 'crystals' ? namedTransportCostCrystals : 0,
+        goldCost: effectiveCurrency === 'gold' ? namedTransportCostGold : 0
+      }
+    );
+    onClose();
   };
 
   const handleCreate = (equipImmediately: boolean) => {
@@ -307,10 +415,10 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
         <div className="flex items-center justify-between border-b border-[#d4af37]/30 pb-2.5 mb-3">
           <div>
             <h2 className="text-[#d4af37] text-base sm:text-lg font-bold uppercase tracking-wider flex items-center gap-2">
-              <span>⚒️ Кузница: Создать оружие и амуницию</span>
+              <span>⚓ Кузница Порта: Именное Оружие и Транспорт</span>
             </h2>
             <p className="text-[11px] text-[#a08c70]">
-              Создайте собственное оружие или экипировку и загрузите свою картинку
+              Создайте именное оружие (100/100) или Именной Транспорт (500/500 прочность, ускорение пути)
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -332,9 +440,232 @@ export const CreateItemModal: React.FC<CreateItemModalProps> = ({
           </div>
         </div>
 
+        {/* Mode Switcher: Equipment vs Named Transport */}
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <button
+            type="button"
+            onClick={() => setForgeMode('equipment')}
+            className={`py-2 px-2.5 rounded-xl border-2 text-xs font-extrabold transition-all cursor-pointer ${
+              forgeMode === 'equipment'
+                ? 'border-[#d4af37] bg-[#d4af37]/20 text-[#ffd700] shadow-[0_0_15px_rgba(212,175,55,0.3)]'
+                : 'border-[#3a2a1a] bg-black/40 text-[#a08c70] hover:border-[#d4af37]/50'
+            }`}
+          >
+            ⚔️ Именное оружие / броня (100/100)
+          </button>
+          <button
+            type="button"
+            onClick={() => setForgeMode('named_transport')}
+            className={`py-2 px-2.5 rounded-xl border-2 text-xs font-extrabold transition-all cursor-pointer ${
+              forgeMode === 'named_transport'
+                ? 'border-cyan-400 bg-cyan-950/60 text-cyan-200 shadow-[0_0_15px_rgba(34,211,238,0.35)]'
+                : 'border-[#3a2a1a] bg-black/40 text-[#a08c70] hover:border-cyan-500/50'
+            }`}
+          >
+            🚁 Именной транспорт ({namedTransportDurability}/{namedTransportDurability})
+          </button>
+        </div>
+
         {!creationEnabled ? (
           <div className="bg-red-950/40 border border-red-500/50 rounded-lg p-4 text-center text-red-300 text-xs">
             ⚠️ Кузница создания предметов временно закрыта администратором.
+          </div>
+        ) : forgeMode === 'named_transport' ? (
+          <div className="space-y-3.5 text-xs">
+            {/* Баланс игрока */}
+            <div className="flex flex-wrap items-center justify-between gap-2 bg-black/50 border border-cyan-500/40 rounded-lg px-3 py-2">
+              <div className="text-[11px] text-cyan-200">
+                Ваш уровень: <b className="text-white">{hero.level} ур.</b> • Стандартная прочность:{' '}
+                <b className="text-emerald-300">
+                  {namedTransportDurability} / {namedTransportDurability}
+                </b>
+              </div>
+              <div className="flex items-center gap-3 text-xs font-bold">
+                <span className="text-[#ffd700]">🪙 {hero.gold.toLocaleString()}</span>
+                <span className="text-[#00f2fe]">💎 {hero.crystals.toLocaleString()}</span>
+              </div>
+            </div>
+
+            {/* 1. Выбор базового типа транспорта и названия */}
+            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2.5">
+              <div className="text-cyan-300 font-bold uppercase text-[11px]">
+                1. Выберите базовый класс транспорта (именной транспорт сокращает время в пути на -{namedTransportReductionPct}%):
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {transportsCatalog.map((tr) => {
+                  const isSel = selectedBaseTransport.id === tr.id;
+                  const fastSec = Math.max(
+                    15,
+                    Math.round(Number(tr.travelTimeSec || 600) * (1 - namedTransportReductionPct / 100))
+                  );
+                  return (
+                    <button
+                      key={tr.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedBaseTransportId(tr.id);
+                        if (iconSourceType === 'preset') {
+                          setTransportIcon(tr.icon || '🚤');
+                        }
+                      }}
+                      className={`p-2 rounded-lg border text-left transition-all cursor-pointer ${
+                        isSel
+                          ? 'border-cyan-400 bg-cyan-950/60 text-cyan-100 shadow-[0_0_12px_rgba(34,211,238,0.3)]'
+                          : 'border-[#3a2a1a] bg-[#140f0c] text-[#a08c70] hover:border-cyan-500/50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-lg">{tr.icon}</span>
+                        <span className="rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-black text-amber-300">
+                          {tr.lvl} ур.
+                        </span>
+                      </div>
+                      <div className="font-extrabold text-xs mt-1 text-white">{tr.name}</div>
+                      <div className="text-[10px] text-slate-400 line-through">
+                        Обычный: {formatTravelTimeText(tr.travelTimeSec)}
+                      </div>
+                      <div className="text-[10.5px] font-black text-emerald-300">
+                        ⚡ Именной: {formatTravelTimeText(fastSec)}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div>
+                <label className="text-[#a08c70] block mb-1 text-[11px]">
+                  Название вашего Именного Транспорта:
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    maxLength={36}
+                    placeholder={`Например: ${RANDOM_TRANSPORT_NAMES[0]}`}
+                    className="flex-1 bg-[#0d0a08] border border-cyan-500/50 focus:border-cyan-300 text-white p-2 rounded-lg text-xs outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleRandomName}
+                    className="bg-cyan-950 hover:bg-cyan-900 border border-cyan-400/60 text-cyan-200 px-3 rounded-lg text-xs font-bold cursor-pointer"
+                    title="Случайное название транспорта"
+                  >
+                    🎲
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Иконка или своя картинка транспорта */}
+            <div className="bg-black/40 border border-cyan-500/40 rounded-lg p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-cyan-300 font-bold uppercase text-[11px]">
+                  2. Образ или своя картинка Именного Транспорта:
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-extrabold px-3 py-1.5 rounded-lg text-[11px] uppercase cursor-pointer shadow hover:brightness-110"
+                >
+                  📁 Загрузить свою картинку
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {PRESET_TRANSPORT_ICONS.map((ic, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setTransportIcon(ic);
+                      setIconSourceType('preset');
+                    }}
+                    className={`w-10 h-10 rounded-lg border flex items-center justify-center text-xl cursor-pointer ${
+                      transportIcon === ic
+                        ? 'border-cyan-300 bg-cyan-950/70 scale-105 shadow'
+                        : 'border-[#33261a] bg-[#120d0a]'
+                    }`}
+                  >
+                    <ItemIcon icon={ic} alt="Transport" />
+                  </button>
+                ))}
+              </div>
+
+              {/* Preview Card */}
+              <div className="rounded-xl border-2 border-cyan-400/70 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 p-3 flex items-center gap-3">
+                <div className="w-16 h-16 rounded-xl border-2 border-cyan-300 bg-slate-950 flex items-center justify-center p-1 shrink-0 text-3xl shadow-[0_0_15px_rgba(34,211,238,0.3)]">
+                  <ItemIcon icon={transportIcon} alt={name || selectedBaseTransport.name} />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-cyan-300">
+                    👑 Именной Транспорт • Уровень {selectedBaseTransport.lvl}
+                  </div>
+                  <div className="text-sm font-black text-amber-300 truncate">
+                    {name.trim() || `Именной ${selectedBaseTransport.name}`}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className="rounded bg-emerald-950/90 border border-emerald-500/50 px-2 py-0.5 font-black text-emerald-300">
+                      🔧 Прочность: {namedTransportDurability} / {namedTransportDurability}
+                    </span>
+                    <span className="rounded bg-cyan-950/90 border border-cyan-400/50 px-2 py-0.5 font-black text-cyan-200">
+                      ⏱️ Путь до Порта: {formatTravelTimeText(reducedTransportTimeSec)} (-{namedTransportReductionPct}%)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Оплата и создание Именного Транспорта */}
+            <div className="bg-[#17110d] border border-cyan-500/50 rounded-xl p-3 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-cyan-200 font-bold">Стоимость создания Именного Транспорта:</div>
+                <div className="flex gap-2">
+                  {(allowedCurrency === 'both' || allowedCurrency === 'crystals') && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrency('crystals')}
+                      className={`px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer ${
+                        effectiveCurrency === 'crystals'
+                          ? 'bg-[#00f2fe]/20 border-[#00f2fe] text-[#00f2fe]'
+                          : 'bg-black/40 border-[#333] text-[#888]'
+                      }`}
+                    >
+                      💎 {namedTransportCostCrystals} кристаллов
+                    </button>
+                  )}
+                  {(allowedCurrency === 'both' || allowedCurrency === 'gold') && (
+                    <button
+                      type="button"
+                      onClick={() => setCurrency('gold')}
+                      className={`px-3 py-1.5 rounded-lg border font-bold text-xs cursor-pointer ${
+                        effectiveCurrency === 'gold'
+                          ? 'bg-[#ffd700]/20 border-[#ffd700] text-[#ffd700]'
+                          : 'bg-black/40 border-[#333] text-[#888]'
+                      }`}
+                    >
+                      🪙 {namedTransportCostGold.toLocaleString()} золота
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCreateNamedTransport}
+                className="w-full py-2.5 bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 text-white font-extrabold rounded-xl uppercase text-xs cursor-pointer shadow-[0_0_20px_rgba(34,211,238,0.4)] hover:brightness-110"
+              >
+                🚁 Создать Именной Транспорт ({namedTransportDurability}/{namedTransportDurability} • Путь:{' '}
+                {formatTravelTimeText(reducedTransportTimeSec)})
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-3.5 text-xs">

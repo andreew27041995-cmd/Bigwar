@@ -94,6 +94,33 @@ export interface BankPackageConfig {
   enabled: boolean;
 }
 
+export interface TransportTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  lvl: number;
+  travelTimeSec: number; // e.g., 600 (10m), 360 (6m), 240 (4m), 180 (3m)
+  priceGold: number;
+  priceCrystals?: number;
+  currency?: 'gold' | 'crystals';
+  maxDurability: number;
+  quality: ItemQualityKey;
+  description?: string;
+  isNamed?: boolean;
+  timeReductionPct?: number;
+  enabled: boolean;
+}
+
+export interface PortTravelState {
+  status: 'idle' | 'to_port' | 'in_port' | 'from_port';
+  departureTime: number;
+  arrivalTime: number;
+  travelDurationSec: number;
+  transportId?: string;
+  transportName?: string;
+  transportIcon?: string;
+}
+
 export interface GameFeatureFlags {
   rouletteEnabled: boolean;
   rouletteSpinCostCrystals?: number;
@@ -161,6 +188,18 @@ export interface GameFeatureFlags {
   rouletteDailyGoldSpinsLimit?: number;
   rouletteDailyCrystalSpinsLimit?: number;
   rouletteVipUnlimitedSpins?: boolean;
+  // Relics, Modification Altar (50 slots), Port & Transport System Settings
+  relicDropChancePct?: number; // Base 3% drop chance in Pyramids
+  altarMaxSacrificeItems?: number; // Default 50 items/relics
+  altarBonusPerClassPct?: number; // Default +5% per class (10 classes = +50%)
+  altarClassChancePerRelic?: number[]; // 10 values for Class 1..10 chance per 1 relic
+  transportsCatalog?: TransportTemplate[];
+  namedTransportEnabled?: boolean;
+  namedTransportDefaultDurability?: number; // Default 500/500
+  namedTransportTimeReductionPct?: number; // Default 35% time reduction
+  namedTransportBaseTimeSec?: number; // Base fastest travel time before reduction (e.g. 150s)
+  namedTransportCostCrystals?: number; // Default 35 crystals
+  namedTransportCostGold?: number; // Default 15000 gold
 }
 
 export interface GameItem {
@@ -220,6 +259,16 @@ export interface GameItem {
     agi?: number;
     vit?: number;
   };
+  // Relic Fields (dropped in Pyramids, used as sacrifice materials in Altar)
+  isRelic?: boolean;
+  relicTier?: number;
+  relicPower?: number;
+  // Transport Fields (used to travel to Port and back)
+  isTransport?: boolean;
+  transportTemplateId?: string;
+  travelTimeSec?: number;
+  isNamedTransport?: boolean;
+  timeReductionPct?: number;
 }
 
 export type ClanRole = 'leader' | 'officer' | 'warrior' | 'recruit' | 'member';
@@ -460,6 +509,8 @@ export interface HeroState {
   gamblingGamesPlayed?: number;
   bossesKilled?: number;
   claimedAchievementIds?: string[];
+  portTravel?: PortTravelState;
+  activeTransportId?: string | null;
 }
 
 export interface NpcLogEntry {

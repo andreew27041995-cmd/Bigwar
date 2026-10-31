@@ -9,7 +9,10 @@ import {
   isCustomCreatedItem,
   canTransferCustomItem,
   canAuctionItem,
-  REPAIR_COST_GOLD
+  REPAIR_COST_GOLD,
+  isRelicItem,
+  isTransportItem,
+  formatTravelTimeText
 } from '../../utils/shopConfig';
 import { ItemIcon } from '../ItemIcon';
 import { ELIXIR_EN_IMG, ELIXIR_HP_IMG, ELIXIR_EXP_IMG } from '../../utils/elixirAssets';
@@ -669,6 +672,16 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                           >
                             🔧 Прочность: {curDur}/{maxDur}
                           </span>
+                          {isRelicItem(item) && (
+                            <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-purple-950/90 border-purple-400/60 text-purple-200">
+                              🏺 Реликвия Алтаря (Сила x{item.relicPower || 1})
+                            </span>
+                          )}
+                          {isTransportItem(item) && (
+                            <span className="text-[9.5px] font-black px-1.5 py-0.5 rounded border bg-cyan-950/90 border-cyan-400/60 text-cyan-200">
+                              🚤 Транспорт • Путь до Порта: {formatTravelTimeText(item.travelTimeSec || 600)}
+                            </span>
+                          )}
                           {isCustom && (
                             <>
                               <span
@@ -734,7 +747,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 
                   {/* Actions under item */}
                   <div className="mt-2.5 flex flex-wrap gap-1.5 pt-1.5 border-t border-slate-800">
-                    {!permanentlyBroken && (
+                    {!permanentlyBroken && !isRelicItem(item) && !isTransportItem(item) && (
                       <button
                         onClick={() => handleEquip(item)}
                         disabled={isRented || item.lvl > heroLvl || curDur <= 0}
@@ -766,14 +779,16 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                       </button>
                     )}
 
-                    {!permanentlyBroken && onOpenAltar && (
+                    {!permanentlyBroken && onOpenAltar && !isTransportItem(item) && (
                       <button
                         onClick={() => onOpenAltar(item)}
                         disabled={isRented}
                         className="rounded bg-fuchsia-950/90 border border-fuchsia-400/60 px-2.5 py-1.5 text-[10px] font-black text-fuchsia-200 hover:bg-fuchsia-900 active:scale-95 disabled:opacity-30 shadow-[0_0_8px_rgba(217,70,239,0.25)] cursor-pointer"
-                        title="Поместить предмет на Алтарь модификации (повышение всех статов на +5% за класс, до +50%)"
+                        title="Открыть Порт / Алтарь модификации"
                       >
-                        🔮 В Алтарь {Number(item.modificationClass || 0) > 0 ? `(М${item.modificationClass})` : ''}
+                        {isRelicItem(item)
+                          ? '⚓ В Порт (Алтарь Реликвий)'
+                          : `⚓ В Порт / Алтарь ${Number(item.modificationClass || 0) > 0 ? `(М${item.modificationClass})` : ''}`}
                       </button>
                     )}
 

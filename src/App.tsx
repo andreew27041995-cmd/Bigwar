@@ -51,13 +51,16 @@ import {
   getHeroMaxHpFromVit,
   normalizeStatsForLevel
 } from './utils/gameData';
-import { ShopItemTemplate, CharacterSkinTemplate, PlayerBanInfo } from './types/game';
+import { ShopItemTemplate, CharacterSkinTemplate, PlayerBanInfo, TransportTemplate, PortTravelState } from './types/game';
 import {
   getShopCatalog,
   getShopSkins,
   getFeatureFlags,
   syncShopAndFlagsFromSupabase,
   createGameItemFromShopItem,
+  createTransportItemFromTemplate,
+  createRelicItem,
+  formatTravelTimeText,
   getItemSellPrice,
   getItemSellRefund,
   isCustomCreatedItem,
@@ -128,6 +131,7 @@ import { ForumModal } from './components/modals/ForumModal';
 import { TutorialModal } from './components/modals/TutorialModal';
 import { AchievementsModal } from './components/modals/AchievementsModal';
 import { ModificationAltarModal } from './components/modals/ModificationAltarModal';
+import { PortModal } from './components/modals/PortModal';
 import {
   BotSimulationConfig,
   BotCharacter,
@@ -324,12 +328,14 @@ export default function App() {
     | 'tutorial'
     | 'achievements'
     | 'altar'
+    | 'port'
   >(null);
   const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
+  const [shopInitialCategory, setShopInitialCategory] = useState<'weapon' | 'transport'>('weapon');
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'settings'>('profile');
   const [dailyModalInitialTab, setDailyModalInitialTab] = useState<'quests' | 'login'>('quests');
   const [adminModalInitialTab, setAdminModalInitialTab] = useState<
-    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots'
+    'ai' | 'aiMonitoring' | 'onlineStats' | 'players' | 'bosses' | 'monsters' | 'shop' | 'creation' | 'server' | 'clans' | 'clanPyramid' | 'roulette' | 'bank' | 'orders' | 'npc' | 'vip' | 'scarabTournament' | 'bots' | 'portAndRelics'
   >('ai');
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
@@ -2265,6 +2271,35 @@ export default function App() {
           showToast(bagWarningToast);
         }
       }
+
+      // 4. Port round-trip travel auto-completion ('to_port' -> 'in_port', 'from_port' -> 'idle')
+      const latestHero = heroRef.current;
+      const pt = latestHero?.portTravel;
+      if (pt && (pt.status === 'to_port' || pt.status === 'from_port') && pt.arrivalTime > 0 && now >= pt.arrivalTime) {
+        const nextStatus: 'in_port' | 'idle' = pt.status === 'to_port' ? 'in_port' : 'idle';
+        const nextPortTravel: PortTravelState = {
+          ...pt,
+          status: nextStatus
+        };
+        const updatedHero: HeroState = {
+          ...latestHero,
+          portTravel: nextPortTravel
+        };
+        heroRef.current = updatedHero;
+        setHero(updatedHero);
+        saveGameToStorage({ hero: updatedHero });
+        if (currentUserRef.current) {
+          flushPlayerUpdates(currentUserRef.current, {
+            port_travel: nextPortTravel,
+            last_action: nextStatus === 'in_port' ? '⚓ В Порту' : '🏠 В Городе'
+          });
+        }
+        if (nextStatus === 'in_port') {
+          showToast('⚓ Вы прибыли в Порт! Разделы «Создать оружие» и «Алтарь Реликвий» открыты.');
+        } else {
+          showToast('🏰 Вы вернулись из Порта! Теперь вы снова можете входить в Пирамиду.');
+        }
+      }
     };
 
     const interval = setInterval(tickTimersAndRespawns, 1000);
@@ -2333,6 +2368,22 @@ export default function App() {
   // Player enters their own unlocked home pyramid (homePyramidTier)
   const handleEnterPyramid = () => {
     if (checkBanRestriction('blockPyramid', 'Вход в Пирамиду и бои')) {
+      return;
+    }
+    const curPortStatus = heroRef.current?.portTravel?.status || hero.portTravel?.status || 'idle';
+    if (curPortStatus === 'to_port') {
+      showToast('⚓ Вы сейчас плывёте/летите в Порт! Дождитесь прибытия и вернитесь обратно.');
+      setActiveModal('port');
+      return;
+    }
+    if (curPortStatus === 'in_port') {
+      showToast('⚓ Вы находитесь в Порту! Чтобы войти в Пирамиду, сначала вернитесь на транспорте обратно из Порта.');
+      setActiveModal('port');
+      return;
+    }
+    if (curPortStatus === 'from_port') {
+      showToast('🔙 Вы в пути обратно из Порта! Дождитесь возвращения транспорта.');
+      setActiveModal('port');
       return;
     }
     const curNpc = heroRef.current?.npcCompanion || hero.npcCompanion;
@@ -3399,6 +3450,23 @@ export default function App() {
           );
         }
 
+        // Дроп Реликвии для Алтаря Модификации (базовый шанс 3%, настраивается в Админ-панели)
+        const relicDropChance = Math.max(0, Number(featureFlags.relicDropChancePct ?? 3));
+        let nextInvAfterKill: GameItem[] | null = null;
+        if (Math.random() * 100 < relicDropChance) {
+          const droppedRelic = createRelicItem((Math.max(1, Math.min(3, pyramidTier)) as 1 | 2 | 3), isBoss);
+          const curInvList = inventoryRef.current || inventory;
+          nextInvAfterKill = [droppedRelic, ...curInvList];
+          inventoryRef.current = nextInvAfterKill;
+          setInventory(nextInvAfterKill);
+          saveGameToStorage({ inventory: nextInvAfterKill });
+          addCombatLog(
+            `🏺 РЕЛИКВИЯ ПИРАМИДЫ (${relicDropChance}%): Вы добыли «${droppedRelic.name}» для Алтаря в Порту!`,
+            'loot'
+          );
+          showToast(`🏺 Выпала Реликвия: «${droppedRelic.name}»! Используйте её в Алтаре Порта.`);
+        }
+
         addLootHistoryEntry({
           category: 'monster',
           title: mobTitle,
@@ -3511,7 +3579,8 @@ export default function App() {
             total_gold_collected: updatedTotalGold,
             gold: newHero.gold,
             exp: newHero.exp,
-            lvl: newHero.level
+            lvl: newHero.level,
+            ...(nextInvAfterKill ? { inventory: nextInvAfterKill } : {})
           });
         }
       } else {
@@ -7280,7 +7349,12 @@ export default function App() {
       crystals: nextCrystals
     };
 
-    const canEquipNow = Boolean(opts.equipImmediately && (updatedHero.level || 1) >= (newItem.lvl || 1));
+    const isNamedTransportCraft = Boolean(newItem.isTransport);
+    const canEquipNow = Boolean(
+      !isNamedTransportCraft &&
+        opts.equipImmediately &&
+        (updatedHero.level || 1) >= (newItem.lvl || 1)
+    );
     if (canEquipNow) {
       const slot = newItem.slot;
       const oldEquipped = curEquipped[slot];
@@ -7294,6 +7368,12 @@ export default function App() {
       updatedHero = recalcGear(nextEquipped, updatedHero);
     } else {
       nextInventory = [newItem, ...curInv];
+      if (isNamedTransportCraft) {
+        updatedHero = {
+          ...updatedHero,
+          activeTransportId: newItem.id
+        };
+      }
     }
 
     heroRef.current = updatedHero;
@@ -7321,7 +7401,9 @@ export default function App() {
       timestamp: now,
       dateStr: msgTime,
       type: 'forge',
-      description: `⚒️ Создано оружие/амуниция: ${iconText} ${newItem.name} (Ур.${newItem.lvl}) за ${costLabel}`,
+      description: isNamedTransportCraft
+        ? `🚁 Создан Именной транспорт: ${iconText} ${newItem.name} (Прочность ${newItem.durability}/${newItem.maxDurability}, путь ${formatTravelTimeText(newItem.travelTimeSec || 120)}) за ${costLabel}`
+        : `⚒️ Создано оружие/амуниция: ${iconText} ${newItem.name} (Ур.${newItem.lvl}) за ${costLabel}`,
       itemSnapshot: { name: newItem.name, icon: newItem.icon, quality: newItem.quality },
       amount: payCurrency === 'gold' ? finalGoldCost : finalCrystalCost
     };
@@ -7335,6 +7417,7 @@ export default function App() {
         crystals: nextCrystals,
         equipped: nextEquipped,
         inventory: nextInventory,
+        active_transport_id: updatedHero.activeTransportId || null,
         hp: updatedHero.hp,
         max_hp: updatedHero.maxHp,
         energy: updatedHero.energy,
@@ -7347,8 +7430,10 @@ export default function App() {
     const sysChatMsg: ChatMessage = {
       id: 'forge_' + now,
       time: msgTime,
-      author: 'Кузница',
-      text: `⚒️ Игрок ${currentUser || 'Игрок'} создал амуницию: «${newItem.name}» (Ур.${newItem.lvl}, +${newItem.dmg}⚔️ +${newItem.hp}❤️)!`,
+      author: 'Кузница Порта',
+      text: isNamedTransportCraft
+        ? `🚁 Игрок ${currentUser || 'Игрок'} создал Именной транспорт: «${newItem.name}» (Прочность ${newItem.durability}/${newItem.maxDurability}, путь до Порта ${formatTravelTimeText(newItem.travelTimeSec || 120)})!`
+        : `⚒️ Игрок ${currentUser || 'Игрок'} создал амуницию в Порту: «${newItem.name}» (Ур.${newItem.lvl}, +${newItem.dmg}⚔️ +${newItem.hp}❤️)!`,
       isSystem: true,
       channel: 'world'
     };
@@ -7358,10 +7443,212 @@ export default function App() {
     playLootSound();
     const q = getQualityConfig('custom');
     showToast(
-      canEquipNow
+      isNamedTransportCraft
+        ? `🚁 Создан и выбран Именной транспорт: ${iconText} ${newItem.name} (${newItem.durability}/${newItem.maxDurability})!`
+        : canEquipNow
         ? `⚡ Создано и надето: ${iconText} ${newItem.name} (${q.name})!`
         : `🔥 Создано в сумку: ${iconText} ${newItem.name} (${q.name})!`
     );
+  };
+
+  // ================= PORT & TRANSPORT HANDLERS =================
+  const handleBuyTransport = (template: TransportTemplate, payCurrency: 'gold' | 'crystals') => {
+    const curHero = heroRef.current || hero;
+    const curInv = inventoryRef.current || inventory;
+
+    if (curHero.level < template.lvl) {
+      showToast(`⛔ Для покупки «${template.name}» требуется ${template.lvl} уровень!`);
+      return;
+    }
+
+    const goldCost = payCurrency === 'gold' ? Math.max(0, Number(template.priceGold || 0)) : 0;
+    const crystalCost = payCurrency === 'crystals' ? Math.max(0, Number(template.priceCrystals || 0)) : 0;
+
+    if (payCurrency === 'gold' && curHero.gold < goldCost) {
+      showToast(`❌ Недостаточно золота! Нужно ${goldCost.toLocaleString()} 🪙.`);
+      return;
+    }
+    if (payCurrency === 'crystals' && curHero.crystals < crystalCost) {
+      showToast(`❌ Недостаточно кристаллов! Нужно ${crystalCost} 💎.`);
+      return;
+    }
+
+    const transportItem = createTransportItemFromTemplate(template);
+    const nextGold = Math.max(0, curHero.gold - goldCost);
+    const nextCrystals = Math.max(0, curHero.crystals - crystalCost);
+    const nextInventory = [transportItem, ...curInv];
+    const nextHero: HeroState = {
+      ...curHero,
+      gold: nextGold,
+      crystals: nextCrystals,
+      activeTransportId: transportItem.id
+    };
+
+    heroRef.current = nextHero;
+    inventoryRef.current = nextInventory;
+    lastSyncedFinancialsRef.current = {
+      ...lastSyncedFinancialsRef.current,
+      gold: nextGold,
+      crystals: nextCrystals,
+      updatedAt: Date.now()
+    };
+
+    setHero(nextHero);
+    setInventory(nextInventory);
+    saveGameToStorage({ hero: nextHero, inventory: nextInventory });
+
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        gold: nextGold,
+        crystals: nextCrystals,
+        inventory: nextInventory,
+        active_transport_id: transportItem.id
+      });
+    }
+
+    playCoinSound();
+    showToast(
+      `🚤 Куплен транспорт «${template.name}» (время до Порта: ${formatTravelTimeText(template.travelTimeSec)})! Теперь вы можете отправиться в Порт.`
+    );
+  };
+
+  const handleSelectTransport = (transportId: string) => {
+    const curHero = heroRef.current || hero;
+    const nextHero: HeroState = {
+      ...curHero,
+      activeTransportId: transportId
+    };
+    heroRef.current = nextHero;
+    setHero(nextHero);
+    saveGameToStorage({ hero: nextHero });
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        active_transport_id: transportId
+      });
+    }
+    showToast('⚓ Активный транспорт для путешествий в Порт выбран!');
+  };
+
+  const handleStartTravelToPort = (transport: GameItem, durationSec: number) => {
+    const curHero = heroRef.current || hero;
+    const curInv = inventoryRef.current || inventory;
+    const maxDur = Math.max(1, Number(transport.maxDurability ?? 100));
+    const curDur = Math.max(0, Number(transport.durability ?? maxDur));
+    if (curDur <= 0) {
+      showToast('⛔ Ваш транспорт сломан (0 прочности)! Почините его в Сумке или выберите другой.');
+      return;
+    }
+
+    const now = Date.now();
+    const safeSec = Math.max(5, Math.round(durationSec));
+    const nextPortTravel: PortTravelState = {
+      status: 'to_port',
+      transportId: transport.id,
+      transportName: transport.name,
+      transportIcon: transport.icon,
+      travelDurationSec: safeSec,
+      startTime: now,
+      arrivalTime: now + safeSec * 1000
+    };
+
+    // Lose 1 durability point per trip
+    const nextInventory = curInv.map((it) =>
+      it.id === transport.id
+        ? { ...it, durability: Math.max(0, curDur - 1), maxDurability: maxDur }
+        : it
+    );
+    const nextHero: HeroState = {
+      ...curHero,
+      activeTransportId: transport.id,
+      portTravel: nextPortTravel
+    };
+
+    heroRef.current = nextHero;
+    inventoryRef.current = nextInventory;
+    setHero(nextHero);
+    setInventory(nextInventory);
+    saveGameToStorage({ hero: nextHero, inventory: nextInventory });
+
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        port_travel: nextPortTravel,
+        active_transport_id: transport.id,
+        inventory: nextInventory,
+        last_action: `⚓ В пути в Порт на «${transport.name}»`
+      });
+    }
+
+    playStepSound();
+    showToast(
+      `⚓ Вы отправились в Порт на «${transport.name}»! Время в пути: ${formatTravelTimeText(safeSec)}.`
+    );
+  };
+
+  const handleStartReturnFromPort = (transport: GameItem | null, durationSec: number) => {
+    const curHero = heroRef.current || hero;
+    const now = Date.now();
+    // Return journey takes the exact same time as the trip to the Port
+    const tripThereSec = Number(curHero.portTravel?.travelDurationSec || durationSec || 180);
+    const safeSec = Math.max(5, Math.round(tripThereSec));
+
+    const nextPortTravel: PortTravelState = {
+      status: 'from_port',
+      transportId: transport?.id || curHero.portTravel?.transportId || null,
+      transportName: transport?.name || curHero.portTravel?.transportName || 'Транспорт',
+      transportIcon: transport?.icon || curHero.portTravel?.transportIcon || '🚤',
+      travelDurationSec: safeSec,
+      startTime: now,
+      arrivalTime: now + safeSec * 1000
+    };
+
+    const nextHero: HeroState = {
+      ...curHero,
+      portTravel: nextPortTravel
+    };
+    heroRef.current = nextHero;
+    setHero(nextHero);
+    saveGameToStorage({ hero: nextHero });
+
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        port_travel: nextPortTravel,
+        last_action: `🔙 Возвращается из Порта (${formatTravelTimeText(safeSec)})`
+      });
+    }
+
+    playStepSound();
+    showToast(
+      `🔙 Вы отправились в обратный путь из Порта! Дорога назад займёт ровно столько же: ${formatTravelTimeText(safeSec)}.`
+    );
+  };
+
+  const handleCompletePortTravelStep = (nextStatus: 'in_port' | 'idle') => {
+    const curHero = heroRef.current || hero;
+    const prevPt = curHero.portTravel;
+    const nextPortTravel: PortTravelState = {
+      status: nextStatus,
+      transportId: prevPt?.transportId || curHero.activeTransportId || null,
+      transportName: prevPt?.transportName || 'Транспорт',
+      transportIcon: prevPt?.transportIcon || '🚤',
+      travelDurationSec: prevPt?.travelDurationSec || 180,
+      startTime: prevPt?.startTime || 0,
+      arrivalTime: prevPt?.arrivalTime || 0
+    };
+
+    const nextHero: HeroState = {
+      ...curHero,
+      portTravel: nextPortTravel
+    };
+    heroRef.current = nextHero;
+    setHero(nextHero);
+    saveGameToStorage({ hero: nextHero });
+
+    if (currentUser) {
+      flushPlayerUpdates(currentUser, {
+        port_travel: nextPortTravel,
+        last_action: nextStatus === 'in_port' ? '⚓ В Порту' : '🏠 В Городе'
+      });
+    }
   };
 
   // Roulette reward callback — immediately saves prize to Supabase (skins and NPCs won in roulette are ALWAYS permanent!)
@@ -9197,7 +9484,14 @@ export default function App() {
                 setActiveModal('wheel');
               }}
               onOpenPremium={() => setActiveModal('premium')}
-              onOpenCreateItem={() => setActiveModal('createItem')}
+              onOpenPort={() => setActiveModal('port')}
+              onOpenCreateItem={() => {
+                if (hero.portTravel?.status === 'in_port') {
+                  setActiveModal('createItem');
+                } else {
+                  setActiveModal('port');
+                }
+              }}
               onOpenAdmin={() => setActiveModal('admin')}
               onOpenBank={() => setActiveModal('bank')}
               onOpenLeaderboard={() => setActiveModal('leaderboard')}
@@ -9311,7 +9605,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.19</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.20</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">31.10.2026</strong></span>
         </div>
@@ -9363,12 +9657,27 @@ export default function App() {
             onOpenFriends={() => setActiveModal('friends')}
             onOpenDirectTransfer={() => setActiveModal('directTransfer')}
             onOpenInventory={() => setActiveModal('inventory')}
-            onOpenShop={() => setActiveModal('shop')}
+            onOpenShop={() => {
+              setShopInitialCategory('weapon');
+              setActiveModal('shop');
+            }}
             onOpenAltar={(item) => {
               setAltarInitialItemId(item?.id || null);
-              setActiveModal('altar');
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('altar');
+              } else {
+                showToast('⚓ Алтарь Модификации находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
             }}
-            onOpenCreateItem={() => setActiveModal('createItem')}
+            onOpenCreateItem={() => {
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('createItem');
+              } else {
+                showToast('⚓ Кузница «Создать оружие» находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
+            }}
             onOpenPremium={() => setActiveModal('premium')}
             onOpenLeaderboard={() => setActiveModal('leaderboard')}
             onOpenAchievements={() => setActiveModal('achievements')}
@@ -9397,9 +9706,21 @@ export default function App() {
             onRepairAll={handleRepairAllInventoryItems}
             onOpenAltar={(item) => {
               setAltarInitialItemId(item?.id || null);
-              setActiveModal('altar');
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('altar');
+              } else {
+                showToast('⚓ Алтарь Модификации находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
             }}
-            onOpenCreateItem={() => setActiveModal('createItem')}
+            onOpenCreateItem={() => {
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('createItem');
+              } else {
+                showToast('⚓ Кузница «Создать оружие» находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
+            }}
             onOpenNpcBag={() => {
               setCharacterModalInitialTab('npcBag');
               setActiveModal('character');
@@ -9437,7 +9758,10 @@ export default function App() {
             inventory={inventory}
             shopItems={shopCatalog}
             shopSkins={shopSkins}
+            featureFlags={featureFlags}
+            initialCategory={shopInitialCategory}
             onBuyItem={handleBuyShopItem}
+            onBuyTransport={handleBuyTransport}
             onBuySkin={handleBuySkin}
             onEquipSkin={handleEquipSkin}
             onBuyElixir={handleBuyElixir}
@@ -9454,8 +9778,18 @@ export default function App() {
               if (checkBanRestriction('blockTradeAndAuction', 'Аукцион и торговля')) return;
               setActiveModal('auction');
             }}
-            onOpenCreateItem={() => setActiveModal('createItem')}
-            onClose={() => setActiveModal(null)}
+            onOpenCreateItem={() => {
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('createItem');
+              } else {
+                setActiveModal('port');
+              }
+            }}
+            onOpenPort={() => setActiveModal('port')}
+            onClose={() => {
+              setShopInitialCategory('weapon');
+              setActiveModal(null);
+            }}
           />
         )}
 
@@ -9713,12 +10047,39 @@ export default function App() {
             hero={{ ...hero, nick: currentUser || hero.nick || 'Игрок' }}
             featureFlags={featureFlags}
             isAdmin={isAdmin}
-            onClose={() => setActiveModal(null)}
+            onClose={() => {
+              if (hero.portTravel?.status === 'in_port') {
+                setActiveModal('port');
+              } else {
+                setActiveModal(null);
+              }
+            }}
             onForgeItem={handleForgeItem}
             onOpenAdminCreation={() => {
-              setAdminModalInitialTab('creation');
+              setAdminModalInitialTab('portAndRelics');
               setActiveModal('admin');
             }}
+            showToast={showToast}
+          />
+        )}
+
+        {/* Port Modal (Location «Порт»: Round-Trip Transport Travel, Forge & Modification Altar) */}
+        {activeModal === 'port' && (
+          <PortModal
+            hero={hero}
+            inventory={inventory}
+            featureFlags={featureFlags}
+            onClose={() => setActiveModal(null)}
+            onOpenShopTransport={() => {
+              setShopInitialCategory('transport');
+              setActiveModal('shop');
+            }}
+            onSelectTransport={handleSelectTransport}
+            onStartTravelToPort={handleStartTravelToPort}
+            onStartReturnFromPort={handleStartReturnFromPort}
+            onCompleteTravelStep={handleCompletePortTravelStep}
+            onOpenForgeWeapon={() => setActiveModal('createItem')}
+            onOpenAltar={() => setActiveModal('altar')}
             showToast={showToast}
           />
         )}
@@ -10027,17 +10388,22 @@ export default function App() {
           />
         )}
 
-        {/* Modification Altar Modal (10 Classes, +5% per class up to +50%, Shop Item Sacrifice) */}
+        {/* Modification Altar Modal (10 Classes, +5% per class up to +50%, up to 50 Relics Sacrifice) */}
         {activeModal === 'altar' && (
           <ModificationAltarModal
             hero={hero}
             equipped={equipped}
             inventory={inventory}
             shopCatalog={shopCatalog}
+            featureFlags={featureFlags}
             initialTargetItemId={altarInitialItemId}
             onClose={() => {
               setAltarInitialItemId(null);
-              setActiveModal(null);
+              if (hero.portTravel?.status === 'in_port') {
+                setActiveModal('port');
+              } else {
+                setActiveModal(null);
+              }
             }}
             showToast={showToast}
             onQuickBuyShopSacrifice={(template) => {
