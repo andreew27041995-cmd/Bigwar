@@ -163,7 +163,25 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     'Выберите локацию и наживку, затем нажмите «Забросить удочку»'
   );
 
-  // Time-of-Day state synchronized with global game time ('morning' | 'day' | 'sunset' | 'night')
+  // 1-second clock synchronized with the character's system time
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  // Bucketed 30-second tick so Canvas sky gradients update smoothly with system time without restarting the 60fps loop every second
+  const skySyncBucket = Math.floor(nowMs / 30000);
+
+  // Formatted character system clock (HH:MM)
+  const characterSystemTimeLabel = useMemo(() => {
+    const d = new Date(nowMs);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }, [ Math.floor(nowMs / 10000) ]);
+
+  // Time-of-Day state synchronized with character system time ('morning' | 'day' | 'sunset' | 'night')
   const activeTimeOfDay = useMemo<'morning' | 'day' | 'sunset' | 'night'>(() => {
     try {
       const saved = localStorage.getItem('bigwar_force_time_of_day');
@@ -171,12 +189,118 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         return saved;
       }
     } catch {}
-    const h = new Date().getHours();
-    if (h >= 5 && h < 8) return 'morning';
-    if (h >= 8 && h < 17) return 'day';
-    if (h >= 17 && h < 20) return 'sunset';
+    const d = new Date(skySyncBucket * 30000);
+    const h = d.getHours();
+    if (h >= 5 && h < 9) return 'morning';
+    if (h >= 9 && h < 17) return 'day';
+    if (h >= 17 && h < 21) return 'sunset';
     return 'night';
-  }, []);
+  }, [skySyncBucket]);
+
+  // Dynamic Sky & Horizon Gradient Profile synchronized with character system clock (smooth sunrise/sunset transitions)
+  const dynamicSkyProfile = useMemo(() => {
+    const d = new Date(skySyncBucket * 30000);
+    const fractionalHour = d.getHours() + d.getMinutes() / 60;
+
+    // Determine effective hour based on forced override or live character system clock
+    let effectiveHour = fractionalHour;
+    try {
+      const saved = localStorage.getItem('bigwar_force_time_of_day');
+      if (saved === 'morning') effectiveHour = 6.5 + ((d.getMinutes() % 30) / 30) * 1.2;
+      else if (saved === 'day') effectiveHour = 13.0 + ((d.getMinutes() % 30) / 30) * 2.0;
+      else if (saved === 'sunset') effectiveHour = 18.5 + ((d.getMinutes() % 30) / 30) * 1.2;
+      else if (saved === 'night') effectiveHour = 23.0 + ((d.getMinutes() % 30) / 30) * 1.0;
+    } catch {}
+
+    // Dawn / Sunrise transition (04:30 - 09:00)
+    if (effectiveHour >= 4.5 && effectiveHour < 9.0) {
+      const progress = (effectiveHour - 4.5) / 4.5; // 0 -> 1 from pre-dawn to late morning
+      const isEarlyDawn = progress < 0.45;
+      return {
+        phaseLabel: isEarlyDawn ? 'Алый восход Ра' : 'Золотой рассвет Нила',
+        skyStops: isEarlyDawn
+          ? ['#090d26', '#3b0a37', '#b91c1c', '#fb923c', '#fef08a']
+          : ['#072ac8', '#0284c7', '#f97316', '#fdba74', '#fef9c3'],
+        waterStops: isEarlyDawn
+          ? ['#f97316', '#9a3412', '#1e3a8a', '#09152b']
+          : ['#fbbf24', '#0e7490', '#0369a1', '#06283d'],
+        horizonGlowRgba: isEarlyDawn ? 'rgba(251, 113, 133, 0.42)' : 'rgba(251, 191, 36, 0.38)',
+        cloudTintRgba: isEarlyDawn ? 'rgba(244, 114, 182, 0.28)' : 'rgba(253, 224, 71, 0.25)',
+        celestialX: 0.18 + progress * 0.24,
+        celestialY: 0.82 - progress * 0.34,
+        cssTopBannerClass: isEarlyDawn
+          ? 'bg-gradient-to-b from-red-800/35 via-orange-400/20 to-transparent'
+          : 'bg-gradient-to-b from-sky-700/30 via-amber-400/20 to-transparent'
+      };
+    }
+
+    // Sunset / Dusk transition (16:30 - 21:00)
+    if (effectiveHour >= 16.5 && effectiveHour < 21.0) {
+      const progress = (effectiveHour - 16.5) / 4.5; // 0 -> 1 from golden hour to deep dusk
+      const isDeepDusk = progress > 0.55;
+      return {
+        phaseLabel: isDeepDusk ? 'Багряный закат Атона' : 'Золотой закат над Нилом',
+        skyStops: isDeepDusk
+          ? ['#14052b', '#4c0519', '#991b1b', '#ea580c', '#fde047']
+          : ['#1e1b4b', '#7c2d12', '#dc2626', '#f97316', '#fef08a'],
+        waterStops: isDeepDusk
+          ? ['#c2410c', '#6b1d2f', '#1e1b4b', '#070b19']
+          : ['#ea580c', '#7c2d12', '#153e63', '#071c2e'],
+        horizonGlowRgba: isDeepDusk ? 'rgba(239, 68, 68, 0.45)' : 'rgba(249, 115, 22, 0.42)',
+        cloudTintRgba: isDeepDusk ? 'rgba(248, 113, 113, 0.30)' : 'rgba(251, 146, 60, 0.32)',
+        celestialX: 0.58 + progress * 0.24,
+        celestialY: 0.46 + progress * 0.38,
+        cssTopBannerClass: isDeepDusk
+          ? 'bg-gradient-to-b from-red-900/40 via-orange-600/25 to-transparent'
+          : 'bg-gradient-to-b from-orange-800/35 via-yellow-400/20 to-transparent'
+      };
+    }
+
+    // Daytime solar arc (09:00 - 16:30)
+    if (effectiveHour >= 9.0 && effectiveHour < 16.5) {
+      const progress = (effectiveHour - 9.0) / 7.5; // 0 -> 1 across day
+      const isLateAfternoon = progress > 0.72;
+      return {
+        phaseLabel: isLateAfternoon ? 'Предзакатный зной Ра' : 'Лазурный полдень Ра',
+        skyStops: isLateAfternoon
+          ? ['#0c4a6e', '#0284c7', '#38bdf8', '#fbbf24', '#fef08a']
+          : [
+              currentLocation.skyColors[0],
+              currentLocation.skyColors[1],
+              '#38bdf8',
+              '#bae6fd',
+              currentLocation.skyColors[2]
+            ],
+        waterStops: [
+          currentLocation.waterColors[0],
+          currentLocation.waterColors[1],
+          currentLocation.waterColors[2],
+          currentLocation.waterColors[3]
+        ],
+        horizonGlowRgba: isLateAfternoon ? 'rgba(251, 191, 36, 0.30)' : 'rgba(186, 230, 253, 0.24)',
+        cloudTintRgba: isLateAfternoon ? 'rgba(254, 240, 138, 0.24)' : 'rgba(255, 255, 255, 0.22)',
+        celestialX: 0.38 + progress * 0.24,
+        celestialY: 0.42 - Math.sin(progress * Math.PI) * 0.14,
+        cssTopBannerClass: isLateAfternoon
+          ? 'bg-gradient-to-b from-sky-700/25 via-amber-400/15 to-transparent'
+          : 'bg-gradient-to-b from-sky-500/20 via-sky-200/10 to-transparent'
+      };
+    }
+
+    // Night lunar arc (21:00 - 04:30)
+    const nightHour = effectiveHour >= 21 ? effectiveHour - 21 : effectiveHour + 3;
+    const progress = Math.min(1, Math.max(0, nightHour / 7.5));
+    return {
+      phaseLabel: 'Звёздная ночь Хонсу',
+      skyStops: ['#02040a', '#060d21', '#0c1938', '#152c55', '#1e3a6d'],
+      waterStops: ['#07172e', '#092444', '#051d36', '#020b16'],
+      horizonGlowRgba: 'rgba(56, 189, 248, 0.18)',
+      cloudTintRgba: 'rgba(148, 163, 184, 0.12)',
+      celestialX: 0.22 + progress * 0.52,
+      celestialY: 0.58 - Math.sin(progress * Math.PI) * 0.22,
+      cssTopBannerClass: 'bg-gradient-to-b from-slate-950/45 via-blue-950/20 to-transparent'
+    };
+  }, [skySyncBucket, currentLocation]);
 
   // Sandstorm Weather Effect state (activates automatically under random weather conditions or Redblack global sandstorm)
   const [randomSandstormGust, setRandomSandstormGust] = useState<boolean>(() => Math.random() < 0.35);
@@ -286,13 +410,6 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
   useEffect(() => {
     return () => clearAllTimers();
-  }, []);
-
-  // 1-second clock for net timers and EXP buff
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNowMs(Date.now()), 1000);
-    return () => window.clearInterval(t);
   }, []);
 
   const expBuffRemainingSec = useMemo(() => {
@@ -1485,50 +1602,25 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     const isMorning = activeTimeOfDay === 'morning';
     const isSunset = activeTimeOfDay === 'sunset';
 
-    // Pre-build static gradients once per environment change (eliminates per-frame GC & CPU lag on mobile!)
+    // Pre-build dynamic system-time sky & water gradients once per 30s sky bucket (zero per-frame GC or lag!)
     const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
-    if (isNight) {
-      skyGrad.addColorStop(0, '#02040a');
-      skyGrad.addColorStop(0.45, '#071026');
-      skyGrad.addColorStop(1, '#142b52');
-    } else if (isSunset) {
-      skyGrad.addColorStop(0, '#2e0518');
-      skyGrad.addColorStop(0.45, '#9a1b1b');
-      skyGrad.addColorStop(0.8, '#ea580c');
-      skyGrad.addColorStop(1, '#fef08a');
-    } else if (isMorning) {
-      skyGrad.addColorStop(0, '#082f49');
-      skyGrad.addColorStop(0.45, '#0369a1');
-      skyGrad.addColorStop(0.8, '#fb923c');
-      skyGrad.addColorStop(1, '#fef9c3');
-    } else {
-      skyGrad.addColorStop(0, currentLocation.skyColors[0]);
-      skyGrad.addColorStop(0.55, currentLocation.skyColors[1]);
-      skyGrad.addColorStop(1, currentLocation.skyColors[2]);
-    }
+    skyGrad.addColorStop(0, dynamicSkyProfile.skyStops[0]);
+    skyGrad.addColorStop(0.32, dynamicSkyProfile.skyStops[1]);
+    skyGrad.addColorStop(0.62, dynamicSkyProfile.skyStops[2]);
+    skyGrad.addColorStop(0.85, dynamicSkyProfile.skyStops[3]);
+    skyGrad.addColorStop(1, dynamicSkyProfile.skyStops[4]);
+
+    // Horizon Sunrise/Sunset Atmospheric Glow Band
+    const horizonGlowGrad = ctx.createLinearGradient(0, horizonY * 0.35, 0, horizonY + 14);
+    horizonGlowGrad.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    horizonGlowGrad.addColorStop(0.65, dynamicSkyProfile.horizonGlowRgba);
+    horizonGlowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
     const waterGrad = ctx.createLinearGradient(0, horizonY, 0, h);
-    if (isNight) {
-      waterGrad.addColorStop(0, '#07172e');
-      waterGrad.addColorStop(0.35, '#092444');
-      waterGrad.addColorStop(0.75, '#051d36');
-      waterGrad.addColorStop(1, '#020b16');
-    } else if (isSunset) {
-      waterGrad.addColorStop(0, '#9a3412');
-      waterGrad.addColorStop(0.28, '#5b2314');
-      waterGrad.addColorStop(0.65, '#123859');
-      waterGrad.addColorStop(1, '#061c2e');
-    } else if (isMorning) {
-      waterGrad.addColorStop(0, '#f59e0b');
-      waterGrad.addColorStop(0.22, '#0e7490');
-      waterGrad.addColorStop(0.65, '#0284c7');
-      waterGrad.addColorStop(1, '#06283d');
-    } else {
-      waterGrad.addColorStop(0, currentLocation.waterColors[0]);
-      waterGrad.addColorStop(0.35, currentLocation.waterColors[1]);
-      waterGrad.addColorStop(0.75, currentLocation.waterColors[2]);
-      waterGrad.addColorStop(1, currentLocation.waterColors[3]);
-    }
+    waterGrad.addColorStop(0, dynamicSkyProfile.waterStops[0]);
+    waterGrad.addColorStop(0.28, dynamicSkyProfile.waterStops[1]);
+    waterGrad.addColorStop(0.68, dynamicSkyProfile.waterStops[2]);
+    waterGrad.addColorStop(1, dynamicSkyProfile.waterStops[3]);
 
     const swimmers = [
       { x: 0.2, y: 0.58, speed: 0.036, scale: 0.58, dir: 1, depth: 0.35 },
@@ -1575,14 +1667,31 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
       ctx.clearRect(0, 0, w, h);
 
-      // 1. Sky Background
+      // 1. Dynamic Sky Gradient Background (Synchronized with Character System Time)
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, w, horizonY + 2);
 
-      // 1.1. Night Stars
-      if (isNight) {
+      // 1.05. Animated Sunrise/Sunset Horizon Glow & Drifting Twilight Clouds
+      ctx.fillStyle = horizonGlowGrad;
+      ctx.fillRect(0, horizonY * 0.35, w, horizonY * 0.75);
+
+      ctx.fillStyle = dynamicSkyProfile.cloudTintRgba;
+      for (let ci = 0; ci < 4; ci++) {
+        const cx = ((ci * 0.27 + t * (0.008 + ci * 0.002)) % 1.25 - 0.12) * w;
+        const cy = horizonY * (0.36 + (ci % 2) * 0.22);
+        const cw = 46 + (ci % 3) * 18;
+        const ch = 4.5 + (ci % 2) * 2.5;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, cw, ch, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 1.1. Night / Dawn / Dusk Stars
+      if (isNight || isMorning || isSunset) {
+        const starVisibility = isNight ? 1.0 : 0.38;
         starSeeds.forEach(([sx, sy], idx) => {
-          const twinkle = 0.35 + (Math.sin(t * 2.4 + idx * 1.7) * 0.5 + 0.5) * 0.65;
+          if (!isNight && sy > 0.16) return;
+          const twinkle = (0.35 + (Math.sin(t * 2.4 + idx * 1.7) * 0.5 + 0.5) * 0.65) * starVisibility;
           ctx.fillStyle = `rgba(224, 242, 254, ${twinkle.toFixed(2)})`;
           ctx.beginPath();
           ctx.arc(sx * w, sy * horizonY, idx % 4 === 0 ? 1.4 : 0.95, 0, Math.PI * 2);
@@ -1590,9 +1699,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         });
       }
 
-      // 1.2. Sun / Moon Celestial Disc
-      const celestialX = w * (isNight ? 0.3 : isSunset ? 0.66 : isMorning ? 0.34 : 0.48);
-      const celestialY = horizonY * (isSunset ? 0.72 : isMorning ? 0.68 : isNight ? 0.5 : 0.54);
+      // 1.2. Sun / Moon Celestial Disc synchronized with system time arc
+      const celestialX = w * dynamicSkyProfile.celestialX;
+      const celestialY = horizonY * dynamicSkyProfile.celestialY;
       if (isNight) {
         ctx.fillStyle = 'rgba(186, 230, 253, 0.22)';
         ctx.beginPath();
@@ -1608,16 +1717,16 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         ctx.fill();
       } else {
         ctx.fillStyle = isSunset
-          ? 'rgba(251, 146, 60, 0.28)'
+          ? 'rgba(251, 113, 133, 0.34)'
           : isMorning
-          ? 'rgba(254, 240, 138, 0.28)'
-          : 'rgba(253, 224, 71, 0.24)';
+          ? 'rgba(251, 191, 36, 0.34)'
+          : 'rgba(253, 224, 71, 0.26)';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 28, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 30, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = isSunset ? '#fde047' : '#fef9c3';
+        ctx.fillStyle = isSunset ? '#fdba74' : isMorning ? '#fde047' : '#fef9c3';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 13, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 13.5, 0, Math.PI * 2);
         ctx.fill();
       }
 
@@ -2150,6 +2259,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     activeBait,
     activeColdCurrent.zoneId,
     activeTimeOfDay,
+    dynamicSkyProfile,
     isSandstormActive
   ]);
 
@@ -2876,19 +2986,22 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
               {/* 3. Cinematic Nile River Viewport + Time-of-Day Switcher + Sandstorm VFX + Docked Nilometer Tension Gauge */}
               <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400/85 bg-[#090d16] shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_0_18px_rgba(0,0,0,0.85)]">
-                {/* Read-Only Atmospheric Status Bar (Manual weather controls removed from Fishing; controlled only on character Redblack) */}
+                {/* Read-Only Atmospheric Status Bar synchronized with character system time */}
                 <div className="flex flex-wrap items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2.5 py-1 text-[8px]">
-                  <span className="font-black uppercase tracking-wider text-amber-200 flex items-center gap-1">
+                  <span className="font-black uppercase tracking-wider text-amber-200 flex items-center gap-1.5">
                     <span>
                       {isSandstormActive
                         ? '🌪️ Песчаная буря Нила (Видимость снижена)'
                         : activeTimeOfDay === 'morning'
-                        ? '🌅 Рассвет (Туман и лучи)'
+                        ? `🌅 ${dynamicSkyProfile.phaseLabel}`
                         : activeTimeOfDay === 'day'
-                        ? '☀️ Полдень Ра (Блики Нила)'
+                        ? `☀️ ${dynamicSkyProfile.phaseLabel}`
                         : activeTimeOfDay === 'sunset'
-                        ? '🌇 Закат (Дымка и багрянец)'
-                        : '🌙 Ночь Хонсу (Светлячки и звёзды)'}
+                        ? `🌇 ${dynamicSkyProfile.phaseLabel}`
+                        : `🌙 ${dynamicSkyProfile.phaseLabel}`}
+                    </span>
+                    <span className="rounded border border-amber-400/40 bg-black/50 px-1.5 py-0.2 text-[7.5px] font-bold text-amber-300">
+                      ⏱️ {characterSystemTimeLabel}
                     </span>
                   </span>
                   <span className="text-[7.5px] font-bold text-amber-300/80">
@@ -2898,6 +3011,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
                 {/* Unobstructed Water & Tackle Canvas Area (No Bottom Overlays Blocking Rod/Line/Bobber) */}
                 <div className="relative overflow-hidden">
+                  {/* Dynamic Sunrise/Sunset Sky Glow Overlay synchronized with Character System Time */}
+                  <div
+                    className={`pointer-events-none absolute top-0 left-0 right-0 z-12 h-[72px] transition-all duration-1000 ${dynamicSkyProfile.cssTopBannerClass}`}
+                    aria-hidden="true"
+                  />
                   {/* Procedural Lightweight CSS/SVG Water Wave Layers (GPU transform only, zero lag) */}
                   <svg
                     viewBox="0 0 400 70"
