@@ -194,6 +194,18 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     return 'night';
   }, [forceTimeOfDay]);
 
+  // Sandstorm Weather Effect state (activates automatically under random weather conditions or manual toggle)
+  const [manualSandstorm, setManualSandstorm] = useState<boolean | null>(null);
+  const [randomSandstormGust, setRandomSandstormGust] = useState<boolean>(() => Math.random() < 0.35);
+
+  useEffect(() => {
+    // Periodically roll random desert sandstorm gusts every 25s
+    const gustInterval = window.setInterval(() => {
+      setRandomSandstormGust((prev) => (Math.random() < 0.38 ? !prev : prev));
+    }, 25000);
+    return () => window.clearInterval(gustInterval);
+  }, []);
+
   // Water Splash & Golden Radiance VFX when pulling out a catch or rare artifact
   const [catchSplashVfx, setCatchSplashVfx] = useState<{
     active: boolean;
@@ -215,12 +227,70 @@ export const FishingModal: React.FC<FishingModalProps> = ({
   const thrashingRef = useRef<boolean>(isFishThrashing);
   thrashingRef.current = isFishThrashing;
   const holdingReelRef = useRef<boolean>(isHoldingReel);
-  holdingReelRef.current = isHoldingReel;
+  holdingReelRef.current = holdingReelRef.current;
   const pendingHookOutcomeRef = useRef<FishingRollOutcome | null>(null);
   const activeBaitUsedRef = useRef<FishingBaitTemplate | null>(null);
   const castSplashTimestampRef = useRef<number>(0);
   const catchSplashTimestampRef = useRef<number>(0);
   const catchIsGoldenRef = useRef<boolean>(false);
+
+  // Lightweight 1-second transient water ripple & splash sprite bursts (auto-expiring after 1000ms)
+  const waterBurstsRef = useRef<
+    Array<{
+      id: number;
+      bornAt: number;
+      kind: 'calm' | 'reeling' | 'bite' | 'cast';
+    }>
+  >([]);
+
+  const spawnWaterSplashBurst = (kind: 'calm' | 'reeling' | 'bite' | 'cast') => {
+    const nowPerf = performance.now();
+    const alive = waterBurstsRef.current.filter((b) => nowPerf - b.bornAt < 1000);
+    if (alive.length >= 5) alive.shift();
+    alive.push({
+      id: nowPerf + Math.random(),
+      bornAt: nowPerf,
+      kind
+    });
+    waterBurstsRef.current = alive;
+  };
+
+  // Direct DOM refs for GPU-accelerated transform: scaleX(...) bars (eliminates React re-render lag on mobile)
+  const waitBarFillDomRef = useRef<HTMLDivElement | null>(null);
+  const waitTimerTextDomRef = useRef<HTMLSpanElement | null>(null);
+  const waitRightTimerDomRef = useRef<HTMLSpanElement | null>(null);
+  const biteBarFillDomRef = useRef<HTMLDivElement | null>(null);
+  const biteTimerTextDomRef = useRef<HTMLSpanElement | null>(null);
+  const biteBtnTimerDomRef = useRef<HTMLSpanElement | null>(null);
+  const reelBarFillDomRef = useRef<HTMLDivElement | null>(null);
+  const reelFishTrackDomRef = useRef<HTMLDivElement | null>(null);
+  const reelPctTextDomRef = useRef<HTMLSpanElement | null>(null);
+  const tensionBarFillDomRef = useRef<HTMLDivElement | null>(null);
+  const tensionMarkerTrackDomRef = useRef<HTMLDivElement | null>(null);
+  const tensionPctTextDomRef = useRef<HTMLSpanElement | null>(null);
+
+  const syncReelingDomImmediate = (prog: number, tens: number) => {
+    const clampedProg = Math.max(0, Math.min(100, prog));
+    const clampedTens = Math.max(0, Math.min(100, tens));
+    if (reelBarFillDomRef.current) {
+      reelBarFillDomRef.current.style.transform = `scaleX(${(clampedProg / 100).toFixed(4)})`;
+    }
+    if (reelFishTrackDomRef.current) {
+      reelFishTrackDomRef.current.style.transform = `translate3d(${Math.min(96, Math.max(4, clampedProg)).toFixed(1)}%, 0, 0)`;
+    }
+    if (reelPctTextDomRef.current) {
+      reelPctTextDomRef.current.textContent = `${Math.round(clampedProg)}%`;
+    }
+    if (tensionBarFillDomRef.current) {
+      tensionBarFillDomRef.current.style.transform = `scaleX(${(clampedTens / 100).toFixed(4)})`;
+    }
+    if (tensionMarkerTrackDomRef.current) {
+      tensionMarkerTrackDomRef.current.style.transform = `translate3d(${Math.min(99, Math.max(1, clampedTens)).toFixed(1)}%, 0, 0)`;
+    }
+    if (tensionPctTextDomRef.current) {
+      tensionPctTextDomRef.current.textContent = `${Math.round(clampedTens)}%`;
+    }
+  };
 
   const timersRef = useRef<number[]>([]);
   const clearAllTimers = () => {
@@ -281,6 +351,15 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     () => getActiveLocationWeather(currentLocation.id, nowMs),
     [currentLocation.id, nowMs]
   );
+
+  const isSandstormActive = useMemo(() => {
+    if (manualSandstorm !== null) return manualSandstorm;
+    return (
+      activeWeatherInfo.weather.id === 'weather_sandstorm' ||
+      (activeWeatherInfo.weather.id === 'weather_oasis_breeze' && randomSandstormGust) ||
+      randomSandstormGust
+    );
+  }, [manualSandstorm, activeWeatherInfo.weather.id, randomSandstormGust]);
 
   const dailyCatchQuest = useMemo(() => {
     const synced = ensureDailyQuestsForToday(hero, nowMs);
@@ -866,10 +945,12 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     const castTick = window.setInterval(() => {
       const elapsed = Date.now() - castStart;
       const p = Math.min(1, elapsed / 420);
-      setCastProgress(p);
+      castProgRef.current = p;
       if (p >= 1) {
         window.clearInterval(castTick);
+        setCastProgress(1);
         castSplashTimestampRef.current = performance.now();
+        spawnWaterSplashBurst('cast');
         setPhase('waiting');
 
         // Bite Waiting Timer (Таймер ожидания клёва): 3.0s - 5.0s base delay, accelerated by weather biteDelayMultiplier
@@ -883,20 +964,37 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         );
 
         const waitStart = Date.now();
+        let lastWaitStateSync = waitStart;
         const waitCountdown = window.setInterval(() => {
           if (phaseRef.current !== 'waiting' && phaseRef.current !== 'nibble') {
             window.clearInterval(waitCountdown);
             return;
           }
-          const rem = Math.max(0, biteDelayMs - (Date.now() - waitStart));
-          setWaitTimeLeftMs(rem);
-        }, 80);
+          const nowW = Date.now();
+          const rem = Math.max(0, biteDelayMs - (nowW - waitStart));
+          const ratio = Math.min(1, Math.max(0, (biteDelayMs - rem) / Math.max(1, biteDelayMs)));
+          if (waitBarFillDomRef.current) {
+            waitBarFillDomRef.current.style.transform = `scaleX(${ratio.toFixed(4)})`;
+          }
+          const secStr = `${(rem / 1000).toFixed(1)} сек`;
+          if (waitTimerTextDomRef.current) {
+            waitTimerTextDomRef.current.textContent = secStr;
+          }
+          if (waitRightTimerDomRef.current) {
+            waitRightTimerDomRef.current.textContent = `${(rem / 1000).toFixed(1)}с`;
+          }
+          if (nowW - lastWaitStateSync >= 300 || rem <= 0) {
+            lastWaitStateSync = nowW;
+            setWaitTimeLeftMs(rem);
+          }
+        }, 60);
         timersRef.current.push(waitCountdown as unknown as number);
 
         // Schedule 1 subtle nibble halfway through the 3-5s waiting timer
         const nibbleDelay = Math.round(biteDelayMs * 0.5);
         const nibbleTimer = window.setTimeout(() => {
           if (phaseRef.current !== 'waiting') return;
+          spawnWaterSplashBurst('calm');
           setPhase('nibble');
           setStatusBanner('〰️ Поплавок слегка качнулся... Рыба кружит у крючка, ждите поклёвки!');
           const backToWait = window.setTimeout(() => {
@@ -911,6 +1009,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         const biteTimer = window.setTimeout(() => {
           window.clearInterval(waitCountdown);
           setWaitTimeLeftMs(0);
+          spawnWaterSplashBurst('bite');
           setPhase('bite');
           const reactionWindowMs = 2500 + equippedRod.level * 220; // 2.7s .. 3.6s
           setBiteTimeLeftMs(reactionWindowMs);
@@ -918,18 +1017,33 @@ export const FishingModal: React.FC<FishingModalProps> = ({
           playLootSound();
 
           const biteStart = Date.now();
+          let lastBiteStateSync = biteStart;
           const biteCountdown = window.setInterval(() => {
             if (phaseRef.current !== 'bite') {
               window.clearInterval(biteCountdown);
               return;
             }
-            const rem = Math.max(0, reactionWindowMs - (Date.now() - biteStart));
-            setBiteTimeLeftMs(rem);
+            const nowB = Date.now();
+            const rem = Math.max(0, reactionWindowMs - (nowB - biteStart));
+            const ratio = Math.min(1, Math.max(0, rem / Math.max(1, reactionWindowMs)));
+            if (biteBarFillDomRef.current) {
+              biteBarFillDomRef.current.style.transform = `scaleX(${ratio.toFixed(4)})`;
+            }
+            if (biteTimerTextDomRef.current) {
+              biteTimerTextDomRef.current.textContent = `${(rem / 1000).toFixed(1)} сек`;
+            }
+            if (biteBtnTimerDomRef.current) {
+              biteBtnTimerDomRef.current.textContent = `⚡ ПОДСЕЧЬ СЕЙЧАС! (${(rem / 1000).toFixed(1)}с)`;
+            }
+            if (nowB - lastBiteStateSync >= 300 || rem <= 0) {
+              lastBiteStateSync = nowB;
+              setBiteTimeLeftMs(rem);
+            }
             if (rem <= 0) {
               window.clearInterval(biteCountdown);
               triggerFishEscape('🐟 Вы упустили момент поклёвки! Рыба стащила наживку и сорвалась с крючка.');
             }
-          }, 80);
+          }, 60);
           timersRef.current.push(biteCountdown as unknown as number);
         }, biteDelayMs);
         timersRef.current.push(biteTimer);
@@ -949,6 +1063,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     clearAllTimers();
     setWaitTimeLeftMs(0);
     playStepSound();
+    spawnWaterSplashBurst('reeling');
 
     // Roll what is on the hook now so its strugglePower drives the fight
     const rolledOutcome = rollFishingCatch(
@@ -990,7 +1105,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     setIsFishThrashing(false);
     thrashingRef.current = false;
     setPhase('reeling');
-    setStatusBanner('🎣 РЫБА НА КРЮЧКЕ! Тяните катушку, но ослабляйте леску при рывках!');
+    setStatusBanner('🟢 Рыба притихла — ТЯНИТЕ КАТУШКУ К БЕРЕГУ!');
+    spawnWaterSplashBurst('calm');
 
     const fishStruggle =
       rolledOutcome.type === 'fish' ? Math.max(2, rolledOutcome.fish.strugglePower || 5) : 5;
@@ -1001,8 +1117,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
     // Schedule dynamic fish thrashing cycles every ~1.4s - 2.3s
     let nextThrashToggleAt = Date.now() + 1400 + Math.random() * 900;
+    let lastReactSyncAt = Date.now();
+    let lastRippleSpawnAt = Date.now();
+    let lastZoneBucket = 0; // 0: <55, 1: 55..77, 2: >=78
 
-    // Real-time 60ms reeling & tension physics loop
+    // Real-time 60ms reeling & tension physics loop (GPU scaleX via direct DOM refs — zero lag!)
     const battleLoop = window.setInterval(() => {
       if (phaseRef.current !== 'reeling') {
         window.clearInterval(battleLoop);
@@ -1018,15 +1137,23 @@ export const FishingModal: React.FC<FishingModalProps> = ({
           // Thrash lasts 1.0s - 1.6s
           nextThrashToggleAt = now + 1000 + Math.random() * 650;
           setStatusBanner('💢 РЫБА БЬЁТСЯ И ТЯНЕТ В ГЛУБИНУ! Ослабьте леску, чтобы не порвать!');
+          spawnWaterSplashBurst('reeling');
         } else {
-          // Calm window lasts 1.6s - 2.4s
+          // Calm window lasts 1.6s - 2.4s -> trigger 1-second calm water rings & splash sprites!
           nextThrashToggleAt = now + 1600 + Math.random() * 800;
           setStatusBanner('🟢 Рыба притихла — ТЯНИТЕ КАТУШКУ К БЕРЕГУ!');
+          spawnWaterSplashBurst('calm');
         }
       }
 
       const pulling = holdingReelRef.current;
       const thrashing = thrashingRef.current;
+
+      // Spawn periodic 1-second water rings & splashes during active reeling
+      if (now - lastRippleSpawnAt >= (pulling || thrashing ? 520 : 780)) {
+        lastRippleSpawnAt = now;
+        spawnWaterSplashBurst(thrashing || pulling ? 'reeling' : 'calm');
+      }
 
       let nextProg = reelProgRef.current;
       let nextTens = tensionRef.current;
@@ -1054,8 +1181,17 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
       reelProgRef.current = nextProg;
       tensionRef.current = nextTens;
-      setReelProgress(Math.round(nextProg));
-      setLineTension(Math.round(nextTens));
+
+      // Instant GPU transform: scaleX(...) update without waiting for React re-render
+      syncReelingDomImmediate(nextProg, nextTens);
+
+      const curBucket = nextTens >= 78 ? 2 : nextTens >= 55 ? 1 : 0;
+      if (curBucket !== lastZoneBucket || now - lastReactSyncAt >= 260) {
+        lastZoneBucket = curBucket;
+        lastReactSyncAt = now;
+        setReelProgress(Math.round(nextProg));
+        setLineTension(Math.round(nextTens));
+      }
 
       // Check line snap (Tension >= 100%)
       if (nextTens >= 100) {
@@ -1107,6 +1243,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
     reelProgRef.current = nextProg;
     tensionRef.current = nextTens;
+    syncReelingDomImmediate(nextProg, nextTens);
+    spawnWaterSplashBurst('reeling');
     setReelProgress(Math.round(nextProg));
     setLineTension(Math.round(nextTens));
     playStepSound();
@@ -1133,6 +1271,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     const nextProg = Math.max(3, reelProgRef.current - 3);
     tensionRef.current = nextTens;
     reelProgRef.current = nextProg;
+    syncReelingDomImmediate(nextProg, nextTens);
+    spawnWaterSplashBurst('calm');
     setLineTension(Math.round(nextTens));
     setReelProgress(Math.round(nextProg));
   };
@@ -1341,7 +1481,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     onCatchOutcome(outcome, nextState, energyCost);
   };
 
-  // Cinematic 2D Canvas Renderer for the Nile River, Dynamic Time-of-Day Reflection, Atmospheric VFX & Fishing Physics
+  // Optimized 60FPS 2D Canvas Renderer: High-Visibility Tackle (Rod, Contrasted Line, Glowing Enlarged Bobber), 1s Splash Sprites & Sandstorm VFX
   useEffect(() => {
     if (activeTab !== 'play') return;
     const canvas = canvasRef.current;
@@ -1351,36 +1491,91 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
     let animId = 0;
     const startTime = performance.now();
+    const w = canvas.width;
+    const h = canvas.height;
+    const horizonY = h * 0.28;
+
+    const isNight = activeTimeOfDay === 'night';
+    const isMorning = activeTimeOfDay === 'morning';
+    const isSunset = activeTimeOfDay === 'sunset';
+
+    // Pre-build static gradients once per environment change (eliminates per-frame GC & CPU lag on mobile!)
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+    if (isNight) {
+      skyGrad.addColorStop(0, '#02040a');
+      skyGrad.addColorStop(0.45, '#071026');
+      skyGrad.addColorStop(1, '#142b52');
+    } else if (isSunset) {
+      skyGrad.addColorStop(0, '#2e0518');
+      skyGrad.addColorStop(0.45, '#9a1b1b');
+      skyGrad.addColorStop(0.8, '#ea580c');
+      skyGrad.addColorStop(1, '#fef08a');
+    } else if (isMorning) {
+      skyGrad.addColorStop(0, '#082f49');
+      skyGrad.addColorStop(0.45, '#0369a1');
+      skyGrad.addColorStop(0.8, '#fb923c');
+      skyGrad.addColorStop(1, '#fef9c3');
+    } else {
+      skyGrad.addColorStop(0, currentLocation.skyColors[0]);
+      skyGrad.addColorStop(0.55, currentLocation.skyColors[1]);
+      skyGrad.addColorStop(1, currentLocation.skyColors[2]);
+    }
+
+    const waterGrad = ctx.createLinearGradient(0, horizonY, 0, h);
+    if (isNight) {
+      waterGrad.addColorStop(0, '#07172e');
+      waterGrad.addColorStop(0.35, '#092444');
+      waterGrad.addColorStop(0.75, '#051d36');
+      waterGrad.addColorStop(1, '#020b16');
+    } else if (isSunset) {
+      waterGrad.addColorStop(0, '#9a3412');
+      waterGrad.addColorStop(0.28, '#5b2314');
+      waterGrad.addColorStop(0.65, '#123859');
+      waterGrad.addColorStop(1, '#061c2e');
+    } else if (isMorning) {
+      waterGrad.addColorStop(0, '#f59e0b');
+      waterGrad.addColorStop(0.22, '#0e7490');
+      waterGrad.addColorStop(0.65, '#0284c7');
+      waterGrad.addColorStop(1, '#06283d');
+    } else {
+      waterGrad.addColorStop(0, currentLocation.waterColors[0]);
+      waterGrad.addColorStop(0.35, currentLocation.waterColors[1]);
+      waterGrad.addColorStop(0.75, currentLocation.waterColors[2]);
+      waterGrad.addColorStop(1, currentLocation.waterColors[3]);
+    }
 
     const swimmers = [
-      { x: 0.18, y: 0.56, speed: 0.038, scale: 0.55, dir: 1, depth: 0.35 },
-      { x: 0.76, y: 0.67, speed: 0.052, scale: 0.78, dir: -1, depth: 0.6 },
-      { x: 0.44, y: 0.79, speed: 0.033, scale: 0.96, dir: 1, depth: 0.85 },
-      { x: 0.62, y: 0.51, speed: 0.058, scale: 0.45, dir: -1, depth: 0.25 },
-      { x: 0.31, y: 0.72, speed: 0.044, scale: 0.68, dir: 1, depth: 0.5 }
+      { x: 0.2, y: 0.58, speed: 0.036, scale: 0.58, dir: 1, depth: 0.35 },
+      { x: 0.74, y: 0.68, speed: 0.048, scale: 0.76, dir: -1, depth: 0.6 },
+      { x: 0.42, y: 0.78, speed: 0.032, scale: 0.92, dir: 1, depth: 0.85 }
     ];
 
-    // Atmospheric Wind Dust / Golden Sand Specks (All times of day)
-    const windParticles = Array.from({ length: 28 }, (_, i) => ({
-      x: (i * 0.037) % 1,
-      y: (i * 0.071 + 0.05) % 0.92,
-      speedX: 0.022 + (i % 5) * 0.009,
-      ampY: 3 + (i % 4) * 2.5,
-      freqY: 1.4 + (i % 3) * 0.6,
-      size: 0.9 + (i % 3) * 0.55,
-      phase: i * 1.13
+    // Lightweight Night Fireflies
+    const fireflies = Array.from({ length: 12 }, (_, i) => ({
+      baseX: 0.08 + ((i * 0.077) % 0.84),
+      baseY: 0.34 + ((i * 0.051) % 0.54),
+      orbitRx: 7 + (i % 3) * 4,
+      orbitRy: 4 + (i % 2) * 3,
+      speed: 1.0 + (i % 4) * 0.3,
+      phase: i * 1.7
     }));
 
-    // Night Fireflies & Glowing Nile Midges
-    const fireflies = Array.from({ length: 18 }, (_, i) => ({
-      baseX: 0.06 + ((i * 0.053) % 0.88),
-      baseY: 0.32 + ((i * 0.041) % 0.58),
-      orbitRx: 8 + (i % 4) * 5,
-      orbitRy: 4 + (i % 3) * 3.5,
-      speed: 0.9 + (i % 5) * 0.32,
-      phase: i * 1.7,
-      hue: i % 3 === 0 ? '163, 230, 53' : i % 3 === 1 ? '253, 224, 71' : '56, 189, 248'
+    // Sandstorm falling & blowing sand particles (36 lightweight particles)
+    const sandParticles = Array.from({ length: 36 }, (_, i) => ({
+      x: (i * 0.029) % 1,
+      y: (i * 0.067) % 1,
+      speedX: 0.26 + (i % 5) * 0.055,
+      speedY: 0.14 + (i % 4) * 0.038,
+      len: 7 + (i % 4) * 4,
+      size: 1.1 + (i % 3) * 0.6,
+      alpha: 0.35 + (i % 4) * 0.14
     }));
+
+    const starSeeds = [
+      [0.06, 0.08], [0.14, 0.19], [0.22, 0.06], [0.31, 0.14], [0.39, 0.07],
+      [0.48, 0.18], [0.57, 0.06], [0.66, 0.15], [0.75, 0.09], [0.84, 0.19],
+      [0.92, 0.08], [0.18, 0.24], [0.53, 0.23], [0.79, 0.25]
+    ];
 
     const renderFrame = (now: number) => {
       if (document.visibilityState === 'hidden') {
@@ -1389,591 +1584,233 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       }
 
       const t = (now - startTime) * 0.001;
-      const w = canvas.width;
-      const h = canvas.height;
       const curPhase = phaseRef.current;
       const isThrash = thrashingRef.current;
 
       ctx.clearRect(0, 0, w, h);
 
-      // 1. Dynamic Time-of-Day Lighting (Morning, Day, Sunset, Night)
-      const isNight = activeTimeOfDay === 'night';
-      const isMorning = activeTimeOfDay === 'morning';
-      const isSunset = activeTimeOfDay === 'sunset';
-
-      const horizonY = h * 0.28;
-      const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
-
-      if (isNight) {
-        skyGrad.addColorStop(0, '#02040a');
-        skyGrad.addColorStop(0.42, '#070f24');
-        skyGrad.addColorStop(0.78, '#0c1938');
-        skyGrad.addColorStop(1, '#152c52');
-      } else if (isSunset) {
-        skyGrad.addColorStop(0, '#2e0518');
-        skyGrad.addColorStop(0.35, '#7f1d1d');
-        skyGrad.addColorStop(0.68, '#ea580c');
-        skyGrad.addColorStop(0.9, '#f59e0b');
-        skyGrad.addColorStop(1, '#fef08a');
-      } else if (isMorning) {
-        skyGrad.addColorStop(0, '#082f49');
-        skyGrad.addColorStop(0.38, '#0369a1');
-        skyGrad.addColorStop(0.72, '#f97316');
-        skyGrad.addColorStop(0.9, '#fdba74');
-        skyGrad.addColorStop(1, '#fef9c3');
-      } else {
-        skyGrad.addColorStop(0, currentLocation.skyColors[0]);
-        skyGrad.addColorStop(0.55, currentLocation.skyColors[1]);
-        skyGrad.addColorStop(1, currentLocation.skyColors[2]);
-      }
+      // 1. Sky Background
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, w, horizonY + 2);
 
-      // 1.1. Night Sky Shining Stars, Constellations & Milky Way Glow
+      // 1.1. Night Stars
       if (isNight) {
-        const nebulaGrad = ctx.createRadialGradient(w * 0.52, horizonY * 0.35, 4, w * 0.52, horizonY * 0.35, w * 0.45);
-        nebulaGrad.addColorStop(0, 'rgba(56, 189, 248, 0.12)');
-        nebulaGrad.addColorStop(0.6, 'rgba(99, 102, 241, 0.06)');
-        nebulaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = nebulaGrad;
-        ctx.fillRect(0, 0, w, horizonY);
-
-        const starSeeds = [
-          [0.06, 0.08], [0.12, 0.19], [0.18, 0.06], [0.24, 0.14], [0.31, 0.05],
-          [0.37, 0.21], [0.43, 0.09], [0.49, 0.17], [0.56, 0.06], [0.63, 0.15],
-          [0.69, 0.07], [0.75, 0.22], [0.81, 0.11], [0.87, 0.05], [0.93, 0.18],
-          [0.15, 0.25], [0.52, 0.24], [0.78, 0.26], [0.28, 0.12], [0.66, 0.19],
-          [0.09, 0.14], [0.45, 0.04], [0.84, 0.21], [0.96, 0.09]
-        ];
         starSeeds.forEach(([sx, sy], idx) => {
-          const twinkle = 0.3 + (Math.sin(t * (2.2 + (idx % 4) * 0.7) + idx * 1.9) * 0.5 + 0.5) * 0.7;
-          const starX = sx * w;
-          const starY = sy * horizonY;
-          const isBrightStar = idx % 5 === 0;
-          ctx.fillStyle = isBrightStar
-            ? `rgba(224, 242, 254, ${twinkle.toFixed(2)})`
-            : `rgba(255, 255, 255, ${(twinkle * 0.85).toFixed(2)})`;
+          const twinkle = 0.35 + (Math.sin(t * 2.4 + idx * 1.7) * 0.5 + 0.5) * 0.65;
+          ctx.fillStyle = `rgba(224, 242, 254, ${twinkle.toFixed(2)})`;
           ctx.beginPath();
-          ctx.arc(starX, starY, isBrightStar ? 1.45 : 0.95, 0, Math.PI * 2);
+          ctx.arc(sx * w, sy * horizonY, idx % 4 === 0 ? 1.4 : 0.95, 0, Math.PI * 2);
           ctx.fill();
-
-          if (isBrightStar && twinkle > 0.72) {
-            ctx.strokeStyle = `rgba(186, 230, 253, ${(twinkle * 0.45).toFixed(2)})`;
-            ctx.lineWidth = 0.7;
-            ctx.beginPath();
-            ctx.moveTo(starX - 4, starY);
-            ctx.lineTo(starX + 4, starY);
-            ctx.moveTo(starX, starY - 4);
-            ctx.lineTo(starX, starY + 4);
-            ctx.stroke();
-          }
         });
       }
 
-      // 1.2. Sun / Moon Celestial Disc with Multi-Ring Corona
-      const celestialX = w * (isNight ? 0.32 : isSunset ? 0.66 : isMorning ? 0.34 : 0.5);
-      const celestialY = horizonY * (isSunset ? 0.76 : isMorning ? 0.7 : isNight ? 0.52 : 0.56);
-      const celestialRadius = isNight ? 32 : isSunset || isMorning ? 46 : 40;
-      const celestialGrad = ctx.createRadialGradient(
-        celestialX,
-        celestialY,
-        2,
-        celestialX,
-        celestialY,
-        celestialRadius
-      );
-
+      // 1.2. Sun / Moon Celestial Disc
+      const celestialX = w * (isNight ? 0.3 : isSunset ? 0.66 : isMorning ? 0.34 : 0.48);
+      const celestialY = horizonY * (isSunset ? 0.72 : isMorning ? 0.68 : isNight ? 0.5 : 0.54);
       if (isNight) {
-        // Sacred Crescent Moon of Khonsu
-        celestialGrad.addColorStop(0, 'rgba(248, 250, 252, 0.95)');
-        celestialGrad.addColorStop(0.32, 'rgba(186, 230, 253, 0.42)');
-        celestialGrad.addColorStop(0.7, 'rgba(56, 189, 248, 0.12)');
-        celestialGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
-        ctx.fillStyle = celestialGrad;
+        ctx.fillStyle = 'rgba(186, 230, 253, 0.22)';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, celestialRadius, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 24, 0, Math.PI * 2);
         ctx.fill();
-
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 11.5, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 11, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#070f24';
+        ctx.fillStyle = '#071026';
         ctx.beginPath();
-        ctx.arc(celestialX + 4.8, celestialY - 2.2, 9.8, 0, Math.PI * 2);
+        ctx.arc(celestialX + 4.5, celestialY - 2, 9.5, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        const coreColor = isSunset ? '#fef08a' : isMorning ? '#ffffff' : '#fef9c3';
-        const midColor = isSunset ? '#fb923c' : isMorning ? '#fde047' : currentLocation.sunColor;
-        celestialGrad.addColorStop(0, coreColor);
-        celestialGrad.addColorStop(0.28, midColor);
-        celestialGrad.addColorStop(0.65, isSunset ? 'rgba(234, 88, 12, 0.35)' : 'rgba(251, 191, 36, 0.25)');
-        celestialGrad.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = celestialGrad;
+        ctx.fillStyle = isSunset
+          ? 'rgba(251, 146, 60, 0.28)'
+          : isMorning
+          ? 'rgba(254, 240, 138, 0.28)'
+          : 'rgba(253, 224, 71, 0.24)';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, celestialRadius, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = isSunset ? '#fde047' : '#fef9c3';
+        ctx.beginPath();
+        ctx.arc(celestialX, celestialY, 13, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // 1.3. Distant Pyramids, Sand Dunes & Palm Silhouettes on Far Nile Bank
+      // 1.3. Far Nile Bank & Pyramids on Horizon
       const bankColor = isNight ? '#060c18' : isSunset ? '#2d0610' : isMorning ? '#17253b' : '#291c12';
       ctx.fillStyle = bankColor;
       ctx.beginPath();
       ctx.moveTo(0, horizonY);
-      ctx.quadraticCurveTo(w * 0.15, horizonY - 9, w * 0.35, horizonY - 4);
-      ctx.quadraticCurveTo(w * 0.65, horizonY - 11, w, horizonY - 3);
+      ctx.quadraticCurveTo(w * 0.2, horizonY - 8, w * 0.45, horizonY - 4);
+      ctx.quadraticCurveTo(w * 0.72, horizonY - 10, w, horizonY - 3);
       ctx.lineTo(w, horizonY + 2);
       ctx.lineTo(0, horizonY + 2);
       ctx.closePath();
       ctx.fill();
 
-      // Great Pyramids on Horizon with Sun/Moon-lit Facets
-      ctx.fillStyle = isNight ? '#0a1326' : isSunset ? '#3f0814' : isMorning ? '#1e293b' : '#3a2618';
+      // Great Pyramids
+      ctx.fillStyle = isNight ? '#0a1529' : isSunset ? '#3f0814' : '#3a2618';
       ctx.beginPath();
-      ctx.moveTo(w * 0.07, horizonY);
-      ctx.lineTo(w * 0.21, horizonY - 38);
-      ctx.lineTo(w * 0.35, horizonY);
+      ctx.moveTo(w * 0.08, horizonY);
+      ctx.lineTo(w * 0.21, horizonY - 36);
+      ctx.lineTo(w * 0.34, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = isNight
-        ? 'rgba(186, 230, 253, 0.14)'
-        : isSunset
-        ? 'rgba(251, 146, 60, 0.34)'
-        : isMorning
-        ? 'rgba(254, 240, 138, 0.32)'
-        : 'rgba(253, 224, 71, 0.24)';
+      ctx.fillStyle = isNight ? 'rgba(186, 230, 253, 0.14)' : 'rgba(253, 224, 71, 0.25)';
       ctx.beginPath();
-      ctx.moveTo(w * 0.21, horizonY - 38);
-      ctx.lineTo(w * 0.35, horizonY);
+      ctx.moveTo(w * 0.21, horizonY - 36);
+      ctx.lineTo(w * 0.34, horizonY);
       ctx.lineTo(w * 0.23, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = isNight ? '#081020' : isSunset ? '#33050f' : '#2e1d12';
+      ctx.fillStyle = isNight ? '#081121' : '#2e1d12';
       ctx.beginPath();
-      ctx.moveTo(w * 0.68, horizonY);
-      ctx.lineTo(w * 0.79, horizonY - 29);
-      ctx.lineTo(w * 0.9, horizonY);
+      ctx.moveTo(w * 0.66, horizonY);
+      ctx.lineTo(w * 0.77, horizonY - 27);
+      ctx.lineTo(w * 0.88, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      // Far-bank & Shore Date Palms with swaying fronds
-      const palmXList = [w * 0.04, w * 0.11, w * 0.38, w * 0.64, w * 0.88, w * 0.95];
-      palmXList.forEach((px, pIdx) => {
-        const sway = Math.sin(t * 1.45 + pIdx * 0.9) * 2.1;
-        const trunkH = pIdx === 0 || pIdx === 5 ? 25 : 18;
-        ctx.strokeStyle = bankColor;
-        ctx.lineWidth = pIdx === 0 || pIdx === 5 ? 2.4 : 1.9;
-        ctx.beginPath();
-        ctx.moveTo(px, horizonY);
-        ctx.quadraticCurveTo(px + sway * 0.5, horizonY - trunkH * 0.55, px + sway, horizonY - trunkH);
-        ctx.stroke();
-        for (let f = -3; f <= 3; f++) {
-          if (f === 0) continue;
-          ctx.lineWidth = 1.2;
-          ctx.beginPath();
-          ctx.moveTo(px + sway, horizonY - trunkH);
-          ctx.quadraticCurveTo(
-            px + sway + f * 3.5,
-            horizonY - trunkH - 3.5,
-            px + sway + f * 6.5,
-            horizonY - trunkH + 3 + Math.abs(f) * 0.8
-          );
-          ctx.stroke();
-        }
-      });
-
-      // Soft Drifting Clouds in Sky
-      if (!isNight) {
-        ctx.save();
-        ctx.fillStyle = isSunset
-          ? 'rgba(253, 186, 116, 0.22)'
-          : isMorning
-          ? 'rgba(254, 249, 195, 0.26)'
-          : 'rgba(255, 255, 255, 0.22)';
-        for (let c = 0; c < 3; c++) {
-          const cx = ((w * (0.2 + c * 0.33) + t * (4.5 + c * 1.5)) % (w + 80)) - 40;
-          const cy = horizonY * (0.26 + (c % 2) * 0.2);
-          ctx.beginPath();
-          ctx.ellipse(cx, cy, 26 + c * 6, 5.5, 0, 0, Math.PI * 2);
-          ctx.ellipse(cx - 12, cy + 2, 16, 4, 0, 0, Math.PI * 2);
-          ctx.ellipse(cx + 14, cy + 1.5, 18, 4.5, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      // 2. Living Flowing Nile Water Surface with Dynamic Sky Reflection
-      const waterGrad = ctx.createLinearGradient(0, horizonY, 0, h);
-      if (isNight) {
-        waterGrad.addColorStop(0, '#07152b');
-        waterGrad.addColorStop(0.24, '#092240');
-        waterGrad.addColorStop(0.62, '#062842');
-        waterGrad.addColorStop(1, '#020d1a');
-      } else if (isSunset) {
-        waterGrad.addColorStop(0, '#9a3412');
-        waterGrad.addColorStop(0.22, '#7c2d12');
-        waterGrad.addColorStop(0.52, '#1e3a5f');
-        waterGrad.addColorStop(0.82, '#0c4a6e');
-        waterGrad.addColorStop(1, '#062033');
-      } else if (isMorning) {
-        waterGrad.addColorStop(0, '#fb923c');
-        waterGrad.addColorStop(0.18, '#0e7490');
-        waterGrad.addColorStop(0.52, '#0284c7');
-        waterGrad.addColorStop(0.82, '#0369a1');
-        waterGrad.addColorStop(1, '#06283d');
-      } else {
-        waterGrad.addColorStop(0, currentLocation.waterColors[0]);
-        waterGrad.addColorStop(0.3, currentLocation.waterColors[1]);
-        waterGrad.addColorStop(0.7, currentLocation.waterColors[2]);
-        waterGrad.addColorStop(1, currentLocation.waterColors[3]);
-      }
+      // 2. Nile Water Base + Shimmering Sun/Moon Path (Lightweight — main wave motion is handled by GPU CSS/SVG waves!)
       ctx.fillStyle = waterGrad;
       ctx.fillRect(0, horizonY, w, h - horizonY);
 
-      // 2.05. Reflected Pyramids & Sky Horizon Glow on the Water Surface
-      ctx.save();
-      ctx.globalAlpha = isNight ? 0.22 : isSunset || isMorning ? 0.32 : 0.2;
-      const reflGrad = ctx.createLinearGradient(0, horizonY, 0, horizonY + (h - horizonY) * 0.35);
-      reflGrad.addColorStop(
-        0,
-        isNight ? '#1e3a8a' : isSunset ? '#f97316' : isMorning ? '#fde047' : currentLocation.skyColors[2]
-      );
-      reflGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = reflGrad;
-      ctx.fillRect(0, horizonY, w, (h - horizonY) * 0.35);
-
-      // Inverted wavy pyramid reflection
-      ctx.fillStyle = isNight ? 'rgba(15, 23, 42, 0.55)' : isSunset ? 'rgba(67, 20, 7, 0.45)' : 'rgba(12, 74, 110, 0.35)';
-      ctx.beginPath();
-      ctx.moveTo(w * 0.07, horizonY);
-      ctx.lineTo(w * 0.21 + Math.sin(t * 2.5) * 3, horizonY + 26);
-      ctx.lineTo(w * 0.35, horizonY);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-
-      // 2.1. Dynamic Sun / Moon Shimmering Reflection Path on Water (Dancing Glints)
-      const shimmerCenterX = celestialX;
-      const shimmerBaseColor = isNight
-        ? 'rgba(186, 230, 253,'
+      // Sun / Moon Shimmering Path (10 lightweight glints)
+      const shimmerColor = isNight
+        ? 'rgba(186, 230, 253, 0.22)'
         : isSunset
-        ? 'rgba(251, 146, 60,'
-        : isMorning
-        ? 'rgba(254, 240, 138,'
-        : 'rgba(253, 224, 71,';
-      for (let sr = 0; sr < 22; sr++) {
-        const srRatio = sr / 22;
-        const sy = horizonY + 3 + Math.pow(srRatio, 1.3) * (h - horizonY - 16);
-        const spread = 5 + srRatio * 48 + Math.sin(t * 3.6 + sr * 0.85) * 6;
-        const sxOffset = Math.sin(t * 2.7 + sr * 1.25) * (2.5 + srRatio * 9);
-        const alpha = (1 - srRatio * 0.58) * (isSunset || isMorning ? 0.38 : 0.3);
-        ctx.fillStyle = `${shimmerBaseColor}${alpha.toFixed(3)})`;
+        ? 'rgba(251, 146, 60, 0.28)'
+        : 'rgba(253, 224, 71, 0.24)';
+      ctx.fillStyle = shimmerColor;
+      for (let sr = 0; sr < 10; sr++) {
+        const srRatio = sr / 10;
+        const sy = horizonY + 5 + srRatio * (h - horizonY - 18);
+        const spread = 6 + srRatio * 34 + Math.sin(t * 3 + sr) * 4;
+        const sxOff = Math.sin(t * 2.2 + sr * 1.1) * (2 + srRatio * 6);
         ctx.beginPath();
-        ctx.ellipse(shimmerCenterX + sxOffset, sy, spread, 1.1 + srRatio * 1.7, 0, 0, Math.PI * 2);
+        ctx.ellipse(celestialX + sxOff, sy, spread, 1.2 + srRatio * 1.2, 0, 0, Math.PI * 2);
         ctx.fill();
-
-        // Bright specular diamond glints inside the reflection path
-        if (sr % 2 === 0) {
-          const glintX = shimmerCenterX + sxOffset + Math.cos(t * 4.2 + sr) * (spread * 0.45);
-          ctx.fillStyle = `rgba(255, 255, 255, ${(alpha * 1.35).toFixed(3)})`;
-          ctx.beginPath();
-          ctx.ellipse(glintX, sy, spread * 0.24, 0.8 + srRatio * 0.7, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
-      // 2.2. Sunken Barge Silhouette (Deep Water Landmark)
-      const bargeX = w * 0.68;
-      const bargeY = h * 0.72;
-      ctx.save();
-      ctx.fillStyle = 'rgba(7, 24, 42, 0.52)';
-      ctx.beginPath();
-      ctx.moveTo(bargeX - 42, bargeY + 8);
-      ctx.quadraticCurveTo(bargeX, bargeY + 18, bargeX + 48, bargeY + 5);
-      ctx.lineTo(bargeX + 38, bargeY - 6);
-      ctx.quadraticCurveTo(bargeX, bargeY + 2, bargeX - 35, bargeY - 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(12, 38, 62, 0.65)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(bargeX - 5, bargeY);
-      ctx.lineTo(bargeX - 18, bargeY - 32);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(251, 191, 36, 0.55)';
-      ctx.beginPath();
-      ctx.arc(bargeX + 15, bargeY + 2, 2.5 + Math.sin(t * 4) * 0.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-
-      // 2.3. Active Cold Current Animated Azure Ribbon
-      const ccZoneId = activeColdCurrent.zoneId;
-      const ccCenterX =
-        ccZoneId === 'shallow' ? w * 0.32 : ccZoneId === 'canyon' ? w * 0.48 : w * 0.64;
-      const ccGrad = ctx.createRadialGradient(ccCenterX, h * 0.65, 5, ccCenterX, h * 0.65, 68);
-      ccGrad.addColorStop(0, 'rgba(56, 189, 248, 0.3)');
-      ccGrad.addColorStop(0.6, 'rgba(14, 165, 233, 0.11)');
-      ccGrad.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = ccGrad;
-      ctx.beginPath();
-      ctx.ellipse(ccCenterX, h * 0.65, 62, 24, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 2.4. Multi-layered Flowing Nile Waves & Realistic Ripple Crests (10 Parallax Layers)
-      for (let layer = 0; layer < 10; layer++) {
-        const depthRatio = layer / 9;
-        const baseY = horizonY + 5 + Math.pow(depthRatio, 1.25) * (h - horizonY - 12);
-        const amp = 1.0 + depthRatio * 3.8;
-        const freq = 0.042 - depthRatio * 0.017;
-        const speed = (0.95 + depthRatio * 1.45) * (layer % 2 === 0 ? 1 : -0.78);
-
-        ctx.strokeStyle = isNight
-          ? `rgba(125, 211, 252, ${0.08 + depthRatio * 0.13})`
-          : isMorning
-          ? `rgba(254, 240, 138, ${0.14 + depthRatio * 0.18})`
-          : isSunset
-          ? `rgba(253, 186, 116, ${0.15 + depthRatio * 0.18})`
-          : layer % 2 === 0
-          ? `rgba(186, 230, 253, ${0.15 + depthRatio * 0.17})`
-          : `rgba(253, 224, 71, ${0.1 + (1 - depthRatio) * 0.14})`;
-        ctx.lineWidth = 0.8 + depthRatio * 1.35;
-        ctx.beginPath();
-        for (let x = 0; x <= w; x += 8) {
-          const y =
-            baseY +
-            Math.sin(x * freq + t * speed + layer * 0.8) * amp +
-            Math.cos(x * freq * 1.85 - t * speed * 0.65) * (amp * 0.38);
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
-        ctx.stroke();
-      }
-
-      // 2.5. ATMOSPHERIC VFX: Morning / Sunset Rolling Water Mist & Crepuscular God Rays through Palms
-      if (isMorning || isSunset) {
-        // Low-lying flowing mist drifting across the Nile surface
-        ctx.save();
-        for (let m = 0; m < 4; m++) {
-          const mistX = ((w * (m * 0.28) + t * (9 + m * 2.5)) % (w + 180)) - 90;
-          const mistY = horizonY + 8 + m * 14 + Math.sin(t * 1.1 + m) * 3;
-          const mistW = 95 + m * 22;
-          const mistH = 11 + m * 3.5;
-          const mistGrad = ctx.createRadialGradient(mistX, mistY, 2, mistX, mistY, mistW);
-          const mistColor = isMorning ? '254, 249, 195' : '253, 186, 116';
-          mistGrad.addColorStop(0, `rgba(${mistColor}, 0.22)`);
-          mistGrad.addColorStop(0.55, `rgba(${mistColor}, 0.1)`);
-          mistGrad.addColorStop(1, `rgba(${mistColor}, 0)`);
-          ctx.fillStyle = mistGrad;
-          ctx.beginPath();
-          ctx.ellipse(mistX, mistY, mistW, mistH, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        // Soft Crepuscular Sunbeams (God Rays) piercing through shore palms
-        const rayOrigins = isMorning ? [w * 0.08, w * 0.22, w * 0.39] : [w * 0.62, w * 0.78, w * 0.91];
-        rayOrigins.forEach((rx, rIdx) => {
-          const raySway = Math.sin(t * 0.8 + rIdx * 1.3) * 8;
-          const rayGrad = ctx.createLinearGradient(rx, horizonY - 22, rx + (isMorning ? 55 : -55), h * 0.78);
-          const rayRgb = isMorning ? '254, 240, 138' : '251, 146, 60';
-          rayGrad.addColorStop(0, `rgba(${rayRgb}, 0.22)`);
-          rayGrad.addColorStop(0.5, `rgba(${rayRgb}, 0.09)`);
-          rayGrad.addColorStop(1, `rgba(${rayRgb}, 0)`);
-          ctx.fillStyle = rayGrad;
-          ctx.beginPath();
-          ctx.moveTo(rx - 6, horizonY - 20);
-          ctx.lineTo(rx + 8, horizonY - 20);
-          ctx.lineTo(rx + (isMorning ? 68 : -42) + raySway, h * 0.82);
-          ctx.lineTo(rx + (isMorning ? 28 : -82) + raySway, h * 0.82);
-          ctx.closePath();
-          ctx.fill();
-        });
-        ctx.restore();
       }
 
       // 3. Cast Fishing Net Buoys on Left Side of Water
       if (fishingState.activeNet) {
         const netReady = Date.now() >= fishingState.activeNet.readyAt;
         const netSpoiled = Date.now() >= fishingState.activeNet.spoilAt;
-        const netX = w * 0.18;
-        const netY = h * 0.56 + Math.sin(t * 2.5) * 2.5;
-
+        const netX = w * 0.16;
+        const netY = h * 0.56 + Math.sin(t * 2.4) * 2;
         ctx.save();
-        ctx.strokeStyle = netSpoiled
-          ? 'rgba(239, 68, 68, 0.85)'
-          : netReady
-          ? 'rgba(52, 211, 153, 0.95)'
-          : 'rgba(251, 191, 36, 0.85)';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = netSpoiled ? '#ef4444' : netReady ? '#10b981' : '#f59e0b';
+        ctx.lineWidth = 1.8;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
-        ctx.ellipse(netX, netY, 28, 11, 0, 0, Math.PI * 2);
+        ctx.ellipse(netX, netY, 24, 9, 0, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-
-        [-24, -8, 8, 24].forEach((dx, i) => {
-          const by = netY + Math.sin(i * 1.5 + t * 3) * 3;
-          ctx.fillStyle = netSpoiled ? '#ef4444' : netReady ? '#10b981' : '#f59e0b';
-          ctx.beginPath();
-          ctx.arc(netX + dx, by - 4, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        });
         ctx.restore();
       }
 
       // 4. Underwater Swimming Fish Shadows
       swimmers.forEach((sw, idx) => {
         sw.x += sw.speed * sw.dir * 0.012;
-        if (sw.dir > 0 && sw.x > 1.12) sw.x = -0.12;
-        if (sw.dir < 0 && sw.x < -0.12) sw.x = 1.12;
-
+        if (sw.dir > 0 && sw.x > 1.1) sw.x = -0.1;
+        if (sw.dir < 0 && sw.x < -0.1) sw.x = 1.1;
         const fx = sw.x * w;
-        const fy = sw.y * h + Math.sin(t * 2 + idx) * 4;
-        const sc = sw.scale;
-
+        const fy = sw.y * h + Math.sin(t * 2 + idx) * 3;
         ctx.save();
         ctx.translate(fx, fy);
-        ctx.scale(sw.dir * sc, sc * 0.65);
-        ctx.fillStyle = `rgba(4, 24, 42, ${0.28 + sw.depth * 0.25})`;
+        ctx.scale(sw.dir * sw.scale, sw.scale * 0.62);
+        ctx.fillStyle = `rgba(3, 18, 34, ${0.3 + sw.depth * 0.22})`;
         ctx.beginPath();
-        ctx.ellipse(0, 0, 18, 7, 0, 0, Math.PI * 2);
-        ctx.fill();
-        const wag = Math.sin(t * 7 + idx * 2) * 4;
-        ctx.beginPath();
-        ctx.moveTo(-15, 0);
-        ctx.lineTo(-26, -7 + wag);
-        ctx.lineTo(-26, 7 + wag);
-        ctx.closePath();
+        ctx.ellipse(0, 0, 16, 6, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       });
 
-      // 4.5. Foreground Nile Papyrus Reeds & Lotus Lily Pads on Left Shore
-      ctx.save();
-      const lilyPads = [
-        { x: w * 0.09, y: h * 0.86, rx: 14, ry: 5.5, hasLotus: true },
-        { x: w * 0.16, y: h * 0.91, rx: 11, ry: 4.5, hasLotus: false }
-      ];
-      lilyPads.forEach((lp, idx) => {
-        const bob = Math.sin(t * 2.2 + idx) * 1.5;
-        ctx.fillStyle = isNight ? '#064e3b' : '#15803d';
-        ctx.beginPath();
-        ctx.ellipse(lp.x, lp.y + bob, lp.rx, lp.ry, 0, 0.25, Math.PI * 1.9);
-        ctx.lineTo(lp.x, lp.y + bob);
-        ctx.closePath();
-        ctx.fill();
-        if (lp.hasLotus) {
-          ctx.fillStyle = '#f472b6';
-          for (let p = -2; p <= 2; p++) {
-            ctx.beginPath();
-            ctx.ellipse(lp.x + p * 2.2, lp.y + bob - 3, 2.2, 4.5, p * 0.25, 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.fillStyle = '#fde047';
-          ctx.beginPath();
-          ctx.arc(lp.x, lp.y + bob - 2.5, 2, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      });
-
-      // Swaying Papyrus stalks on bottom-left corner
-      const reedOffsets = [8, 16, 25, 34, 43];
-      reedOffsets.forEach((rx, rIdx) => {
-        const reedSway = Math.sin(t * 1.8 + rIdx * 0.7) * 4.2;
-        const topX = rx + reedSway;
-        const topY = h - 38 - (rIdx % 3) * 10;
-        ctx.strokeStyle = isNight ? '#064e3b' : '#166534';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.moveTo(rx, h);
-        ctx.quadraticCurveTo(rx + reedSway * 0.4, h - 22, topX, topY);
-        ctx.stroke();
-        // Papyrus umbel tuft
-        ctx.strokeStyle = isNight ? '#047857' : '#4ade80';
-        ctx.lineWidth = 1;
-        for (let u = -2; u <= 2; u++) {
-          ctx.beginPath();
-          ctx.moveTo(topX, topY);
-          ctx.lineTo(topX + u * 3.2, topY - 6 + Math.abs(u));
-          ctx.stroke();
-        }
-      });
-      ctx.restore();
-
-      // 4.8. ATMOSPHERIC VFX: Night Fireflies / Midges & Wind-Borne Sand/Pollen Specks
+      // Night Fireflies
       if (isNight) {
-        ctx.save();
         fireflies.forEach((ff) => {
           const fx = ff.baseX * w + Math.cos(t * ff.speed + ff.phase) * ff.orbitRx;
-          const fy = ff.baseY * h + Math.sin(t * ff.speed * 1.3 + ff.phase) * ff.orbitRy;
-          const pulse = 0.25 + (Math.sin(t * 3.8 + ff.phase) * 0.5 + 0.5) * 0.75;
-          const ffGrad = ctx.createRadialGradient(fx, fy, 0.5, fx, fy, 7.5);
-          ffGrad.addColorStop(0, `rgba(255, 255, 255, ${pulse.toFixed(2)})`);
-          ffGrad.addColorStop(0.35, `rgba(${ff.hue}, ${(pulse * 0.75).toFixed(2)})`);
-          ffGrad.addColorStop(1, `rgba(${ff.hue}, 0)`);
-          ctx.fillStyle = ffGrad;
+          const fy = ff.baseY * h + Math.sin(t * ff.speed * 1.2 + ff.phase) * ff.orbitRy;
+          const alpha = 0.35 + (Math.sin(t * 3.5 + ff.phase) * 0.5 + 0.5) * 0.6;
+          ctx.fillStyle = `rgba(253, 224, 71, ${alpha.toFixed(2)})`;
           ctx.beginPath();
-          ctx.arc(fx, fy, 7.5, 0, Math.PI * 2);
+          ctx.arc(fx, fy, 2.1, 0, Math.PI * 2);
           ctx.fill();
         });
+      }
+
+      // 4.9. SANDSTORM WEATHER EFFECT («Песчаная буря»: падающие частицы песка и легкое снижение видимости фона)
+      if (isSandstormActive) {
+        ctx.save();
+        // Warm desert dust veil that slightly reduces visibility of background objects
+        ctx.fillStyle = isNight ? 'rgba(120, 72, 24, 0.24)' : 'rgba(217, 119, 6, 0.22)';
+        ctx.fillRect(0, 0, w, h);
+
+        // Diagonal falling & blowing sand particles across the screen
+        ctx.strokeStyle = isNight ? 'rgba(253, 224, 71, 0.42)' : 'rgba(254, 240, 138, 0.55)';
+        ctx.fillStyle = isNight ? 'rgba(251, 191, 36, 0.55)' : 'rgba(254, 249, 195, 0.7)';
+        for (let i = 0; i < sandParticles.length; i++) {
+          const sp = sandParticles[i];
+          const px = ((sp.x + t * sp.speedX) % 1.12 - 0.06) * w;
+          const py = ((sp.y + t * sp.speedY) % 1.12 - 0.06) * h;
+
+          // Diagonal wind streak
+          ctx.lineWidth = sp.size * 0.75;
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(px - sp.len, py - sp.len * 0.48);
+          ctx.stroke();
+
+          // Sand grain head
+          ctx.beginPath();
+          ctx.arc(px, py, sp.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
         ctx.restore();
       }
 
-      // Wind-borne glowing sand/dust particles drifting with the Nile breeze
-      ctx.save();
-      windParticles.forEach((wp) => {
-        const px = ((wp.x + t * wp.speedX) % 1.08 - 0.04) * w;
-        const py = wp.y * h + Math.sin(t * wp.freqY + wp.phase) * wp.ampY;
-        const alpha = 0.22 + Math.sin(t * 2.5 + wp.phase) * 0.14;
-        ctx.fillStyle = isNight
-          ? `rgba(186, 230, 253, ${Math.max(0.08, alpha).toFixed(2)})`
-          : `rgba(254, 240, 138, ${Math.max(0.12, alpha + 0.1).toFixed(2)})`;
-        ctx.beginPath();
-        ctx.arc(px, py, wp.size, 0, Math.PI * 2);
-        ctx.fill();
-      });
-      ctx.restore();
-
-      // 5. Float & High-Detail Rod Coordinates (Anchored to selected Depth Zone!)
-      const rodBaseX = w * 0.84;
-      const rodBaseY = h * 0.99;
+      // ============================================================================
+      // 5. HIGH-VISIBILITY TACKLE: FOREGROUND ROD, CONTRASTED LINE & GLOWING BOBBER
+      // Always visible on top of water, night sky, and sandstorm!
+      // ============================================================================
+      const rodBaseX = w * 0.87;
+      const rodBaseY = h * 0.98;
       const biteShake =
         curPhase === 'bite'
           ? Math.sin(t * 42) * 7.5
           : curPhase === 'reeling'
-          ? Math.sin(t * (isThrash ? 48 : 26)) * (isThrash ? 8.5 : 3.5)
+          ? Math.sin(t * (isThrash ? 46 : 24)) * (isThrash ? 8.0 : 3.2)
           : curPhase === 'nibble'
           ? Math.sin(t * 24) * 3.8
           : 0;
       const rodBend =
         curPhase === 'reeling'
-          ? 24 + (tensionRef.current / 100) * 30
+          ? 22 + (tensionRef.current / 100) * 28
           : curPhase === 'bite'
-          ? 22
+          ? 20
           : curPhase === 'nibble'
           ? 8 + Math.sin(t * 18) * 3
           : curPhase === 'casting'
-          ? -14
+          ? -12
           : 4;
 
-      const rodTipX = w * 0.56 - rodBend * 0.62 + biteShake * 0.45;
-      const rodTipY = h * 0.2 + rodBend * 0.88 + Math.sin(t * 2.2) * 2 + biteShake * 0.35;
-      const rodCtrlX = w * 0.72 - rodBend * 0.2;
-      const rodCtrlY = h * 0.5 + rodBend * 0.42;
+      const rodTipX = w * 0.55 - rodBend * 0.58 + biteShake * 0.45;
+      const rodTipY = h * 0.17 + rodBend * 0.82 + Math.sin(t * 2.2) * 1.8 + biteShake * 0.35;
+      const rodCtrlX = w * 0.73 - rodBend * 0.2;
+      const rodCtrlY = h * 0.48 + rodBend * 0.4;
 
       const targetFloatX = w * activeDepthZoneObj.floatTargetXRatio;
       const targetFloatY = h * activeDepthZoneObj.floatTargetYRatio;
 
+      // Bobber is ALWAYS shown on screen so the player never loses sight of their tackle
       let floatX = targetFloatX;
-      let floatY = targetFloatY;
-      let showFloat = false;
+      let floatY = targetFloatY + Math.sin(t * 2.8) * 2.2;
 
       if (curPhase === 'casting') {
-        showFloat = true;
         const p = Math.min(1, Math.max(0, castProgRef.current));
         floatX = rodTipX + (targetFloatX - rodTipX) * p;
-        const arcLift = Math.sin(p * Math.PI) * 62;
+        const arcLift = Math.sin(p * Math.PI) * 58;
         floatY = rodTipY + (targetFloatY - rodTipY) * p - arcLift;
       } else if (
         curPhase === 'waiting' ||
@@ -1981,360 +1818,335 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         curPhase === 'bite' ||
         curPhase === 'reeling'
       ) {
-        showFloat = true;
-        const reelPull = curPhase === 'reeling' ? (reelProgRef.current / 100) * 0.65 : 0;
-        // Bobber plunges deep underwater during bite & jerks on nibble
+        const reelPull = curPhase === 'reeling' ? (reelProgRef.current / 100) * 0.58 : 0;
         const bobOffset =
           curPhase === 'bite'
-            ? 15 + Math.sin(t * 38) * 7.2
+            ? 12 + Math.sin(t * 36) * 6.5
             : curPhase === 'nibble'
-            ? 4.5 + Math.sin(t * 26) * 4.2
+            ? 4.0 + Math.sin(t * 26) * 4.0
             : curPhase === 'reeling'
-            ? 5.5 + Math.sin(t * (isThrash ? 40 : 22)) * (isThrash ? 7.2 : 3.5)
-            : Math.sin(t * 3.2) * 2.5;
+            ? 4.5 + Math.sin(t * (isThrash ? 38 : 20)) * (isThrash ? 6.5 : 3.2)
+            : Math.sin(t * 3.0) * 2.4;
         floatX =
           targetFloatX +
-          (rodBaseX * 0.68 - targetFloatX) * reelPull +
-          (curPhase === 'reeling' ? Math.sin(t * (isThrash ? 18 : 9)) * (isThrash ? 24 : 12) : 0) +
+          (rodBaseX * 0.66 - targetFloatX) * reelPull +
+          (curPhase === 'reeling' ? Math.sin(t * (isThrash ? 16 : 8)) * (isThrash ? 20 : 10) : 0) +
           (curPhase === 'nibble' ? Math.cos(t * 20) * 2.2 : 0);
-        floatY = targetFloatY + (h * 0.84 - targetFloatY) * reelPull + bobOffset;
+        floatY = targetFloatY + (h * 0.81 - targetFloatY) * reelPull + bobOffset;
       }
 
-      // 6. Cast Touchdown Concentric Water Rings, Bite Ripples, Splash Droplets & Bobber
-      const msSinceCastLand = now - castSplashTimestampRef.current;
-      if (msSinceCastLand >= 0 && msSinceCastLand < 2200) {
-        // Expanding concentric rings when the bobber hits the water on cast!
-        const castSplashProg = msSinceCastLand / 2200;
+      // 6. 1-SECOND AUTO-EXPIRING WATER RINGS & SPLASH DROPLET SPRITES AT BOBBER POINT
+      // Triggered on «Рыба притихла» (calm), active reeling, bite, and cast touchdown; disappears in 1.0s without memory bloat!
+      const activeBursts = waterBurstsRef.current;
+      for (let i = activeBursts.length - 1; i >= 0; i--) {
+        const ageMs = now - activeBursts[i].bornAt;
+        if (ageMs >= 1000) {
+          activeBursts.splice(i, 1);
+          continue;
+        }
+        const p = Math.max(0, Math.min(1, ageMs / 1000)); // 0..1 over exactly 1 second
+        const fade = 1 - p;
+        const kind = activeBursts[i].kind;
+        const ringColor =
+          kind === 'calm'
+            ? `rgba(110, 231, 183, ${(fade * 0.9).toFixed(2)})`
+            : kind === 'bite'
+            ? `rgba(253, 224, 71, ${(fade * 0.95).toFixed(2)})`
+            : `rgba(224, 242, 254, ${(fade * 0.88).toFixed(2)})`;
+
         ctx.save();
-        for (let cr = 0; cr < 5; cr++) {
-          const ringDelay = cr * 0.12;
-          const rLocal = Math.max(0, Math.min(1, (castSplashProg - ringDelay) / (1 - ringDelay)));
-          if (rLocal <= 0 || rLocal >= 1) continue;
-          const rx = 6 + rLocal * (48 + cr * 12);
-          const ry = rx * 0.36;
-          const alpha = (1 - rLocal) * 0.82;
-          ctx.strokeStyle = `rgba(224, 242, 254, ${alpha.toFixed(3)})`;
-          ctx.lineWidth = (1 - rLocal) * 2.4 + 0.5;
-          ctx.beginPath();
-          ctx.ellipse(targetFloatX, targetFloatY + 3, rx, ry, 0, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-        // Initial water crown droplets on cast impact (first 650ms)
-        if (msSinceCastLand < 650) {
-          const dropP = msSinceCastLand / 650;
-          ctx.fillStyle = `rgba(224, 242, 254, ${(1 - dropP) * 0.9})`;
-          for (let d = 0; d < 10; d++) {
-            const ang = -Math.PI * 0.15 - (d / 9) * Math.PI * 0.7;
-            const dist = dropP * (18 + (d % 3) * 8);
-            const dx = targetFloatX + Math.cos(ang) * dist;
-            const dy = targetFloatY + Math.sin(ang) * dist + dropP * dropP * 22;
-            ctx.beginPath();
-            ctx.arc(dx, dy, (1 - dropP) * 2.4, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-        ctx.restore();
-      }
-
-      // Catch Extraction Water Splash & Golden Burst on Canvas (when fish/artifact is pulled out!)
-      const msSinceCatch = now - catchSplashTimestampRef.current;
-      if (msSinceCatch >= 0 && msSinceCatch < 1800) {
-        const cp = msSinceCatch / 1800;
-        const isGold = catchIsGoldenRef.current;
-        const splashCX = w * 0.54;
-        const splashCY = h * 0.76;
-        ctx.save();
-        if (isGold) {
-          const burstGrad = ctx.createRadialGradient(splashCX, splashCY, 4, splashCX, splashCY, 95 * (0.4 + cp * 0.8));
-          burstGrad.addColorStop(0, `rgba(254, 240, 138, ${((1 - cp) * 0.75).toFixed(2)})`);
-          burstGrad.addColorStop(0.5, `rgba(245, 158, 11, ${((1 - cp) * 0.4).toFixed(2)})`);
-          burstGrad.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = burstGrad;
-          ctx.beginPath();
-          ctx.arc(splashCX, splashCY, 110, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        for (let sr = 0; sr < 4; sr++) {
-          const rp = Math.min(1, cp * 1.25 - sr * 0.12);
-          if (rp > 0 && rp < 1) {
-            ctx.strokeStyle = isGold
-              ? `rgba(253, 224, 71, ${((1 - rp) * 0.85).toFixed(2)})`
-              : `rgba(186, 230, 253, ${((1 - rp) * 0.8).toFixed(2)})`;
-            ctx.lineWidth = 2.4 * (1 - rp);
-            ctx.beginPath();
-            ctx.ellipse(splashCX, splashCY, 12 + rp * 68, (12 + rp * 68) * 0.36, 0, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-        }
-        for (let sp = 0; sp < 22; sp++) {
-          const angle = -Math.PI * 0.1 - (sp / 21) * Math.PI * 0.8;
-          const speed = 28 + (sp % 5) * 14;
-          const dx = splashCX + Math.cos(angle) * speed * cp;
-          const dy = splashCY + Math.sin(angle) * speed * cp + cp * cp * 48;
-          ctx.fillStyle =
-            isGold && sp % 2 === 0
-              ? `rgba(253, 224, 71, ${((1 - cp) * 0.95).toFixed(2)})`
-              : `rgba(224, 242, 254, ${((1 - cp) * 0.9).toFixed(2)})`;
-          ctx.beginPath();
-          ctx.arc(dx, dy, (1 - cp) * (sp % 3 === 0 ? 3.2 : 2.1), 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-
-      if (showFloat && (curPhase !== 'casting' || castProgRef.current > 0.85)) {
-        // Ambient & Nibble concentric water ripples while bobber rests/jerks on water
-        if (curPhase === 'waiting' || curPhase === 'nibble') {
-          const ringTotal = curPhase === 'nibble' ? 5 : 3;
-          for (let wr = 0; wr < ringTotal; wr++) {
-            const ripProg = (t * (curPhase === 'nibble' ? 1.65 : 0.85) + wr / ringTotal) % 1;
-            const rRadX = 5 + ripProg * (curPhase === 'nibble' ? 40 : 26);
-            const rRadY = rRadX * 0.38;
-            ctx.strokeStyle =
-              curPhase === 'nibble'
-                ? `rgba(253, 224, 71, ${(1 - ripProg) * 0.78})`
-                : `rgba(186, 230, 253, ${(1 - ripProg) * 0.52})`;
-            ctx.lineWidth = curPhase === 'nibble' ? 1.85 : 1.15;
-            ctx.beginPath();
-            ctx.ellipse(floatX, floatY + 3, rRadX, rRadY, 0, 0, Math.PI * 2);
-            ctx.stroke();
-          }
-        }
-
-        const rippleCount = curPhase === 'bite' || curPhase === 'reeling' ? 5 : 2;
-        for (let r = 0; r < rippleCount; r++) {
-          const rPhase =
-            (t * (curPhase === 'bite' || curPhase === 'reeling' ? 2.6 : 0.9) + r / rippleCount) % 1;
-          const rx = 8 + rPhase * (curPhase === 'bite' || isThrash ? 48 : 26);
+        // 3 expanding concentric water rings around the bobber
+        for (let r = 0; r < 3; r++) {
+          const rp = Math.max(0, Math.min(1, p * 1.25 - r * 0.16));
+          if (rp <= 0 || rp >= 1) continue;
+          const rx = 10 + rp * (kind === 'reeling' || kind === 'bite' ? 46 : 36);
           const ry = rx * 0.38;
-          ctx.strokeStyle =
-            curPhase === 'reeling' && isThrash
-              ? `rgba(252, 165, 165, ${(1 - rPhase) * 0.85})`
-              : curPhase === 'bite'
-              ? `rgba(253, 224, 71, ${(1 - rPhase) * 0.85})`
-              : `rgba(186, 230, 253, ${(1 - rPhase) * 0.7})`;
-          ctx.lineWidth = curPhase === 'bite' || isThrash ? 2.4 : 1.3;
+          ctx.strokeStyle = ringColor;
+          ctx.lineWidth = (1 - rp) * 2.4 + 0.6;
           ctx.beginPath();
-          ctx.ellipse(floatX, floatY + 4, rx, ry, 0, 0, Math.PI * 2);
+          ctx.ellipse(floatX, floatY + 5, rx, ry, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Splash droplets flying up on nibble, active bite, or fish thrashing
-        if (curPhase === 'nibble' || curPhase === 'bite' || (curPhase === 'reeling' && isThrash)) {
-          ctx.save();
-          const dropCount = curPhase === 'nibble' ? 4 : 9;
-          ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
-          for (let sp = 0; sp < dropCount; sp++) {
-            const spPhase = (t * (curPhase === 'nibble' ? 3.2 : 4.8) + sp * (1 / dropCount)) % 1;
-            const angle = -Math.PI * 0.16 - (sp / Math.max(1, dropCount - 1)) * Math.PI * 0.68;
-            const dist = spPhase * (curPhase === 'nibble' ? 14 : 26);
-            const dx = floatX + Math.cos(angle) * dist;
-            const dy = floatY + Math.sin(angle) * dist + spPhase * spPhase * 18;
-            ctx.beginPath();
-            ctx.arc(dx, dy, (1 - spPhase) * (curPhase === 'nibble' ? 1.6 : 2.4), 0, Math.PI * 2);
-            ctx.fill();
-          }
-          ctx.restore();
-        }
-
-        // Hooked Fish Shadow thrashing below the bobber
-        if (curPhase === 'bite' || curPhase === 'reeling') {
-          ctx.save();
-          ctx.translate(floatX + Math.sin(t * 14) * 5, floatY + 11);
-          ctx.fillStyle = 'rgba(2, 12, 27, 0.72)';
+        // 6 lightweight animated splash droplet sprites arcing up and vanishing within 1 second
+        ctx.fillStyle =
+          kind === 'calm'
+            ? `rgba(167, 243, 208, ${(fade * 0.92).toFixed(2)})`
+            : `rgba(224, 242, 254, ${(fade * 0.95).toFixed(2)})`;
+        for (let d = 0; d < 6; d++) {
+          const angle = -Math.PI * 0.15 - (d / 5) * Math.PI * 0.7;
+          const dist = p * (16 + (d % 3) * 8);
+          const dx = floatX + Math.cos(angle) * dist;
+          const dy = floatY + Math.sin(angle) * dist - Math.sin(p * Math.PI) * 14 + p * p * 16;
+          const dropRadius = Math.max(0.6, fade * (d % 2 === 0 ? 2.6 : 1.9));
           ctx.beginPath();
-          ctx.ellipse(0, 0, 24, 9.5, Math.sin(t * 6) * 0.22, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-
-        // High-Detail Egyptian Bobber Sprite
-        ctx.save();
-        ctx.translate(floatX, floatY);
-        ctx.rotate(
-          curPhase === 'bite'
-            ? Math.sin(t * 28) * 0.44
-            : curPhase === 'nibble'
-            ? Math.sin(t * 22) * 0.24
-            : curPhase === 'reeling'
-            ? isThrash
-              ? Math.sin(t * 36) * 0.54
-              : -0.42
-            : Math.sin(t * 2.5) * 0.08
-        );
-
-        // Golden aura around bobber during bite or active cold current/chum
-        if (curPhase === 'bite' || Boolean(activeBait) || activeColdCurrent.zoneId === selectedDepthZoneId) {
-          const auraGrad = ctx.createRadialGradient(0, -4, 2, 0, -4, curPhase === 'bite' ? 22 : 14);
-          auraGrad.addColorStop(0, curPhase === 'bite' ? 'rgba(250, 204, 21, 0.8)' : 'rgba(56, 189, 248, 0.48)');
-          auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
-          ctx.fillStyle = auraGrad;
-          ctx.beginPath();
-          ctx.arc(0, -4, curPhase === 'bite' ? 22 : 14, 0, Math.PI * 2);
+          ctx.arc(dx, dy, dropRadius, 0, Math.PI * 2);
           ctx.fill();
         }
-
-        // Submerged lower quill stem
-        ctx.strokeStyle = '#92400e';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, 5);
-        ctx.lineTo(0, 12);
-        ctx.stroke();
-
-        // Main painted Egyptian balsa body (Gold & Turquoise lower half, Crimson upper dome)
-        ctx.fillStyle = '#facc15';
-        ctx.beginPath();
-        ctx.ellipse(0, 2, 5.8, 8, 0, 0, Math.PI * 2);
-        ctx.fill();
-
-        // Turquoise middle band
-        ctx.fillStyle = '#06b6d4';
-        ctx.fillRect(-5.4, -2, 10.8, 3);
-
-        // Crimson top dome
-        ctx.fillStyle = '#ef4444';
-        ctx.beginPath();
-        ctx.ellipse(0, -3, 5.5, 5.8, 0, Math.PI, Math.PI * 2);
-        ctx.fill();
-
-        // Specular highlight on bobber body
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
-        ctx.beginPath();
-        ctx.ellipse(-2, -2, 1.5, 4, -0.2, 0, Math.PI * 2);
-        ctx.fill();
-
-        // High-visibility antenna tip with glowing bead
-        ctx.strokeStyle = curPhase === 'bite' ? '#fef08a' : '#facc15';
-        ctx.lineWidth = 2.2;
-        ctx.beginPath();
-        ctx.moveTo(0, -8);
-        ctx.lineTo(0, -19);
-        ctx.stroke();
-
-        ctx.fillStyle = curPhase === 'bite' ? '#22d3ee' : '#fb7185';
-        ctx.beginPath();
-        ctx.arc(0, -19.5, 2.8, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
       }
 
-      // 7. Realistic Taut / Vibrating Fishing Line
+      // Continuous subtle ambient ripple around bobber on water
+      if (curPhase !== 'casting' || castProgRef.current > 0.85) {
+        const ambPhase = (t * (curPhase === 'reeling' || curPhase === 'bite' ? 1.8 : 0.75)) % 1;
+        const ambRx = 9 + ambPhase * 24;
+        ctx.strokeStyle = `rgba(186, 230, 253, ${((1 - ambPhase) * 0.65).toFixed(2)})`;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.ellipse(floatX, floatY + 5, ambRx, ambRx * 0.38, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // Catch Extraction Golden/Water Splash on Canvas
+      const msSinceCatch = now - catchSplashTimestampRef.current;
+      if (msSinceCatch >= 0 && msSinceCatch < 1200) {
+        const cp = msSinceCatch / 1200;
+        const fade = 1 - cp;
+        const splashCX = w * 0.52;
+        const splashCY = h * 0.72;
+        ctx.save();
+        ctx.strokeStyle = catchIsGoldenRef.current
+          ? `rgba(253, 224, 71, ${(fade * 0.9).toFixed(2)})`
+          : `rgba(186, 230, 253, ${(fade * 0.85).toFixed(2)})`;
+        ctx.lineWidth = 2.5 * fade;
+        ctx.beginPath();
+        ctx.ellipse(splashCX, splashCY, 14 + cp * 58, (14 + cp * 58) * 0.36, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 7. ENLARGED HIGH-VISIBILITY BOBBER WITH SOFT LUMINOUS HALO GLOW
+      ctx.save();
+      ctx.translate(floatX, floatY);
+      ctx.rotate(
+        curPhase === 'bite'
+          ? Math.sin(t * 28) * 0.42
+          : curPhase === 'nibble'
+          ? Math.sin(t * 22) * 0.24
+          : curPhase === 'reeling'
+          ? isThrash
+            ? Math.sin(t * 34) * 0.48
+            : -0.34
+          : Math.sin(t * 2.5) * 0.07
+      );
+
+      // Soft Luminous Glow Halo around the Bobber (always active so it stands out at night & in sandstorms)
+      const haloRadius = curPhase === 'bite' ? 36 : curPhase === 'reeling' ? 30 : 26;
+      const bobberGlow = ctx.createRadialGradient(0, -6, 2, 0, -6, haloRadius);
+      if (curPhase === 'bite') {
+        bobberGlow.addColorStop(0, 'rgba(254, 240, 138, 0.95)');
+        bobberGlow.addColorStop(0.45, 'rgba(250, 204, 21, 0.55)');
+        bobberGlow.addColorStop(1, 'rgba(250, 204, 21, 0)');
+      } else if (curPhase === 'reeling' && isThrash) {
+        bobberGlow.addColorStop(0, 'rgba(254, 202, 202, 0.9)');
+        bobberGlow.addColorStop(0.45, 'rgba(239, 68, 68, 0.5)');
+        bobberGlow.addColorStop(1, 'rgba(239, 68, 68, 0)');
+      } else {
+        bobberGlow.addColorStop(0, 'rgba(254, 249, 195, 0.85)');
+        bobberGlow.addColorStop(0.42, 'rgba(56, 189, 248, 0.45)');
+        bobberGlow.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      }
+      ctx.fillStyle = bobberGlow;
+      ctx.beginPath();
+      ctx.arc(0, -6, haloRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Submerged lower quill stem
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(0, 7);
+      ctx.lineTo(0, 16);
+      ctx.stroke();
+
+      // Dark outer contrast outline around enlarged bobber body
+      ctx.fillStyle = '#090d16';
+      ctx.beginPath();
+      ctx.ellipse(0, 1, 10.2, 13.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Enlarged Egyptian Balsa Body — Golden lower half
+      ctx.fillStyle = '#facc15';
+      ctx.beginPath();
+      ctx.ellipse(0, 2, 8.6, 11.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Luminous Turquoise middle band
+      ctx.fillStyle = '#22d3ee';
+      ctx.fillRect(-8.2, -3, 16.4, 4.2);
+
+      // Bright Crimson-Orange upper dome
+      ctx.fillStyle = '#ef4444';
+      ctx.beginPath();
+      ctx.ellipse(0, -3.5, 8.2, 8.5, 0, Math.PI, Math.PI * 2);
+      ctx.fill();
+
+      // White specular shine on bobber
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.78)';
+      ctx.beginPath();
+      ctx.ellipse(-3, -3.5, 2.2, 5.5, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // High-visibility tall antenna with dark casing + neon core
+      ctx.strokeStyle = '#090d16';
+      ctx.lineWidth = 4.6;
+      ctx.beginPath();
+      ctx.moveTo(0, -11);
+      ctx.lineTo(0, -28);
+      ctx.stroke();
+
+      ctx.strokeStyle = curPhase === 'bite' ? '#ffffff' : '#fef08a';
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(0, -11);
+      ctx.lineTo(0, -28);
+      ctx.stroke();
+
+      // Glowing fiber-optic beacon tip at top of antenna
+      ctx.fillStyle = '#090d16';
+      ctx.beginPath();
+      ctx.arc(0, -29, 5.6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = curPhase === 'bite' ? '#22d3ee' : curPhase === 'reeling' && isThrash ? '#ef4444' : '#fde047';
+      ctx.beginPath();
+      ctx.arc(0, -29, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(-1.2, -30.2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // 8. HIGH-CONTRAST FISHING LINE (Dual-pass with real-time physical tension visualization)
       const lineHighTension = curPhase === 'reeling' && tensionRef.current >= 78;
       const lineMedTension = curPhase === 'reeling' && tensionRef.current >= 48;
+      const isTaut = curPhase === 'reeling' || curPhase === 'bite';
+      const vibration = isTaut
+        ? Math.sin(t * (lineHighTension ? 75 : 42)) * (lineHighTension ? 4.2 : 2.0)
+        : curPhase === 'nibble'
+        ? Math.sin(t * 28) * 1.5
+        : 0;
+      const slack = isTaut ? vibration : 16 + Math.sin(t * 2.5) * 2.2;
+      const attachX = floatX;
+      const attachY = floatY - 27;
+      const midX = (rodTipX + attachX) * 0.5 + vibration * 0.5;
+      const midY = (rodTipY + attachY) * 0.5 + slack;
+
       ctx.save();
-      ctx.strokeStyle = lineHighTension
-        ? '#ef4444'
-        : lineMedTension
-        ? '#fbbf24'
-        : curPhase === 'bite'
-        ? '#fde047'
-        : 'rgba(241, 245, 249, 0.92)';
-      ctx.lineWidth = curPhase === 'reeling' ? 1.9 : 1.35;
-      if (lineHighTension || curPhase === 'bite') {
-        ctx.shadowColor = lineHighTension ? '#ef4444' : '#fde047';
-        ctx.shadowBlur = 7;
-      }
+      ctx.lineCap = 'round';
+      // Pass 1: Dark high-contrast outer casing so line never blends into bright sky/sand/water
+      ctx.strokeStyle = 'rgba(5, 10, 20, 0.85)';
+      ctx.lineWidth = isTaut ? 4.6 : 3.8;
       ctx.beginPath();
       ctx.moveTo(rodTipX, rodTipY);
-      if (showFloat) {
-        const midX = (rodTipX + floatX) * 0.5;
-        const isTaut = curPhase === 'reeling' || curPhase === 'bite';
-        const vibration = isTaut
-          ? Math.sin(t * (lineHighTension ? 75 : 42)) * (lineHighTension ? 3.5 : 1.8)
-          : curPhase === 'nibble'
-          ? Math.sin(t * 28) * 1.2
-          : 0;
-        const slack = isTaut ? vibration : 18 + Math.sin(t * 2.5) * 2;
-        const midY = (rodTipY + floatY) * 0.5 + slack;
-        ctx.quadraticCurveTo(midX + vibration * 0.5, midY, floatX, floatY - 18);
-      } else {
-        ctx.quadraticCurveTo(rodTipX - 8, rodTipY + 28, rodTipX - 4, rodTipY + 46);
-      }
+      ctx.quadraticCurveTo(midX, midY, attachX, attachY);
+      ctx.stroke();
+
+      // Pass 2: Bright luminous inner line showing tension state
+      ctx.strokeStyle = lineHighTension
+        ? '#ff3b3b'
+        : lineMedTension
+        ? '#facc15'
+        : curPhase === 'bite'
+        ? '#fde047'
+        : curPhase === 'reeling'
+        ? '#6ee7b7'
+        : '#e0f2fe';
+      ctx.lineWidth = isTaut ? 2.6 : 2.0;
+      ctx.beginPath();
+      ctx.moveTo(rodTipX, rodTipY);
+      ctx.quadraticCurveTo(midX, midY, attachX, attachY);
       ctx.stroke();
       ctx.restore();
 
-      // 8. High-Detail Foreground Fishing Rod with Guides & Spinning Reel
+      // 9. HIGH-VISIBILITY FOREGROUND FISHING ROD, SPINNING REEL & GLOWING ROD TIP
       ctx.save();
-      // Drop shadow
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = 7.5;
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(rodBaseX + 4, rodBaseY);
-      ctx.quadraticCurveTo(rodCtrlX + 3, rodCtrlY + 4, rodTipX + 3, rodTipY + 4);
-      ctx.stroke();
 
-      // Guide rings along the rod blank
-      [0.32, 0.55, 0.78, 0.96].forEach((gt) => {
-        const omt = 1 - gt;
-        const gx = omt * omt * rodBaseX + 2 * omt * gt * rodCtrlX + gt * gt * rodTipX;
-        const gy = omt * omt * rodBaseY + 2 * omt * gt * rodCtrlY + gt * gt * rodTipY;
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.arc(gx - 3, gy + 2, 2.8 * (1 - gt * 0.35), 0, Math.PI * 2);
-        ctx.stroke();
-      });
-
-      // Main tapered rod blank
-      const rodGrad = ctx.createLinearGradient(rodBaseX, rodBaseY, rodTipX, rodTipY);
-      if (equippedRod.level >= 5) {
-        rodGrad.addColorStop(0, '#f59e0b');
-        rodGrad.addColorStop(0.5, '#22d3ee');
-        rodGrad.addColorStop(1, '#fde047');
-      } else if (equippedRod.level === 4) {
-        rodGrad.addColorStop(0, '#92400e');
-        rodGrad.addColorStop(0.5, '#fbbf24');
-        rodGrad.addColorStop(1, '#fef08a');
-      } else if (equippedRod.level === 3) {
-        rodGrad.addColorStop(0, '#1e293b');
-        rodGrad.addColorStop(0.5, '#0284c7');
-        rodGrad.addColorStop(1, '#7dd3fc');
-      } else if (equippedRod.level === 2) {
-        rodGrad.addColorStop(0, '#365314');
-        rodGrad.addColorStop(0.5, '#65a30d');
-        rodGrad.addColorStop(1, '#bef264');
-      } else {
-        rodGrad.addColorStop(0, '#78350f');
-        rodGrad.addColorStop(0.5, '#b45309');
-        rodGrad.addColorStop(1, '#fcd34d');
-      }
-
-      ctx.strokeStyle = rodGrad;
-      ctx.lineWidth = 5.5;
+      // Outer dark contrast border around rod blank
+      ctx.strokeStyle = '#050811';
+      ctx.lineWidth = 9.5;
       ctx.beginPath();
       ctx.moveTo(rodBaseX, rodBaseY);
       ctx.quadraticCurveTo(rodCtrlX, rodCtrlY, rodTipX, rodTipY);
       ctx.stroke();
 
-      // Glowing rod tip indicator so player clearly sees rod tip twitching on nibble/bite
-      ctx.fillStyle = curPhase === 'bite' ? '#fef08a' : curPhase === 'nibble' ? '#38bdf8' : '#f59e0b';
+      // Golden guide rings along the rod blank
+      [0.3, 0.54, 0.76, 0.94].forEach((gt) => {
+        const omt = 1 - gt;
+        const gx = omt * omt * rodBaseX + 2 * omt * gt * rodCtrlX + gt * gt * rodTipX;
+        const gy = omt * omt * rodBaseY + 2 * omt * gt * rodCtrlY + gt * gt * rodTipY;
+        ctx.strokeStyle = '#fde047';
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        ctx.arc(gx - 3.5, gy + 2.5, 3.2 * (1 - gt * 0.3), 0, Math.PI * 2);
+        ctx.stroke();
+      });
+
+      // Main tapered rod blank
+      const rodGrad = ctx.createLinearGradient(rodBaseX, rodBaseY, rodTipX, rodTipY);
+      rodGrad.addColorStop(0, '#78350f');
+      rodGrad.addColorStop(0.45, '#d97706');
+      rodGrad.addColorStop(0.82, '#fbbf24');
+      rodGrad.addColorStop(1, '#fef08a');
+      ctx.strokeStyle = rodGrad;
+      ctx.lineWidth = 6.2;
       ctx.beginPath();
-      ctx.arc(rodTipX, rodTipY, curPhase === 'bite' || curPhase === 'nibble' ? 3.2 : 2.2, 0, Math.PI * 2);
+      ctx.moveTo(rodBaseX, rodBaseY);
+      ctx.quadraticCurveTo(rodCtrlX, rodCtrlY, rodTipX, rodTipY);
+      ctx.stroke();
+
+      // Soft luminous glow + high-contrast beacon at Rod Tip so player clearly sees rod tip twitching
+      const tipGlow = ctx.createRadialGradient(rodTipX, rodTipY, 1, rodTipX, rodTipY, 14);
+      tipGlow.addColorStop(
+        0,
+        curPhase === 'bite' || lineHighTension ? 'rgba(254, 240, 138, 0.95)' : 'rgba(56, 189, 248, 0.85)'
+      );
+      tipGlow.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = tipGlow;
+      ctx.beginPath();
+      ctx.arc(rodTipX, rodTipY, 14, 0, Math.PI * 2);
       ctx.fill();
 
-      // Ornate Egyptian Cork/Gold Handle Grip & Spinning Reel at base
+      ctx.fillStyle = '#090d16';
+      ctx.beginPath();
+      ctx.arc(rodTipX, rodTipY, 5.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle =
+        curPhase === 'bite'
+          ? '#fde047'
+          : lineHighTension
+          ? '#ef4444'
+          : curPhase === 'reeling'
+          ? '#34d399'
+          : '#38bdf8';
+      ctx.beginPath();
+      ctx.arc(rodTipX, rodTipY, 3.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Spinning Reel at rod base
       const reelT = 0.22;
       const omtR = 1 - reelT;
       const reelX = omtR * omtR * rodBaseX + 2 * omtR * reelT * rodCtrlX + reelT * reelT * rodTipX;
       const reelY = omtR * omtR * rodBaseY + 2 * omtR * reelT * rodCtrlY + reelT * reelT * rodTipY;
 
-      ctx.fillStyle = '#1e293b';
-      ctx.strokeStyle = '#fbbf24';
-      ctx.lineWidth = 1.8;
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
-      ctx.arc(reelX - 7, reelY + 5, 7.5, 0, Math.PI * 2);
+      ctx.arc(reelX - 8, reelY + 5, 9, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
-      // Rotating reel crank handle when reeling
       const crankAngle = curPhase === 'reeling' ? t * (holdingReelRef.current ? 18 : 5) : 0.6;
-      ctx.strokeStyle = '#fde047';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#fef08a';
+      ctx.lineWidth = 2.4;
       ctx.beginPath();
-      ctx.moveTo(reelX - 7, reelY + 5);
-      ctx.lineTo(reelX - 7 + Math.cos(crankAngle) * 7, reelY + 5 + Math.sin(crankAngle) * 7);
+      ctx.moveTo(reelX - 8, reelY + 5);
+      ctx.lineTo(reelX - 8 + Math.cos(crankAngle) * 8, reelY + 5 + Math.sin(crankAngle) * 8);
       ctx.stroke();
       ctx.restore();
 
@@ -2343,7 +2155,17 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
     animId = requestAnimationFrame(renderFrame);
     return () => cancelAnimationFrame(animId);
-  }, [activeTab, equippedRod.level, currentLocation, fishingState.activeNet, selectedDepthZoneId, activeBait, activeColdCurrent.zoneId, activeTimeOfDay]);
+  }, [
+    activeTab,
+    equippedRod.level,
+    currentLocation,
+    fishingState.activeNet,
+    selectedDepthZoneId,
+    activeBait,
+    activeColdCurrent.zoneId,
+    activeTimeOfDay,
+    isSandstormActive
+  ]);
 
   // Filtered fishes for the Collection Album tab
   const filteredFishes = useMemo(() => {
@@ -2607,7 +2429,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     </div>
                     <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#0b0703] border border-amber-500/40 shadow-inner">
                       <div
-                        className={`h-full transition-all duration-300 ${
+                        className={`h-full w-full origin-left will-change-transform transition-transform duration-300 ${
                           isKeepnetFull
                             ? 'bg-gradient-to-r from-red-600 to-rose-400'
                             : keepnetFishList.length >= keepnetCapacity * 0.75
@@ -2615,10 +2437,10 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                             : 'bg-gradient-to-r from-emerald-600 via-teal-400 to-amber-300'
                         }`}
                         style={{
-                          width: `${Math.min(
-                            100,
-                            Math.round((keepnetFishList.length / Math.max(1, keepnetCapacity)) * 100)
-                          )}%`
+                          transform: `scaleX(${Math.min(
+                            1,
+                            Math.max(0, keepnetFishList.length / Math.max(1, keepnetCapacity))
+                          ).toFixed(3)})`
                         }}
                       />
                     </div>
@@ -2736,6 +2558,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     <div className="flex items-center gap-1 font-black">
                       <span>{activeWeatherInfo.weather.icon}</span>
                       <span>Погода: {activeWeatherInfo.weather.name}</span>
+                      {isSandstormActive && (
+                        <span className="rounded bg-amber-600/90 px-1 py-0.2 text-[7.5px] font-black text-white">
+                          🌪️ Песчаная буря
+                        </span>
+                      )}
                     </div>
                     <div className="text-[8px] opacity-90 leading-tight mt-0.5">
                       {activeWeatherInfo.weather.description}
@@ -2807,7 +2634,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   </div>
                 </div>
 
-                {/* 2.1. Rod Experience Progress Bar — Golden Papyrus Meter */}
+                {/* 2.1. Rod Experience Progress Bar — Golden Papyrus Meter (GPU scaleX) */}
                 {(() => {
                   const curRodExp = fishingState.rodExp || 0;
                   const reqRodExp = getRodExpRequiredForNextLevel(equippedRod.level);
@@ -2831,8 +2658,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-black border border-amber-700/50">
                         <div
-                          className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-300"
-                          style={{ width: `${rodExpPct}%` }}
+                          className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-transform duration-300"
+                          style={{ transform: `scaleX(${(rodExpPct / 100).toFixed(3)})` }}
                         />
                       </div>
                     </div>
@@ -2874,16 +2701,16 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-950 border border-amber-500/40">
                             <div
-                              className="h-full bg-gradient-to-r from-amber-500 to-yellow-300"
+                              className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-amber-500 to-yellow-300 transition-transform duration-200"
                               style={{
-                                width: `${Math.min(
-                                  100,
-                                  Math.round(
-                                    (fishingState.equippedLine.durability /
-                                      Math.max(1, fishingState.equippedLine.maxDurability)) *
-                                      100
+                                transform: `scaleX(${Math.min(
+                                  1,
+                                  Math.max(
+                                    0,
+                                    fishingState.equippedLine.durability /
+                                      Math.max(1, fishingState.equippedLine.maxDurability)
                                   )
-                                )}%`
+                                ).toFixed(3)})`
                               }}
                             />
                           </div>
@@ -2929,16 +2756,16 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                           </div>
                           <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-950 border border-amber-500/40">
                             <div
-                              className="h-full bg-gradient-to-r from-amber-500 to-yellow-300"
+                              className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-amber-500 to-yellow-300 transition-transform duration-200"
                               style={{
-                                width: `${Math.min(
-                                  100,
-                                  Math.round(
-                                    (fishingState.equippedHook.durability /
-                                      Math.max(1, fishingState.equippedHook.maxDurability)) *
-                                      100
+                                transform: `scaleX(${Math.min(
+                                  1,
+                                  Math.max(
+                                    0,
+                                    fishingState.equippedHook.durability /
+                                      Math.max(1, fishingState.equippedHook.maxDurability)
                                   )
-                                )}%`
+                                ).toFixed(3)})`
                               }}
                             />
                           </div>
@@ -3061,13 +2888,15 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                 </div>
               </div>
 
-              {/* 3. Cinematic Nile River Viewport + Time-of-Day Switcher + Ancient Egyptian Nilometer Tension Gauge */}
+              {/* 3. Cinematic Nile River Viewport + Time-of-Day Switcher + Sandstorm VFX + Docked Nilometer Tension Gauge */}
               <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400/85 bg-[#090d16] shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_0_18px_rgba(0,0,0,0.85)]">
-                {/* Time-of-Day & Atmospheric VFX Selector Bar */}
-                <div className="flex items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2.5 py-1 text-[8px]">
+                {/* Time-of-Day & Atmospheric VFX Selector Bar + Sandstorm Toggle */}
+                <div className="flex flex-wrap items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2 py-1 text-[8px]">
                   <span className="font-black uppercase tracking-wider text-amber-200 flex items-center gap-1">
                     <span>
-                      {activeTimeOfDay === 'morning'
+                      {isSandstormActive
+                        ? '🌪️ Песчаная буря Нила (Видимость снижена)'
+                        : activeTimeOfDay === 'morning'
                         ? '🌅 Рассвет (Туман и лучи)'
                         : activeTimeOfDay === 'day'
                         ? '☀️ Полдень Ра (Блики Нила)'
@@ -3101,28 +2930,65 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         </button>
                       );
                     })}
+                    <button
+                      type="button"
+                      onClick={() => setManualSandstorm((prev) => !prev)}
+                      title="Включить/выключить визуальный эффект «Песчаная буря» (также активируется случайно по погоде)"
+                      className={`rounded px-1.5 py-0.5 font-black transition-all cursor-pointer ${
+                        isSandstormActive
+                          ? 'border border-orange-200 bg-gradient-to-b from-amber-400 to-orange-600 text-slate-950 shadow-[0_0_8px_rgba(245,158,11,0.75)]'
+                          : 'border border-amber-800/40 bg-[#1a1007] text-amber-200/75 hover:text-white'
+                      }`}
+                    >
+                      🌪️ Буря
+                    </button>
                   </div>
                 </div>
 
-                <div className="relative">
+                {/* Unobstructed Water & Tackle Canvas Area (No Bottom Overlays Blocking Rod/Line/Bobber) */}
+                <div className="relative overflow-hidden">
+                  {/* Procedural Lightweight CSS/SVG Water Wave Layers (GPU transform only, zero lag) */}
+                  <svg
+                    viewBox="0 0 400 70"
+                    preserveAspectRatio="none"
+                    className="pointer-events-none absolute bottom-0 left-0 h-[126px] w-[112%] -left-[6%] opacity-35 will-change-transform animate-[pulse_4s_ease-in-out_infinite]"
+                  >
+                    <path
+                      d="M0,18 Q50,6 100,18 T200,18 T300,18 T400,18 L400,70 L0,70 Z"
+                      fill="rgba(56, 189, 248, 0.14)"
+                    />
+                    <path
+                      d="M0,34 Q65,22 130,34 T260,34 T390,34 L400,70 L0,70 Z"
+                      fill="rgba(251, 191, 36, 0.11)"
+                    />
+                  </svg>
+
                   <canvas
                     ref={canvasRef}
                     width={390}
                     height={225}
-                    className="block h-[220px] w-full select-none pointer-events-none"
+                    className="relative z-10 block h-[225px] w-full select-none pointer-events-none"
                   />
 
-                  {/* Top Overlay Status Banner — Carved Papyrus Plaque */}
-                  <div className="pointer-events-none absolute top-2 left-2 right-2 flex items-center justify-between gap-1.5">
+                  {/* Subtle Atmospheric Sandstorm Haze Veil (Reduces background visibility slightly while keeping glowing bobber & line sharp) */}
+                  {isSandstormActive && (
                     <div
-                      className={`w-full rounded-lg border px-2.5 py-1 text-[9.5px] font-bold shadow-lg backdrop-blur-xs ${
+                      className="pointer-events-none absolute inset-0 z-15 bg-gradient-to-br from-amber-500/18 via-orange-700/12 to-yellow-900/20 mix-blend-screen"
+                      aria-hidden="true"
+                    />
+                  )}
+
+                  {/* Top Overlay Status Banner — Compact Carved Papyrus Plaque at Very Top */}
+                  <div className="pointer-events-none absolute top-1.5 left-2 right-2 z-20 flex items-center justify-between gap-1.5">
+                    <div
+                      className={`w-full rounded-lg border px-2.5 py-1 text-[9px] font-bold shadow-md ${
                         phase === 'escaped'
                           ? 'border-rose-400/90 bg-rose-950/90 text-rose-100'
                           : phase === 'reeling' && isFishThrashing
-                          ? 'border-red-400 bg-red-950/95 text-red-100 animate-pulse'
+                          ? 'border-red-400 bg-red-950/90 text-red-100 animate-pulse'
                           : phase === 'bite'
-                          ? 'border-amber-300 bg-amber-950/95 text-amber-100 animate-pulse'
-                          : 'border-amber-400/55 bg-[#140d06]/85 text-amber-100'
+                          ? 'border-amber-300 bg-amber-950/90 text-amber-100 animate-pulse'
+                          : 'border-amber-400/55 bg-[#140d06]/80 text-amber-100'
                       }`}
                     >
                       {statusBanner}
@@ -3132,7 +2998,6 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   {/* Catch Extraction Water Splash & Golden Radiance VFX Overlay */}
                   {catchSplashVfx && catchSplashVfx.active && (
                     <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center overflow-hidden animate-fade-in">
-                      {/* Golden Radiance Sunburst / Water Splash Aura */}
                       <div
                         className={`absolute inset-0 ${
                           catchSplashVfx.isGolden
@@ -3156,134 +3021,183 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       </div>
                     </div>
                   )}
+                </div>
 
-                  {/* Bite Waiting Timer (Таймер ожидания клёва — Египетский свиток) */}
-                  {(phase === 'waiting' || phase === 'nibble') && waitTimeTotalMs > 0 && (
-                    <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border-2 border-amber-400/75 bg-gradient-to-b from-[#211408]/95 to-[#110a04]/95 p-2 shadow-[0_4px_16px_rgba(0,0,0,0.8)]">
-                      <div className="flex items-center justify-between text-[9px] font-black text-amber-100 mb-1 tabular-nums">
-                        <span>
-                          {phase === 'nibble'
-                            ? '〰️ Рыба пробует наживку (поплавок и кончик удилища дрожат)...'
-                            : '⏳ Ожидание поклёвки... Круги на воде расходятся'}
-                        </span>
-                        <span className="text-amber-300">
-                          {(waitTimeLeftMs / 1000).toFixed(1)} сек
-                        </span>
-                      </div>
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-black border border-amber-500/45">
-                        <div
-                          className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-75"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.max(
-                                0,
-                                ((waitTimeTotalMs - waitTimeLeftMs) / Math.max(1, waitTimeTotalMs)) * 100
-                              )
-                            )}%`
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Bite Reaction Window Bar */}
-                  {phase === 'bite' && (
-                    <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border-2 border-yellow-300 bg-gradient-to-b from-[#331b05]/95 to-[#170b02]/95 p-2 shadow-[0_0_24px_rgba(251,191,36,0.6)]">
-                      <div className="flex items-center justify-between text-[9.5px] font-black text-yellow-200 mb-1 tabular-nums">
-                        <span>⚡ ПОПЛАВОК НЫРНУЛ! ЖМИТЕ «ПОДСЕЧЬ» СПРАВА!</span>
-                        <span>{(biteTimeLeftMs / 1000).toFixed(1)} сек</span>
-                      </div>
-                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-black border border-amber-400/60">
-                        <div
-                          className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-yellow-200 transition-all duration-75"
-                          style={{ width: `${Math.min(100, (biteTimeLeftMs / 3000) * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Real-Time Reeling Distance & Ancient Egyptian Nilometer Line Tension Gauge */}
-                  {phase === 'reeling' && (
-                    <div className="pointer-events-none absolute bottom-1.5 left-2 right-2 rounded-xl border-2 border-amber-400/85 bg-gradient-to-b from-[#241609]/95 via-[#170e05]/95 to-[#0e0803]/95 p-2 shadow-[0_6px_20px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(254,240,138,0.35)] space-y-1.5">
-                      {/* Bar 1: Fish Distance / Reel Progress with Fish Runner */}
+                {/* Docked Instrument Panel BELOW Canvas (Never blocks Rod, Line, or Bobber; GPU scaleX transforms) */}
+                {((phase === 'waiting' || phase === 'nibble') && waitTimeTotalMs > 0) ||
+                phase === 'bite' ||
+                phase === 'reeling' ? (
+                  <div className="border-t-2 border-amber-500/60 bg-gradient-to-b from-[#1e1207] via-[#140c05] to-[#0c0703] px-2.5 py-2">
+                    {/* 1) Bite Waiting Timer (GPU scaleX) */}
+                    {(phase === 'waiting' || phase === 'nibble') && waitTimeTotalMs > 0 && (
                       <div>
-                        <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
-                          <span className="text-amber-200">
-                            🐟 ПОДТЯГИВАНИЕ УЛОВА К БЕРЕГУ (100% = В САДОК)
+                        <div className="flex items-center justify-between text-[9px] font-black text-amber-100 mb-1 tabular-nums">
+                          <span>
+                            {phase === 'nibble'
+                              ? '〰️ Рыба пробует наживку (поплавок и кончик удилища светятся)...'
+                              : '⏳ Ожидание поклёвки... Следите за светящимся поплавком'}
                           </span>
-                          <span className="text-yellow-300">{reelProgress}%</span>
+                          <span ref={waitTimerTextDomRef} className="text-amber-300">
+                            {(waitTimeLeftMs / 1000).toFixed(1)} сек
+                          </span>
                         </div>
-                        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090603] border border-amber-500/55 shadow-inner">
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-black border border-amber-500/45">
                           <div
-                            className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-75"
-                            style={{ width: `${reelProgress}%` }}
+                            ref={waitBarFillDomRef}
+                            className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400"
+                            style={{
+                              transform: `scaleX(${Math.min(
+                                1,
+                                Math.max(
+                                  0,
+                                  (waitTimeTotalMs - waitTimeLeftMs) / Math.max(1, waitTimeTotalMs)
+                                )
+                              ).toFixed(3)})`
+                            }}
                           />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2) Bite Reaction Window Bar (GPU scaleX) */}
+                    {phase === 'bite' && (
+                      <div>
+                        <div className="flex items-center justify-between text-[9.5px] font-black text-yellow-200 mb-1 tabular-nums">
+                          <span>⚡ ПОПЛАВОК НЫРНУЛ! ЖМИТЕ «ПОДСЕЧЬ» СПРАВА!</span>
+                          <span ref={biteTimerTextDomRef}>
+                            {(biteTimeLeftMs / 1000).toFixed(1)} сек
+                          </span>
+                        </div>
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-black border border-amber-400/60">
                           <div
-                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[9px] leading-none transition-all duration-75 drop-shadow"
-                            style={{ left: `${Math.min(96, Math.max(4, reelProgress))}%` }}
-                          >
-                            🐟
+                            ref={biteBarFillDomRef}
+                            className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-red-500 via-amber-400 to-yellow-200"
+                            style={{
+                              transform: `scaleX(${Math.min(
+                                1,
+                                Math.max(0, biteTimeLeftMs / 3000)
+                              ).toFixed(3)})`
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3) Real-Time Reeling Distance & Ancient Egyptian Nilometer Line Tension Gauge (GPU scaleX) */}
+                    {phase === 'reeling' && (
+                      <div className="space-y-1.5">
+                        {/* Bar 1: Fish Distance / Reel Progress with Fish Runner */}
+                        <div>
+                          <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
+                            <span className="text-amber-200">
+                              🐟 ПОДТЯГИВАНИЕ УЛОВА К БЕРЕГУ (100% = В САДОК)
+                            </span>
+                            <span ref={reelPctTextDomRef} className="text-yellow-300">
+                              {reelProgress}%
+                            </span>
+                          </div>
+                          <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090603] border border-amber-500/55 shadow-inner">
+                            <div
+                              ref={reelBarFillDomRef}
+                              className="h-full w-full origin-left will-change-transform bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400"
+                              style={{
+                                transform: `scaleX(${Math.min(
+                                  1,
+                                  Math.max(0, reelProgress / 100)
+                                ).toFixed(3)})`
+                              }}
+                            />
+                            <div
+                              ref={reelFishTrackDomRef}
+                              className="pointer-events-none absolute inset-0 will-change-transform"
+                              style={{
+                                transform: `translate3d(${Math.min(
+                                  95,
+                                  Math.max(3, reelProgress)
+                                ).toFixed(1)}%, 0, 0)`
+                              }}
+                            >
+                              <span className="absolute top-1/2 left-0 -translate-y-1/2 -translate-x-1/2 text-[9px] leading-none drop-shadow">
+                                🐟
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Bar 2: Egyptian Golden Nilometer Line Tension Gauge */}
+                        <div>
+                          <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
+                            <span
+                              className={
+                                lineTension >= 78
+                                  ? 'text-red-400 animate-pulse'
+                                  : isFishThrashing
+                                  ? 'text-amber-300'
+                                  : 'text-emerald-300'
+                              }
+                            >
+                              {isFishThrashing
+                                ? '💢 РЫБА БЬЁТСЯ! ОТПУСТИТЕ КАТУШКУ!'
+                                : '💦 РЫБА ПРИТИХЛА — КРУТИТЕ КАТУШКУ В ЗОЛОТОЙ ЗОНЕ!'}
+                            </span>
+                            <span
+                              ref={tensionPctTextDomRef}
+                              className={
+                                lineTension >= 78
+                                  ? 'text-red-400 font-black'
+                                  : 'text-yellow-300 font-black'
+                              }
+                            >
+                              {lineTension}%
+                            </span>
+                          </div>
+                          <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-[#090502] border-2 border-amber-500/70 shadow-inner">
+                            {/* Optimal Sacred Emerald/Gold Zone (25% - 75%) */}
+                            <div
+                              className="absolute inset-y-0 bg-emerald-500/25 border-x-2 border-amber-300/80"
+                              style={{ left: '25%', width: '50%' }}
+                            />
+                            {/* Danger Ruby Overload Zone (78% - 100%) */}
+                            <div
+                              className="absolute inset-y-0 bg-red-600/30 border-l-2 border-red-400/80"
+                              style={{ left: '78%', width: '22%' }}
+                            />
+                            {/* Active Tension Fill (GPU scaleX) */}
+                            <div
+                              ref={tensionBarFillDomRef}
+                              className={`h-full w-full origin-left will-change-transform ${
+                                lineTension >= 78
+                                  ? 'bg-gradient-to-r from-amber-500 via-orange-600 to-red-600'
+                                  : lineTension >= 55
+                                  ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-yellow-300'
+                                  : 'bg-gradient-to-r from-amber-700 via-amber-500 to-emerald-400'
+                              }`}
+                              style={{
+                                transform: `scaleX(${Math.min(
+                                  1,
+                                  Math.max(0, lineTension / 100)
+                                ).toFixed(3)})`
+                              }}
+                            />
+                            {/* Golden Needle Pointer (GPU translate3d) */}
+                            <div
+                              ref={tensionMarkerTrackDomRef}
+                              className="pointer-events-none absolute inset-0 will-change-transform"
+                              style={{
+                                transform: `translate3d(${Math.min(
+                                  99,
+                                  Math.max(1, lineTension)
+                                ).toFixed(1)}%, 0, 0)`
+                              }}
+                            >
+                              <div className="absolute top-0 bottom-0 left-0 w-1.5 -translate-x-1/2 bg-yellow-100 border-x border-amber-600 shadow-[0_0_8px_#fde047]" />
+                            </div>
                           </div>
                         </div>
                       </div>
-
-                      {/* Bar 2: Egyptian Golden Nilometer Line Tension Gauge */}
-                      <div>
-                        <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
-                          <span
-                            className={
-                              lineTension >= 78
-                                ? 'text-red-400 animate-pulse'
-                                : isFishThrashing
-                                ? 'text-amber-300'
-                                : 'text-emerald-300'
-                            }
-                          >
-                            {isFishThrashing
-                              ? '💢 РЫБА БЬЁТСЯ! ОТПУСТИТЕ КАТУШКУ!'
-                              : '⚖️ ШКАЛА НАТЯЖЕНИЯ ЛЕСКИ — ДЕРЖИТЕ В ЗОЛОТОЙ ЗОНЕ!'}
-                          </span>
-                          <span
-                            className={
-                              lineTension >= 78 ? 'text-red-400 font-black' : 'text-yellow-300 font-black'
-                            }
-                          >
-                            {lineTension}%
-                          </span>
-                        </div>
-                        <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-[#090502] border-2 border-amber-500/70 shadow-inner">
-                          {/* Optimal Sacred Emerald/Gold Zone (25% - 75%) */}
-                          <div
-                            className="absolute inset-y-0 bg-emerald-500/25 border-x-2 border-amber-300/80"
-                            style={{ left: '25%', width: '50%' }}
-                          />
-                          {/* Danger Ruby Overload Zone (78% - 100%) */}
-                          <div
-                            className="absolute inset-y-0 bg-red-600/30 border-l-2 border-red-400/80"
-                            style={{ left: '78%', width: '22%' }}
-                          />
-                          {/* Active Tension Fill */}
-                          <div
-                            className={`h-full transition-all duration-75 ${
-                              lineTension >= 78
-                                ? 'bg-gradient-to-r from-amber-500 via-orange-600 to-red-600'
-                                : lineTension >= 55
-                                ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-yellow-300'
-                                : 'bg-gradient-to-r from-amber-700 via-amber-500 to-emerald-400'
-                            }`}
-                            style={{ width: `${lineTension}%` }}
-                          />
-                          {/* Golden Needle Pointer */}
-                          <div
-                            className="absolute top-0 bottom-0 w-1.5 -translate-x-1/2 bg-yellow-100 border-x border-amber-600 shadow-[0_0_8px_#fde047] transition-all duration-75"
-                            style={{ left: `${Math.min(99, Math.max(1, lineTension))}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                ) : null}
               </div>
 
               {/* 4. Physically Separated Dual-Zone Fishing Controls — Sculpted Pharaoh Gold & Stone Tablets */}
@@ -3340,10 +3254,13 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                           {phase === 'nibble' ? '〰️ Поплавок дрожит...' : '⏳ Ждите поклёвки...'}
                         </div>
                         <div className="text-[8px] text-amber-100/70">
-                          Кнопка подсечки вспыхнет при клёве ({(waitTimeLeftMs / 1000).toFixed(1)}с)
+                          Кнопка подсечки вспыхнет при клёве
                         </div>
                       </div>
-                      <span className="rounded-lg border border-amber-500/50 bg-[#0d0804] px-2 py-1 text-[9px] font-black text-amber-300 tabular-nums">
+                      <span
+                        ref={waitRightTimerDomRef}
+                        className="rounded-lg border border-amber-500/50 bg-[#0d0804] px-2 py-1 text-[9px] font-black text-amber-300 tabular-nums"
+                      >
                         {(waitTimeLeftMs / 1000).toFixed(1)}с
                       </span>
                     </div>
@@ -3353,7 +3270,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       onClick={handleHookFish}
                       className="w-full animate-bounce rounded-xl border-2 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-500 to-orange-600 px-3 py-2.5 text-xs font-black uppercase tracking-wider text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.75),inset_0_1px_0_#fff] active:scale-95 cursor-pointer"
                     >
-                      ⚡ ПОДСЕЧЬ СЕЙЧАС! ({(biteTimeLeftMs / 1000).toFixed(1)}с)
+                      <span ref={biteBtnTimerDomRef}>
+                        ⚡ ПОДСЕЧЬ СЕЙЧАС! ({(biteTimeLeftMs / 1000).toFixed(1)}с)
+                      </span>
                     </button>
                   ) : (
                     <div className="flex w-full items-stretch gap-1.5">

@@ -753,6 +753,18 @@ export const FISHING_WEATHER_BOOSTS: FishingWeatherBoost[] = [
     weightBonusPct: 20,
     chestBonusPct: 3,
     tensionControlBonusPct: 12
+  },
+  {
+    id: 'weather_sandstorm',
+    name: 'Песчаная буря Сета',
+    icon: '🌪️',
+    badgeColor: 'border-orange-400/80 bg-orange-950/85 text-orange-200',
+    description: 'Песчаный вихрь скрывает берега и поднимает со дна древние реликвии: +55% к редким видам и +8% к сундукам!',
+    rareBonusPct: 55,
+    biteDelayMultiplier: 0.82,
+    weightBonusPct: 18,
+    chestBonusPct: 8,
+    tensionControlBonusPct: 8
   }
 ];
 

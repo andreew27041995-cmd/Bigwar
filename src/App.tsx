@@ -10927,7 +10927,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.61</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.62</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">06.11.2026</strong></span>
         </div>
