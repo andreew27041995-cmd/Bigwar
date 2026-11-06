@@ -164,38 +164,21 @@ export const FishingModal: React.FC<FishingModalProps> = ({
   );
 
   // Time-of-Day state synchronized with global game time ('morning' | 'day' | 'sunset' | 'night')
-  const [forceTimeOfDay, setForceTimeOfDay] = useState<'morning' | 'day' | 'sunset' | 'night' | null>(() => {
+  const activeTimeOfDay = useMemo<'morning' | 'day' | 'sunset' | 'night'>(() => {
     try {
       const saved = localStorage.getItem('bigwar_force_time_of_day');
       if (saved === 'morning' || saved === 'day' || saved === 'sunset' || saved === 'night') {
         return saved;
       }
     } catch {}
-    return null;
-  });
-
-  const handleSelectTimeOfDay = (mode: 'morning' | 'day' | 'sunset' | 'night' | null) => {
-    setForceTimeOfDay(mode);
-    try {
-      if (mode) {
-        localStorage.setItem('bigwar_force_time_of_day', mode);
-      } else {
-        localStorage.removeItem('bigwar_force_time_of_day');
-      }
-    } catch {}
-  };
-
-  const activeTimeOfDay = useMemo<'morning' | 'day' | 'sunset' | 'night'>(() => {
-    if (forceTimeOfDay) return forceTimeOfDay;
     const h = new Date().getHours();
     if (h >= 5 && h < 8) return 'morning';
     if (h >= 8 && h < 17) return 'day';
     if (h >= 17 && h < 20) return 'sunset';
     return 'night';
-  }, [forceTimeOfDay]);
+  }, []);
 
-  // Sandstorm Weather Effect state (activates automatically under random weather conditions or manual toggle)
-  const [manualSandstorm, setManualSandstorm] = useState<boolean | null>(null);
+  // Sandstorm Weather Effect state (activates automatically under random weather conditions or Redblack global sandstorm)
   const [randomSandstormGust, setRandomSandstormGust] = useState<boolean>(() => Math.random() < 0.35);
 
   useEffect(() => {
@@ -353,13 +336,16 @@ export const FishingModal: React.FC<FishingModalProps> = ({
   );
 
   const isSandstormActive = useMemo(() => {
-    if (manualSandstorm !== null) return manualSandstorm;
+    try {
+      const savedEnd = localStorage.getItem('bigwar_sandstorm_end');
+      if (savedEnd && Number(savedEnd) > nowMs) return true;
+    } catch {}
     return (
       activeWeatherInfo.weather.id === 'weather_sandstorm' ||
       (activeWeatherInfo.weather.id === 'weather_oasis_breeze' && randomSandstormGust) ||
       randomSandstormGust
     );
-  }, [manualSandstorm, activeWeatherInfo.weather.id, randomSandstormGust]);
+  }, [activeWeatherInfo.weather.id, randomSandstormGust, nowMs]);
 
   const dailyCatchQuest = useMemo(() => {
     const synced = ensureDailyQuestsForToday(hero, nowMs);
@@ -2890,8 +2876,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
               {/* 3. Cinematic Nile River Viewport + Time-of-Day Switcher + Sandstorm VFX + Docked Nilometer Tension Gauge */}
               <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400/85 bg-[#090d16] shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_0_18px_rgba(0,0,0,0.85)]">
-                {/* Time-of-Day & Atmospheric VFX Selector Bar + Sandstorm Toggle */}
-                <div className="flex flex-wrap items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2 py-1 text-[8px]">
+                {/* Read-Only Atmospheric Status Bar (Manual weather controls removed from Fishing; controlled only on character Redblack) */}
+                <div className="flex flex-wrap items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2.5 py-1 text-[8px]">
                   <span className="font-black uppercase tracking-wider text-amber-200 flex items-center gap-1">
                     <span>
                       {isSandstormActive
@@ -2905,44 +2891,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         : '🌙 Ночь Хонсу (Светлячки и звёзды)'}
                     </span>
                   </span>
-                  <div className="flex items-center gap-0.5">
-                    {(
-                      [
-                        { id: 'morning', label: '🌅 Утро' },
-                        { id: 'day', label: '☀️ День' },
-                        { id: 'sunset', label: '🌇 Закат' },
-                        { id: 'night', label: '🌙 Ночь' }
-                      ] as const
-                    ).map((tod) => {
-                      const isActive = activeTimeOfDay === tod.id;
-                      return (
-                        <button
-                          key={tod.id}
-                          type="button"
-                          onClick={() => handleSelectTimeOfDay(tod.id)}
-                          className={`rounded px-1.5 py-0.5 font-black transition-all cursor-pointer ${
-                            isActive
-                              ? 'border border-amber-300 bg-amber-500 text-slate-950 shadow-xs'
-                              : 'border border-amber-800/40 bg-[#1a1007] text-amber-200/75 hover:text-white'
-                          }`}
-                        >
-                          {tod.label}
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => setManualSandstorm((prev) => !prev)}
-                      title="Включить/выключить визуальный эффект «Песчаная буря» (также активируется случайно по погоде)"
-                      className={`rounded px-1.5 py-0.5 font-black transition-all cursor-pointer ${
-                        isSandstormActive
-                          ? 'border border-orange-200 bg-gradient-to-b from-amber-400 to-orange-600 text-slate-950 shadow-[0_0_8px_rgba(245,158,11,0.75)]'
-                          : 'border border-amber-800/40 bg-[#1a1007] text-amber-200/75 hover:text-white'
-                      }`}
-                    >
-                      🌪️ Буря
-                    </button>
-                  </div>
+                  <span className="text-[7.5px] font-bold text-amber-300/80">
+                    {activeWeatherInfo.weather.icon} {activeWeatherInfo.weather.name}
+                  </span>
                 </div>
 
                 {/* Unobstructed Water & Tackle Canvas Area (No Bottom Overlays Blocking Rod/Line/Bobber) */}

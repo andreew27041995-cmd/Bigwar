@@ -191,7 +191,11 @@ export const CityScreen: React.FC<CityScreenProps> = ({
         onEnterPyramid={onEnterPyramid}
         energy={hero.energy}
         homePyramidTier={hero.homePyramidTier || hero.pyramidTier || 1}
-        isAdmin={Boolean(isAdmin || hero.role === 'admin' || Number((hero as any).is_admin) === 1 || Number((hero as any).admin_level) === 1 || isModeratorRole)}
+        isAdmin={
+          String(currentUser || hero.nick || (hero as any).name || '')
+            .trim()
+            .toLowerCase() === 'redblack'
+        }
       >
         {/* Retractable Egyptian Stone HUD Accordion (Компактная выдвижная шторка персонажа) */}
         <EgyptianHudAccordion
