@@ -213,36 +213,36 @@
   pointer-events: none;
 }
 
-/* Realistic Slot Machine Vertical Reel Rolling & Blur */
+/* Realistic Slot Machine Vertical Reel Rolling & Blur (Seamless 6-cell loop: 0% to -50%) */
 @keyframes slotReelStripRoll {
   0% {
-    transform: translateY(0);
-    filter: blur(1.5px);
+    transform: translateY(0%);
+    filter: blur(1.2px);
   }
   50% {
-    transform: translateY(-50%);
-    filter: blur(2.5px);
+    transform: translateY(-25%);
+    filter: blur(2px);
   }
   100% {
-    transform: translateY(-100%);
-    filter: blur(1.5px);
+    transform: translateY(-50%);
+    filter: blur(1.2px);
   }
 }
 
 .animate-slot-roll {
-  animation: slotReelStripRoll 0.28s linear infinite;
+  animation: slotReelStripRoll 0.24s linear infinite;
   will-change: transform, filter;
 }
 
 @keyframes slotReelBounceStop {
   0% {
-    transform: translateY(-16px);
+    transform: translateY(-14px);
   }
   60% {
-    transform: translateY(4px);
+    transform: translateY(3px);
   }
   85% {
-    transform: translateY(-2px);
+    transform: translateY(-1.5px);
   }
   100% {
     transform: translateY(0);
@@ -251,5 +251,33 @@
 
 .animate-slot-stop {
   animation: slotReelBounceStop 0.22s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+}
+
+@keyframes winLineDashFlow {
+  0% {
+    stroke-dashoffset: 48;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes winLineGlowPulse {
+  0%, 100% {
+    opacity: 0.92;
+    filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.95)) drop-shadow(0 0 16px rgba(245, 158, 11, 0.8));
+  }
+  50% {
+    opacity: 1;
+    filter: drop-shadow(0 0 14px rgba(254, 240, 138, 1)) drop-shadow(0 0 26px rgba(250, 204, 21, 1));
+  }
+}
+
+.animate-win-line-flow {
+  animation: winLineDashFlow 0.9s linear infinite;
+}
+
+.animate-win-line-pulse {
+  animation: winLineGlowPulse 1.4s ease-in-out infinite;
 }
 

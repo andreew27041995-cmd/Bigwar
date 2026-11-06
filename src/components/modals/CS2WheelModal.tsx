@@ -639,14 +639,14 @@ export const CS2WheelModal: React.FC<CS2WheelModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/98 p-2.5 sm:p-3 text-white overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-xs sm:text-sm font-black text-amber-400">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xs sm:text-sm font-black text-amber-400 truncate">
             🎰 Азартные игры Пирамиды
           </span>
-          <span className="rounded bg-amber-950/80 border border-amber-500/40 px-1.5 py-0.5 text-[9px] font-bold text-amber-300">
+          <span className="shrink-0 rounded bg-amber-950/80 border border-amber-500/40 px-1.5 py-0.5 text-[9px] font-bold text-amber-300 tabular-nums">
             🪙 {hero.gold.toLocaleString()} • 💎 {hero.crystals.toLocaleString()}
           </span>
         </div>

@@ -190,7 +190,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
       {itemToSell && (() => {
         const sellRefund = getItemSellRefund(itemToSell);
         const q = getQualityConfig(itemToSell.quality || 'common');

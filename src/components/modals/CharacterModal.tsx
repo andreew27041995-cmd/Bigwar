@@ -535,7 +535,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
       <div className="flex items-center justify-between border-b border-slate-700 pb-2">
         <span className="text-xs font-bold text-amber-400">👤 Персонаж и Почта</span>
         <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">

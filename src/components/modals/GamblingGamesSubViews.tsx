@@ -450,6 +450,17 @@ interface WinningLineResult {
   cells: Array<{ col: number; row: number }>;
 }
 
+interface SlotSpinHistoryEntry {
+  id: string;
+  time: string;
+  outcome: 'win' | 'loss' | 'bonus' | 'jackpot';
+  label: string;
+  bet: number;
+  winAmount: number;
+  currency: 'gold' | 'crystals';
+  multiplier: number;
+}
+
 export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
   hero,
   currentUser,
@@ -507,6 +518,35 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
   // Daily High-Roller Luck Tournament Leaderboard Modal
   const [isTournamentModalOpen, setIsTournamentModalOpen] = useState<boolean>(false);
   const [tournamentWinners, setTournamentWinners] = useState<TournamentWinnerRecord[]>(() => getStoredTournamentWinners());
+
+  // Spin History Modal (Last 10 spins log for transparency & dynamics)
+  const [isSpinHistoryModalOpen, setIsSpinHistoryModalOpen] = useState<boolean>(false);
+  const [spinHistory, setSpinHistory] = useState<SlotSpinHistoryEntry[]>(() => {
+    try {
+      const raw = localStorage.getItem('pharaoh_slots_spin_history_v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.slice(0, 10);
+      }
+    } catch (_) {}
+    return [];
+  });
+
+  const appendSpinHistoryEntry = (entry: Omit<SlotSpinHistoryEntry, 'id' | 'time'>) => {
+    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const newRecord: SlotSpinHistoryEntry = {
+      ...entry,
+      id: `sh_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      time: nowTime
+    };
+    setSpinHistory((prev) => {
+      const updated = [newRecord, ...prev].slice(0, 10);
+      try {
+        localStorage.setItem('pharaoh_slots_spin_history_v1', JSON.stringify(updated));
+      } catch (_) {}
+      return updated;
+    });
+  };
 
   const [bigWinOverlay, setBigWinOverlay] = useState<{
     active: boolean;
@@ -807,6 +847,15 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           timestamp: Date.now()
         });
 
+        appendSpinHistoryEntry({
+          outcome: 'jackpot',
+          label: `👑 ГРАНД ДЖЕКПОТ! +${jackpotWin.toLocaleString()} ${curIcon}`,
+          bet: isFreeSpin ? 0 : lockedBet,
+          winAmount: jackpotWin,
+          currency: lockedCurrency,
+          multiplier: 100
+        });
+
         onGamblingTransaction({
           gameName: 'Слоты Фараона 5x3',
           spentGold: 0,
@@ -944,6 +993,18 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           timestamp: Date.now()
         });
 
+        appendSpinHistoryEntry({
+          outcome: allPyramids.length >= 3 ? 'bonus' : 'win',
+          label:
+            allPyramids.length >= 3
+              ? `🔺 Бонус Пирамид! +${rawWin.toLocaleString()} ${curIcon}`
+              : `Победа +${rawWin.toLocaleString()} ${curIcon} (Линий: ${lineWins.length})`,
+          bet: isFreeSpin ? 0 : lockedBet,
+          winAmount: rawWin,
+          currency: lockedCurrency,
+          multiplier: appliedMult
+        });
+
         const summaryParts: string[] = [];
         if (allPyramids.length >= 3) summaryParts.push(`🔺 БОНУС ПИРАМИД (${allPyramids.length} шт.)`);
         if (lineWins.length > 0) summaryParts.push(`Линий: ${lineWins.length}`);
@@ -968,6 +1029,15 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
         setStreakStep(0);
         setLastWinAmount(0);
         setGambleAvailableAmount(0);
+
+        appendSpinHistoryEntry({
+          outcome: 'loss',
+          label: isFreeSpin ? 'Free Spin — мимо' : `Проигрыш (-${lockedBet} ${curIcon})`,
+          bet: isFreeSpin ? 0 : lockedBet,
+          winAmount: 0,
+          currency: lockedCurrency,
+          multiplier: lockedMultiplier
+        });
 
         const nextGauge = luckGaugeCount + 1;
         if (nextGauge >= 6) {
@@ -1078,14 +1148,14 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
 
   return (
     <div className="relative flex flex-col gap-2.5 select-none">
-      {/* 1. TOP PROGRESSIVE JACKPOT & HIGH-ROLLER TOURNAMENT BAR */}
-      <div className="rounded-2xl border-2 border-yellow-400 bg-gradient-to-r from-[#291305] via-[#3a1d08] to-[#291305] p-2.5 shadow-[0_4px_20px_rgba(250,204,21,0.25)] flex items-center justify-between gap-2">
+      {/* 1. TOP PROGRESSIVE JACKPOT, SPIN HISTORY SCROLL & HIGH-ROLLER TOURNAMENT BAR */}
+      <div className="rounded-2xl border-2 border-yellow-400 bg-gradient-to-r from-[#291305] via-[#3a1d08] to-[#291305] p-2.5 shadow-[0_4px_20px_rgba(250,204,21,0.25)] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-yellow-300 bg-gradient-to-b from-yellow-300 to-amber-600 text-lg shadow-[0_0_12px_rgba(250,204,21,0.7)]">
             👑
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-[10px] font-black uppercase tracking-wider text-yellow-300">
                 ДЖЕКПОТ ФАРАОНА
               </span>
@@ -1099,16 +1169,32 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setTournamentWinners(getStoredTournamentWinners());
-            setIsTournamentModalOpen(true);
-          }}
-          className="shrink-0 rounded-xl border border-amber-400/80 bg-gradient-to-b from-amber-700 to-slate-950 px-2.5 py-1.5 text-[9px] font-black uppercase text-yellow-200 shadow hover:brightness-110 active:scale-95 cursor-pointer"
-        >
-          🏆 Турнир дня
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Spin History Scroll Button */}
+          <button
+            type="button"
+            onClick={() => {
+              playClickSound();
+              setIsSpinHistoryModalOpen(true);
+            }}
+            className="rounded-xl border border-amber-400/80 bg-gradient-to-b from-amber-800/90 to-slate-950 px-2.5 py-1.5 text-[9px] font-black uppercase text-amber-200 shadow hover:brightness-110 active:scale-95 cursor-pointer flex items-center gap-1"
+            title="Открыть свиток истории последних спинов"
+          >
+            <span>📜</span>
+            <span>История ({spinHistory.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setTournamentWinners(getStoredTournamentWinners());
+              setIsTournamentModalOpen(true);
+            }}
+            className="rounded-xl border border-amber-400/80 bg-gradient-to-b from-amber-700 to-slate-950 px-2.5 py-1.5 text-[9px] font-black uppercase text-yellow-200 shadow hover:brightness-110 active:scale-95 cursor-pointer"
+          >
+            🏆 Турнир дня
+          </button>
+        </div>
       </div>
 
       {/* 2. LUCK GAUGE & FREE SPINS STATUS (BAD-STREAK PROTECTION) */}
@@ -1176,7 +1262,7 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
         </div>
       </div>
 
-      {/* 4. REALISTIC VERTICAL ROLLING 5x3 REEL GRID */}
+      {/* 4. STRICTLY LOCKED 5x3 REEL GRID (5 COLUMNS × 3 ROWS = 15 VISIBLE CELLS) */}
       <div className="relative rounded-2xl border-[3px] border-amber-400 bg-gradient-to-b from-[#1a0e06] via-[#0d0710] to-[#07050a] p-2.5 shadow-[0_0_28px_rgba(245,158,11,0.3),inset_0_0_24px_rgba(0,0,0,0.95)] overflow-hidden">
         {teaserActiveOnReel5 && (
           <div className="mb-2 rounded-xl border-2 border-yellow-300 bg-gradient-to-r from-amber-700 via-yellow-500 to-amber-700 px-3 py-1 text-center text-[10px] font-black uppercase tracking-wider text-slate-950 shadow-[0_0_20px_rgba(250,204,21,0.9)] animate-pulse">
@@ -1184,73 +1270,225 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           </div>
         )}
 
-        <div className="relative grid grid-cols-5 gap-1.5 sm:gap-2">
-          {grid.map((reelSymbols, colIdx) => {
-            const spinningThisReel = reelSpinning[colIdx];
+        <div className="relative grid grid-cols-5 gap-1.5 sm:gap-2 items-stretch">
+          {[0, 1, 2, 3, 4].map((colIdx) => {
+            const reelSymbols =
+              Array.isArray(grid[colIdx]) && grid[colIdx].length >= 3
+                ? grid[colIdx]
+                : (['gold', 'scarab', 'ankh'] as SlotSymbolId[]);
+            const spinningThisReel = Boolean(reelSpinning[colIdx]);
             const isTeaserCol = colIdx === 4 && teaserActiveOnReel5;
+
+            const rawStrip =
+              Array.isArray(stripSymbols[colIdx]) && stripSymbols[colIdx].length >= 3
+                ? stripSymbols[colIdx]
+                : (['mask', 'pyramid', 'scarab', 'gold', 'eye', 'ankh'] as SlotSymbolId[]);
+            const loopStrip: SlotSymbolId[] =
+              rawStrip.length >= 6
+                ? rawStrip.slice(0, 6)
+                : ([...rawStrip, ...rawStrip, 'gold', 'scarab', 'ankh'] as SlotSymbolId[]).slice(0, 6);
 
             return (
               <div
                 key={colIdx}
-                className={`relative flex flex-col gap-1.5 rounded-xl border-2 p-1 sm:p-1.5 transition-all duration-200 overflow-hidden ${
+                className={`relative rounded-xl border-2 p-1 sm:p-1.5 transition-colors duration-200 overflow-hidden ${
                   isTeaserCol
                     ? 'border-yellow-300 bg-gradient-to-b from-amber-900/90 via-yellow-950/90 to-amber-900/90 shadow-[0_0_28px_rgba(250,204,21,0.95)] ring-2 ring-yellow-300'
                     : 'border-amber-500/45 bg-gradient-to-b from-[#130d1c] via-[#0b0811] to-[#130d1c]'
                 }`}
               >
-                {/* Vertical rolling blur effect when reel is spinning */}
-                {spinningThisReel ? (
-                  <div className="flex flex-col gap-1.5 py-0.5 overflow-hidden select-none animate-slot-roll filter blur-[0.8px] opacity-90">
-                    {stripSymbols[colIdx].map((rollSym, rIdx) => (
-                      <div
-                        key={rIdx}
-                        className="flex h-[66px] sm:h-[74px] shrink-0 flex-col items-center justify-center rounded-lg border border-amber-500/30 bg-slate-950/95 shadow-inner"
-                      >
-                        <SlotSymbolSvg symbolId={rollSym} />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-1.5 animate-slot-stop">
-                    {[0, 1, 2].map((rowIdx) => {
-                      const symId = reelSymbols[rowIdx];
-                      const symDef = SLOT_SYMBOL_MAP[symId];
-                      const isWinCell = isCellWinning(colIdx, rowIdx);
+                {/* Fixed 3-row viewport container so every reel column has the exact same height whether spinning or stopped */}
+                <div className="relative h-[216px] sm:h-[234px] w-full overflow-hidden">
+                  {spinningThisReel ? (
+                    <div className="absolute inset-x-0 top-0 flex flex-col gap-1.5 select-none animate-slot-roll opacity-95">
+                      {loopStrip.map((rollSym, rIdx) => {
+                        const safeRollSym: SlotSymbolId =
+                          rollSym && SLOT_SYMBOL_MAP[rollSym] ? rollSym : 'gold';
+                        return (
+                          <div
+                            key={rIdx}
+                            className="flex h-[68px] sm:h-[74px] w-full shrink-0 flex-col items-center justify-center rounded-lg border border-amber-500/35 bg-slate-950/95 shadow-inner"
+                          >
+                            <SlotSymbolSvg symbolId={safeRollSym} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="grid grid-rows-3 gap-1.5 h-full w-full animate-slot-stop">
+                      {[0, 1, 2].map((rowIdx) => {
+                        const rawSym = reelSymbols[rowIdx];
+                        const symId: SlotSymbolId =
+                          rawSym && SLOT_SYMBOL_MAP[rawSym] ? rawSym : 'gold';
+                        const symDef = SLOT_SYMBOL_MAP[symId];
+                        const isWinCell = isCellWinning(colIdx, rowIdx);
 
-                      return (
-                        <div
-                          key={rowIdx}
-                          className={`relative flex h-[66px] sm:h-[74px] flex-col items-center justify-center rounded-lg border transition-all duration-150 ${
-                            isWinCell
-                              ? 'border-2 border-yellow-300 bg-gradient-to-b from-amber-500/40 via-yellow-500/25 to-amber-900/60 shadow-[0_0_18px_rgba(250,204,21,0.95)] scale-[1.03] z-10'
-                              : 'border-slate-800/90 bg-gradient-to-b from-[#181122] via-[#0d0914] to-[#181122]'
-                          }`}
-                        >
-                          <SlotSymbolSvg symbolId={symId} isHighlighted={isWinCell} />
-                          <span className={`mt-0.5 text-[7px] font-black uppercase tracking-wider leading-none ${isWinCell ? 'text-yellow-200' : 'text-slate-400'}`}>
-                            {symDef.shortLabel}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                        return (
+                          <div
+                            key={rowIdx}
+                            className={`relative flex h-[68px] sm:h-[74px] w-full flex-col items-center justify-center rounded-lg border transition-all duration-150 ${
+                              isWinCell
+                                ? 'border-2 border-yellow-300 bg-gradient-to-b from-amber-500/45 via-yellow-500/30 to-amber-900/65 shadow-[0_0_18px_rgba(250,204,21,0.95)] scale-[1.02] z-10'
+                                : 'border-slate-800/90 bg-gradient-to-b from-[#181122] via-[#0d0914] to-[#181122]'
+                            }`}
+                          >
+                            <SlotSymbolSvg symbolId={symId} isHighlighted={isWinCell} />
+                            <span
+                              className={`mt-0.5 text-[7px] font-black uppercase tracking-wider leading-none ${
+                                isWinCell ? 'text-yellow-200' : 'text-slate-400'
+                              }`}
+                            >
+                              {symDef.shortLabel}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
 
-          {/* SVG Golden Win Lines Overlay */}
-          {!isAnySpinning && winningLines.length > 0 && (
-            <svg viewBox="0 0 500 300" preserveAspectRatio="none" className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible">
+          {/* SVG Glowing Golden Win Lines Overlay (Connects Matching Horizontal & Diagonal Symbols) */}
+          {!isAnySpinning && (winningLines.length > 0 || bonusScatterCells.length >= 3) && (
+            <svg
+              viewBox="0 0 500 300"
+              preserveAspectRatio="none"
+              className="pointer-events-none absolute inset-0 z-20 h-full w-full overflow-visible animate-win-line-pulse"
+            >
+              <defs>
+                <linearGradient id="slotGoldLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#fde047" />
+                  <stop offset="50%" stopColor="#f59e0b" />
+                  <stop offset="100%" stopColor="#fef08a" />
+                </linearGradient>
+              </defs>
+
+              {/* Bonus Pyramid Scatter Connection Line */}
+              {bonusScatterCells.length >= 3 && (
+                <g>
+                  <polyline
+                    points={bonusScatterCells
+                      .map((c) => `${c.col * 100 + 50},${c.row * 100 + 50}`)
+                      .join(' ')}
+                    fill="none"
+                    stroke="rgba(250, 204, 21, 0.45)"
+                    strokeWidth="14"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <polyline
+                    points={bonusScatterCells
+                      .map((c) => `${c.col * 100 + 50},${c.row * 100 + 50}`)
+                      .join(' ')}
+                    fill="none"
+                    stroke="#fde047"
+                    strokeWidth="4.5"
+                    strokeDasharray="10 8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="animate-win-line-flow"
+                  />
+                  {bonusScatterCells.map((c, idx) => (
+                    <circle
+                      key={`pyr_${idx}`}
+                      cx={c.col * 100 + 50}
+                      cy={c.row * 100 + 50}
+                      r="9"
+                      fill="#f59e0b"
+                      stroke="#fef08a"
+                      strokeWidth="2.5"
+                    />
+                  ))}
+                </g>
+              )}
+
+              {/* Standard Horizontal & Diagonal Payline Connections */}
               {winningLines.map((winLine) => {
-                const points = winLine.cells.map((c) => `${c.col * 100 + 50},${c.row * 100 + 50}`).join(' ');
+                const points = winLine.cells
+                  .map((c) => `${c.col * 100 + 50},${c.row * 100 + 50}`)
+                  .join(' ');
+                const midCell =
+                  winLine.cells[Math.floor(winLine.cells.length / 2)] || winLine.cells[0];
+                const badgeX = midCell ? midCell.col * 100 + 50 : 250;
+                const badgeY = midCell ? midCell.row * 100 + 50 : 150;
+
                 return (
                   <g key={winLine.lineId}>
-                    <polyline points={points} fill="none" stroke="rgba(250, 204, 21, 0.45)" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
-                    <polyline points={points} fill="none" stroke="#fef08a" strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+                    {/* Outer Golden Glow Aura */}
+                    <polyline
+                      points={points}
+                      fill="none"
+                      stroke="rgba(245, 158, 11, 0.55)"
+                      strokeWidth="18"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {/* Main Solid Golden Beam */}
+                    <polyline
+                      points={points}
+                      fill="none"
+                      stroke="url(#slotGoldLineGrad)"
+                      strokeWidth="6.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {/* Animated Flowing White-Gold Energy Dashes */}
+                    <polyline
+                      points={points}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth="2.8"
+                      strokeDasharray="14 10"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="animate-win-line-flow"
+                    />
+                    {/* Glowing Nodes at Each Matched Symbol Center */}
                     {winLine.cells.map((c, idx) => (
-                      <circle key={idx} cx={c.col * 100 + 50} cy={c.row * 100 + 50} r="7" fill="#facc15" stroke="#ffffff" strokeWidth="2" />
+                      <g key={idx}>
+                        <circle
+                          cx={c.col * 100 + 50}
+                          cy={c.row * 100 + 50}
+                          r="12"
+                          fill="rgba(250, 204, 21, 0.3)"
+                          stroke="#fde047"
+                          strokeWidth="2.5"
+                        />
+                        <circle
+                          cx={c.col * 100 + 50}
+                          cy={c.row * 100 + 50}
+                          r="5.5"
+                          fill="#fef08a"
+                          stroke="#ffffff"
+                          strokeWidth="2"
+                        />
+                      </g>
                     ))}
+                    {/* Multiplier Tag on Winning Line */}
+                    <g transform={`translate(${badgeX}, ${Math.max(24, badgeY - 26)})`}>
+                      <rect
+                        x="-36"
+                        y="-12"
+                        width="72"
+                        height="22"
+                        rx="8"
+                        fill="#1c0d02"
+                        stroke="#fde047"
+                        strokeWidth="2"
+                      />
+                      <text
+                        x="0"
+                        y="3"
+                        textAnchor="middle"
+                        fill="#fef08a"
+                        fontSize="12"
+                        fontWeight="900"
+                      >
+                        x{winLine.baseMultiplier * activeMultiplier}
+                      </text>
+                    </g>
                   </g>
                 );
               })}
@@ -1782,6 +2020,145 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
                 type="button"
                 onClick={() => setIsTournamentModalOpen(false)}
                 className="w-full rounded-xl border border-amber-500/60 bg-slate-900 py-2 text-xs font-black uppercase text-amber-200 hover:bg-slate-800 cursor-pointer"
+              >
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* МОДАЛКА 3: ИСТОРИЯ СПИНОВ (ПОСЛЕДНИЕ 10 ВРАЩЕНИЙ)                 */}
+      {/* ================================================================= */}
+      {isSpinHistoryModalOpen && (
+        <div
+          className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm p-3"
+          onClick={() => setIsSpinHistoryModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border-2 border-amber-500/70 bg-gradient-to-b from-slate-950 via-[#1a1308] to-slate-950 p-4 shadow-[0_0_50px_rgba(245,158,11,0.4)] animate-fade-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-amber-500/30 pb-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📜</span>
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-300 block">
+                    ИСТОРИЯ СПИНОВ
+                  </span>
+                  <span className="text-[9px] text-slate-400">
+                    Последние {spinHistory.length} из 10 вращений игрока
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSpinHistoryModalOpen(false)}
+                className="text-slate-400 hover:text-white font-bold cursor-pointer px-1.5 py-0.5"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="py-2.5 space-y-1.5 max-h-72 overflow-y-auto">
+              {spinHistory.length === 0 ? (
+                <div className="py-8 text-center text-[11px] font-bold text-slate-400">
+                  История пуста. Сделайте первый спин! 🎰
+                </div>
+              ) : (
+                spinHistory.map((item) => {
+                  const isPositive = item.outcome === 'win' || item.outcome === 'bonus' || item.outcome === 'jackpot';
+                  return (
+                    <div
+                      key={item.id}
+                      className={`flex items-center justify-between rounded-xl border px-2.5 py-2 text-[10px] transition ${
+                        item.outcome === 'jackpot'
+                          ? 'border-amber-400/80 bg-amber-950/60 shadow-[0_0_12px_rgba(251,191,36,0.3)]'
+                          : item.outcome === 'bonus'
+                            ? 'border-yellow-500/60 bg-yellow-950/40'
+                            : item.outcome === 'win'
+                              ? 'border-emerald-500/50 bg-emerald-950/30'
+                              : 'border-slate-800 bg-slate-950/80'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm shrink-0">
+                          {item.outcome === 'jackpot'
+                            ? '👑'
+                            : item.outcome === 'bonus'
+                              ? '🔺'
+                              : item.outcome === 'win'
+                                ? '✨'
+                                : '💨'}
+                        </span>
+                        <div className="min-w-0">
+                          <div
+                            className={`font-black truncate ${
+                              item.outcome === 'jackpot'
+                                ? 'text-amber-300'
+                                : item.outcome === 'bonus'
+                                  ? 'text-yellow-300'
+                                  : item.outcome === 'win'
+                                    ? 'text-emerald-300'
+                                    : 'text-slate-400'
+                            }`}
+                          >
+                            {item.label}
+                          </div>
+                          <div className="text-[8px] text-slate-400 flex items-center gap-1.5">
+                            <span>{item.time}</span>
+                            <span>•</span>
+                            <span>
+                              Ставка: {item.bet} {item.currency === 'gold' ? '🪙' : '💎'}
+                            </span>
+                            {item.multiplier > 1 && (
+                              <span className="rounded bg-amber-500/20 px-1 py-0.2 text-[7.5px] font-black text-amber-300">
+                                {item.multiplier}X
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0 ml-2">
+                        {isPositive ? (
+                          <span className="font-black text-emerald-300 tabular-nums text-[11px]">
+                            +{item.winAmount.toLocaleString()} {item.currency === 'gold' ? '🪙' : '💎'}
+                          </span>
+                        ) : (
+                          <span className="font-bold text-rose-400/80 tabular-nums text-[10px]">
+                            -{item.bet.toLocaleString()} {item.currency === 'gold' ? '🪙' : '💎'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t border-amber-500/30 pt-2.5 flex items-center gap-2">
+              {spinHistory.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpinHistory([]);
+                    try {
+                      localStorage.removeItem('pharaoh_slots_spin_history_v1');
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  className="rounded-xl border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-[10px] font-bold uppercase text-rose-300 hover:bg-rose-900/50 cursor-pointer"
+                >
+                  Очистить
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsSpinHistoryModalOpen(false)}
+                className="flex-1 rounded-xl border border-amber-500/60 bg-slate-900 py-2 text-xs font-black uppercase text-amber-200 hover:bg-slate-800 cursor-pointer"
               >
                 Закрыть
               </button>

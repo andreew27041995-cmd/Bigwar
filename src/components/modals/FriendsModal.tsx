@@ -37,7 +37,7 @@ export const FriendsModal: React.FC<FriendsModalProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-700 pb-2">
         <div className="flex items-center gap-2">

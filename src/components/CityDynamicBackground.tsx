@@ -287,9 +287,9 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
         </div>
       )}
 
-      {/* Weather & Time of Day Controls: Exclusively for Administrators (Positioned cleanly below top HUD bar so HUD never covers them) */}
+      {/* Weather & Time of Day Controls: Exclusively for Administrators (Positioned cleanly below top HUD bar so HUD and Modals never collide) */}
       {isAdmin ? (
-        <div className="pointer-events-auto absolute top-[46px] sm:top-[48px] right-2 z-[45] flex flex-wrap items-center justify-end gap-1 rounded-xl border border-amber-500/40 bg-slate-950/90 px-2 py-1 shadow-[0_6px_18px_rgba(0,0,0,0.75)] backdrop-blur-md animate-fadeIn">
+        <div className="pointer-events-auto absolute top-[52px] sm:top-[54px] right-2 z-25 flex flex-wrap items-center justify-end gap-1 rounded-xl border border-amber-500/40 bg-slate-950/90 px-2 py-1 shadow-[0_6px_18px_rgba(0,0,0,0.75)] backdrop-blur-md animate-fadeIn">
           {/* Admin Tag */}
           <span className="rounded border border-amber-500/50 bg-amber-950/90 px-1 py-0.5 text-[7px] font-black uppercase tracking-wider text-amber-300 shadow">
             Admin
