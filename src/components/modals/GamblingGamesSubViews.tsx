@@ -51,49 +51,49 @@ interface SlotSymbolDef {
   weight: number;
 }
 
-// Tuned Realistic Casino RTP:
-// Higher weight for low paying symbols, scarce Wild masks & Pyramid Scatters,
-// so most spins produce a near-miss, loss, or partial return, creating authentic thrill!
+// Tuned Realistic Casino RTP (20–25% Win Hit Rate):
+// Most spins (77.5%) are non-winning; among the ~22.5% winning spins, the majority return part of the bet
+// (0.45x - 0.7x) or give a small profit (1.15x - 1.5x), while big 4-5 symbol lines and Pyramid Bonuses are rare!
 const SLOT_SYMBOLS: SlotSymbolDef[] = [
   {
     id: 'mask',
     name: 'Золотая Маска Анубиса (WILD / JACKPOT)',
     shortLabel: 'WILD',
     isWild: true,
-    pay3: 4,
-    pay4: 12,
+    pay3: 3.5,
+    pay4: 10,
     pay5: 50,
     accentColor: '#fbbf24',
-    weight: 6 // Very rare! Needed for Pharaoh's Grand Jackpot on center payline
+    weight: 4 // Very rare! Needed for Pharaoh's Grand Jackpot on center payline
   },
   {
     id: 'pyramid',
-    name: 'Пирамида Ра (БОНУС СКАРТЕР)',
+    name: 'Пирамида Ра (БОНУС СКАТТЕР)',
     shortLabel: 'БОНУС',
     isBonus: true,
     pay3: 3,
     pay4: 8,
     pay5: 25,
     accentColor: '#facc15',
-    weight: 9 // Rare scatter trigger
+    weight: 6 // Rare scatter trigger
   },
   {
     id: 'scarab',
     name: 'Священный Скарабей',
     shortLabel: 'Скарабей',
-    pay3: 1.5,
-    pay4: 4,
-    pay5: 12,
+    pay3: 1.4,
+    pay4: 3.5,
+    pay5: 10,
     accentColor: '#2dd4bf',
-    weight: 16
+    weight: 15
   },
   {
     id: 'gold',
     name: 'Сокровища Фараона',
     shortLabel: 'Золото',
-    pay3: 1.2,
-    pay4: 2.8,
-    pay5: 8,
+    pay3: 1.15,
+    pay4: 2.5,
+    pay5: 7,
     accentColor: '#f59e0b',
     weight: 22
   },
@@ -101,21 +101,21 @@ const SLOT_SYMBOLS: SlotSymbolDef[] = [
     id: 'eye',
     name: 'Око Гора',
     shortLabel: 'Око Ра',
-    pay3: 0.8,
-    pay4: 2,
-    pay5: 5,
+    pay3: 0.7,
+    pay4: 1.6,
+    pay5: 4.5,
     accentColor: '#38bdf8',
-    weight: 30
+    weight: 34
   },
   {
     id: 'ankh',
     name: 'Золотой Анкх',
     shortLabel: 'Анкх',
-    pay3: 0.5,
-    pay4: 1.5,
-    pay5: 3.5,
+    pay3: 0.45,
+    pay4: 1.2,
+    pay5: 3,
     accentColor: '#c084fc',
-    weight: 38
+    weight: 44
   }
 ];
 
@@ -410,27 +410,80 @@ const SlotSymbolSvg: React.FC<{ symbolId: SlotSymbolId; isHighlighted?: boolean 
   }
 };
 
-function pickRandomSlotSymbol(isSuperSpin = false): SlotSymbolId {
-  // If Super-Spin is active on Altar of Sacrifice, triple the weights of Mask (Jackpot) and Pyramid (Bonus)
-  const symbols = SLOT_SYMBOLS.map((s) => ({
-    ...s,
-    weight: isSuperSpin && (s.id === 'mask' || s.id === 'pyramid') ? s.weight * 3 : s.weight
-  }));
-  const totalWeight = symbols.reduce((sum, s) => sum + s.weight, 0);
+function pickRandomSlotSymbol(): SlotSymbolId {
+  const totalWeight = SLOT_SYMBOLS.reduce((sum, s) => sum + s.weight, 0);
   let r = Math.random() * totalWeight;
-  for (const sym of symbols) {
+  for (const sym of SLOT_SYMBOLS) {
     if (r < sym.weight) return sym.id;
     r -= sym.weight;
   }
   return 'ankh';
 }
 
-function generateSlotGrid5x3(isSuperSpin = false): SlotSymbolId[][] {
+function evaluateGridQuickSummary(grid: SlotSymbolId[][]): {
+  totalBaseMult: number;
+  lineCount: number;
+  pyramidCount: number;
+  isJackpot: boolean;
+} {
+  const centerLine = [grid[0][1], grid[1][1], grid[2][1], grid[3][1], grid[4][1]];
+  const isJackpot = centerLine.every((s) => s === 'mask');
+
+  let totalBaseMult = 0;
+  let lineCount = 0;
+
+  for (const pl of PAYLINES_5X3) {
+    const lineSyms = pl.rows.map((r, c) => grid[c][r]);
+    let targetSym: SlotSymbolId | null = null;
+    for (const s of lineSyms) {
+      if (s === 'pyramid') break;
+      if (s !== 'mask') {
+        targetSym = s;
+        break;
+      }
+    }
+    if (!targetSym && lineSyms[0] === 'mask') targetSym = 'mask';
+    if (!targetSym) continue;
+
+    let matchLen = 0;
+    for (let c = 0; c < 5; c++) {
+      const s = lineSyms[c];
+      if (s === targetSym || s === 'mask') {
+        matchLen++;
+      } else {
+        break;
+      }
+    }
+
+    if (matchLen >= 3) {
+      const symDef = SLOT_SYMBOL_MAP[targetSym];
+      const baseMult = matchLen === 5 ? symDef.pay5 : matchLen === 4 ? symDef.pay4 : symDef.pay3;
+      totalBaseMult += baseMult;
+      lineCount++;
+    }
+  }
+
+  let pyramidCount = 0;
+  for (let c = 0; c < 5; c++) {
+    for (let r = 0; r < 3; r++) {
+      if (grid[c][r] === 'pyramid') pyramidCount++;
+    }
+  }
+
+  if (pyramidCount >= 3) {
+    const pyrDef = SLOT_SYMBOL_MAP.pyramid;
+    totalBaseMult += pyramidCount >= 5 ? pyrDef.pay5 : pyramidCount === 4 ? pyrDef.pay4 : pyrDef.pay3;
+  }
+
+  return { totalBaseMult, lineCount, pyramidCount, isJackpot };
+}
+
+function buildRandomRawGrid5x3(): SlotSymbolId[][] {
   const grid: SlotSymbolId[][] = [];
   for (let col = 0; col < 5; col++) {
     const reelCol: SlotSymbolId[] = [];
     for (let row = 0; row < 3; row++) {
-      let sym = pickRandomSlotSymbol(isSuperSpin);
+      let sym = pickRandomSlotSymbol();
       if (sym === 'pyramid' && reelCol.includes('pyramid')) {
         sym = 'ankh';
       }
@@ -439,6 +492,155 @@ function generateSlotGrid5x3(isSuperSpin = false): SlotSymbolId[][] {
     grid.push(reelCol);
   }
   return grid;
+}
+
+/**
+ * Generates a 5x3 slot grid calibrated so that:
+ * - Winning spins occur in ~22.5% of spins (20–25% range).
+ * - ~77.5% of spins are losing spins (0 winning lines, <3 pyramids).
+ * - Most winning spins return part of the bet (0.45x - 0.7x) or give a small plus (1.15x - 1.5x).
+ * - Big combinations (4-5 in a row) and Pyramid bonuses (3+ pyramids) occur rarely.
+ */
+function generateSlotGrid5x3(): SlotSymbolId[][] {
+  const roll = Math.random();
+  const nonWinSymbols: SlotSymbolId[] = ['ankh', 'eye', 'gold', 'scarab'];
+
+  // 1) 77.5% of spins -> Strictly Non-Winning Spin (Hit Rate = 22.5%, inside 20-25%)
+  if (roll >= 0.225) {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const candidate = buildRandomRawGrid5x3();
+      const summary = evaluateGridQuickSummary(candidate);
+      if (summary.totalBaseMult === 0 && !summary.isJackpot) {
+        return candidate;
+      }
+    }
+    // Guaranteed deterministic non-winning fallback grid (reel 2 has completely disjoint symbols from reels 0 & 1)
+    return [
+      ['ankh', 'eye', 'gold'],
+      ['scarab', 'ankh', 'eye'],
+      ['gold', 'scarab', 'pyramid'],
+      ['eye', 'ankh', 'scarab'],
+      ['gold', 'eye', 'ankh']
+    ];
+  }
+
+  // 2) 22.5% of spins -> Winning Spin, distributed across realistic payout tiers:
+  const winTierRoll = Math.random();
+
+  // Tier A (62% of wins = ~14% of all spins): Partial return of bet (0.45x Ankh or 0.7x Eye, single 3-of-a-kind line)
+  if (winTierRoll < 0.62) {
+    const targetSym: SlotSymbolId = Math.random() < 0.58 ? 'ankh' : 'eye';
+    const blockerSyms = nonWinSymbols.filter((s) => s !== targetSym);
+    for (let attempt = 0; attempt < 45; attempt++) {
+      const candidate = buildRandomRawGrid5x3();
+      // Remove masks and excess pyramids so we don't accidentally create multi-line mega wins
+      for (let c = 0; c < 5; c++) {
+        for (let r = 0; r < 3; r++) {
+          if (candidate[c][r] === 'mask' || candidate[c][r] === 'pyramid') {
+            candidate[c][r] = blockerSyms[(c + r) % blockerSyms.length];
+          }
+        }
+      }
+      const pl = PAYLINES_5X3[Math.floor(Math.random() * PAYLINES_5X3.length)];
+      candidate[0][pl.rows[0]] = targetSym;
+      candidate[1][pl.rows[1]] = targetSym;
+      candidate[2][pl.rows[2]] = targetSym;
+      // Ensure 4th reel breaks the 4-of-a-kind
+      if (candidate[3][pl.rows[3]] === targetSym) {
+        candidate[3][pl.rows[3]] = blockerSyms[0];
+      }
+      const summary = evaluateGridQuickSummary(candidate);
+      if (summary.lineCount === 1 && summary.totalBaseMult > 0 && summary.totalBaseMult <= 0.85 && !summary.isJackpot) {
+        return candidate;
+      }
+    }
+  }
+
+  // Tier B (25% of wins = ~5.6% of all spins): Small profit (1.15x Gold, 1.4x Scarab, or 2 low lines ~1.1x-1.6x)
+  if (winTierRoll < 0.87) {
+    const targetSym: SlotSymbolId = Math.random() < 0.6 ? 'gold' : 'scarab';
+    const blockerSyms = nonWinSymbols.filter((s) => s !== targetSym);
+    for (let attempt = 0; attempt < 45; attempt++) {
+      const candidate = buildRandomRawGrid5x3();
+      for (let c = 0; c < 5; c++) {
+        for (let r = 0; r < 3; r++) {
+          if (candidate[c][r] === 'mask' || candidate[c][r] === 'pyramid') {
+            candidate[c][r] = blockerSyms[(c + r) % blockerSyms.length];
+          }
+        }
+      }
+      const pl = PAYLINES_5X3[Math.floor(Math.random() * PAYLINES_5X3.length)];
+      candidate[0][pl.rows[0]] = targetSym;
+      candidate[1][pl.rows[1]] = targetSym;
+      candidate[2][pl.rows[2]] = targetSym;
+      if (candidate[3][pl.rows[3]] === targetSym) {
+        candidate[3][pl.rows[3]] = blockerSyms[0];
+      }
+      const summary = evaluateGridQuickSummary(candidate);
+      if (summary.totalBaseMult >= 0.9 && summary.totalBaseMult <= 2.1 && !summary.isJackpot) {
+        return candidate;
+      }
+    }
+  }
+
+  // Tier C (9.5% of wins = ~2.1% of all spins): Medium / Big Line Win (4-of-a-kind or Wild combo, 2.2x - 7x)
+  if (winTierRoll < 0.965) {
+    const targetSym: SlotSymbolId =
+      Math.random() < 0.45 ? 'eye' : Math.random() < 0.75 ? 'gold' : 'scarab';
+    const blockerSyms = nonWinSymbols.filter((s) => s !== targetSym);
+    const pl = PAYLINES_5X3[Math.floor(Math.random() * PAYLINES_5X3.length)];
+    const candidate = buildRandomRawGrid5x3();
+    for (let c = 0; c < 5; c++) {
+      for (let r = 0; r < 3; r++) {
+        if (candidate[c][r] === 'pyramid') {
+          candidate[c][r] = blockerSyms[(c + r) % blockerSyms.length];
+        }
+      }
+    }
+    candidate[0][pl.rows[0]] = targetSym;
+    candidate[1][pl.rows[1]] = targetSym;
+    candidate[2][pl.rows[2]] = Math.random() < 0.35 ? 'mask' : targetSym;
+    candidate[3][pl.rows[3]] = targetSym;
+    if (candidate[4][pl.rows[4]] === targetSym || candidate[4][pl.rows[4]] === 'mask') {
+      candidate[4][pl.rows[4]] = blockerSyms[0];
+    }
+    return candidate;
+  }
+
+  // Tier D (3.3% of wins = ~0.75% of all spins): Rare Bonus (3 Pyramids of Ra Scatter or 5-of-a-kind line)
+  if (winTierRoll < 0.998) {
+    const candidate = buildRandomRawGrid5x3();
+    for (let c = 0; c < 5; c++) {
+      for (let r = 0; r < 3; r++) {
+        if (candidate[c][r] === 'pyramid' || candidate[c][r] === 'mask') {
+          candidate[c][r] = nonWinSymbols[(c + r) % nonWinSymbols.length];
+        }
+      }
+    }
+    if (Math.random() < 0.65) {
+      // 3 Bonus Pyramids of Ra
+      const cols = [0, 1, 2, 3, 4].sort(() => Math.random() - 0.5).slice(0, 3);
+      cols.forEach((colIdx) => {
+        const rowIdx = Math.floor(Math.random() * 3);
+        candidate[colIdx][rowIdx] = 'pyramid';
+      });
+    } else {
+      // 5-of-a-kind line
+      const pl = PAYLINES_5X3[Math.floor(Math.random() * PAYLINES_5X3.length)];
+      const sym5: SlotSymbolId = Math.random() < 0.6 ? 'gold' : 'scarab';
+      for (let c = 0; c < 5; c++) {
+        candidate[c][pl.rows[c]] = sym5;
+      }
+    }
+    return candidate;
+  }
+
+  // Tier E (0.2% of wins = ~0.045% of all spins): Ultra-Rare Grand Pharaoh Jackpot (5 Anubis Masks on center line)
+  const jackpotGrid = buildRandomRawGrid5x3();
+  for (let c = 0; c < 5; c++) {
+    jackpotGrid[c][1] = 'mask';
+  }
+  return jackpotGrid;
 }
 
 interface WinningLineResult {
@@ -582,8 +784,17 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
     }
   });
 
-  // Altar of Sacrifice: Super-Spins (3x higher Jackpot and Bonus Pyramid chance)
-  const [isSuperSpinActive, setIsSuperSpinActive] = useState<boolean>(false);
+  // «Благословение Богов» («Благословение Ра»): с небольшим случайным шансом (~18%) активируется перед спином
+  // и даёт солнечный бонус (+50%, +75% или +100%) к следующей победе, украшая интерфейс золотым свечением
+  const [raBlessingBonus, setRaBlessingBonus] = useState<{
+    active: boolean;
+    bonusPct: number;
+    justTriggered: boolean;
+  }>({
+    active: false,
+    bonusPct: 50,
+    justTriggered: false
+  });
 
   const timersRef = useRef<number[]>([]);
   const intervalRefs = useRef<number[]>([]);
@@ -711,17 +922,26 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
     const lockedMultiplier = STREAK_MULTIPLIERS[Math.min(lockedStreakIdx, STREAK_MULTIPLIERS.length - 1)];
     const curIcon = lockedCurrency === 'gold' ? '🪙' : '💎';
 
-    const isSuperSpin = isSuperSpinActive;
-    if (isSuperSpin && hero.crystals < 1 && !isFreeSpin) {
-      setLastWinMessage('⚠️ Для Супер-Спина на Алтаре Жертвоприношения требуется минимум 1 💎!');
-      return;
+    // Roll for «Благословение Ра» (Blessing of Ra) right before the spin starts (~18% chance if not already active)
+    let activeRaBlessing = raBlessingBonus.active;
+    let activeRaBlessingPct = raBlessingBonus.bonusPct;
+    if (!activeRaBlessing && Math.random() < 0.18) {
+      const pctRoll = Math.random();
+      activeRaBlessingPct = pctRoll < 0.65 ? 50 : pctRoll < 0.9 ? 75 : 100;
+      activeRaBlessing = true;
+      setRaBlessingBonus({
+        active: true,
+        bonusPct: activeRaBlessingPct,
+        justTriggered: true
+      });
+      playLootSound();
+    } else if (activeRaBlessing && raBlessingBonus.justTriggered) {
+      setRaBlessingBonus((prev) => ({ ...prev, justTriggered: false }));
     }
 
     if (isFreeSpin) {
       setFreeSpinsLeft((prev) => Math.max(0, prev - 1));
     } else {
-      // If super spin is active, deduct 1 crystal sacrifice for 3x Jackpot/Bonus chance
-      const crystalSacrifice = isSuperSpin ? 1 : 0;
       // Deduct stake and contribute 2% to progressive Pharaoh Jackpot!
       const jackpotAddition = Math.max(1, Math.round(lockedBet * 0.02));
       const nextJackpot = {
@@ -735,17 +955,16 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
         gameName: 'Слоты Фараона 5x3',
         spentGold: lockedCurrency === 'gold' ? lockedBet : 0,
         wonGold: 0,
-        spentCrystals: (lockedCurrency === 'crystals' ? lockedBet : 0) + crystalSacrifice,
+        spentCrystals: lockedCurrency === 'crystals' ? lockedBet : 0,
         wonCrystals: 0,
-        countGame: false,
-        logText: isSuperSpin ? '🔥 Алтарь Жертвоприношения: потрачен 1 💎 за Супер-Спин (шанс Джекпота x3)' : undefined
+        countGame: false
       });
     }
 
     playClickSound();
 
-    // Generate outcome grid with Super-Spin probability boost if active
-    const nextGrid = generateSlotGrid5x3(isSuperSpin);
+    // Generate outcome grid (20–25% win hit rate, mostly partial returns or small pluses)
+    const nextGrid = generateSlotGrid5x3();
 
     // Check for teaser (2+ Pyramids in reels 0..3)
     const pyramidsInFirst4: Array<{ col: number; row: number }> = [];
@@ -943,7 +1162,16 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
         }
 
         const appliedMult = lockedMultiplier;
-        let rawWin = Math.max(1, Math.round(lockedBet * totalBaseMult * appliedMult));
+        const raMultFactor = activeRaBlessing ? 1 + activeRaBlessingPct / 100 : 1;
+        let rawWin = Math.max(1, Math.round(lockedBet * totalBaseMult * appliedMult * raMultFactor));
+
+        if (activeRaBlessing) {
+          setRaBlessingBonus({
+            active: false,
+            bonusPct: 50,
+            justTriggered: false
+          });
+        }
 
         // Handle Pharaoh's Sacred Loan Repayment upon win:
         let loanRepaidAmount = 0;
@@ -997,8 +1225,8 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           outcome: allPyramids.length >= 3 ? 'bonus' : 'win',
           label:
             allPyramids.length >= 3
-              ? `🔺 Бонус Пирамид! +${rawWin.toLocaleString()} ${curIcon}`
-              : `Победа +${rawWin.toLocaleString()} ${curIcon} (Линий: ${lineWins.length})`,
+              ? `🔺 Бонус Пирамид! +${rawWin.toLocaleString()} ${curIcon}${activeRaBlessing ? ` (☀️ Ра +${activeRaBlessingPct}%)` : ''}`
+              : `Победа +${rawWin.toLocaleString()} ${curIcon} (Линий: ${lineWins.length}${activeRaBlessing ? `, ☀️ Ра +${activeRaBlessingPct}%` : ''})`,
           bet: isFreeSpin ? 0 : lockedBet,
           winAmount: rawWin,
           currency: lockedCurrency,
@@ -1008,9 +1236,10 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
         const summaryParts: string[] = [];
         if (allPyramids.length >= 3) summaryParts.push(`🔺 БОНУС ПИРАМИД (${allPyramids.length} шт.)`);
         if (lineWins.length > 0) summaryParts.push(`Линий: ${lineWins.length}`);
+        if (activeRaBlessing) summaryParts.push(`☀️ Благословение Ра +${activeRaBlessingPct}%`);
         if (appliedMult >= 10) summaryParts.push('⚡ 10X МАКСИМУМ (СБРОС ДО 1X)');
         if (loanRepaidAmount > 0) summaryParts.push(`🏛️ Долг Анубису: -${loanRepaidAmount} 🪙`);
-        
+
         const winText = `🎉 ВЫИГРЫШ: +${rawWin.toLocaleString()} ${curIcon} (${summaryParts.join(' • ')}${appliedMult > 1 ? ` • ${appliedMult}X` : ''})!`;
         setLastWinMessage(winText);
 
@@ -1021,7 +1250,7 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           spentCrystals: 0,
           wonCrystals: lockedCurrency === 'crystals' ? rawWin : 0,
           countGame: true,
-          logText: `🎰 Слоты Фараона: выигрыш +${rawWin} ${curIcon}!${loanRepaidAmount > 0 ? ` (Возврат займа Анубиса: ${loanRepaidAmount} 🪙)` : ''}`
+          logText: `🎰 Слоты Фараона: выигрыш +${rawWin} ${curIcon}!${activeRaBlessing ? ` (☀️ Благословение Ра +${activeRaBlessingPct}%)` : ''}${loanRepaidAmount > 0 ? ` (Возврат займа Анубиса: ${loanRepaidAmount} 🪙)` : ''}`
         });
       } else {
         // Spin lost: advance bad-streak protection Luck Gauge!
@@ -1263,7 +1492,16 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
       </div>
 
       {/* 4. STRICTLY LOCKED 5x3 REEL GRID (5 COLUMNS × 3 ROWS = 15 VISIBLE CELLS) */}
-      <div className="relative rounded-2xl border-[3px] border-amber-400 bg-gradient-to-b from-[#1a0e06] via-[#0d0710] to-[#07050a] p-2.5 shadow-[0_0_28px_rgba(245,158,11,0.3),inset_0_0_24px_rgba(0,0,0,0.95)] overflow-hidden">
+      <div
+        className={`relative rounded-2xl border-[3px] p-2.5 overflow-hidden transition-all duration-300 ${
+          raBlessingBonus.active
+            ? 'border-yellow-300 bg-gradient-to-b from-[#2b1804] via-[#140b16] to-[#0b060d] shadow-[0_0_36px_rgba(250,204,21,0.72),inset_0_0_28px_rgba(245,158,11,0.32)] ring-2 ring-yellow-300/70'
+            : 'border-amber-400 bg-gradient-to-b from-[#1a0e06] via-[#0d0710] to-[#07050a] shadow-[0_0_28px_rgba(245,158,11,0.3),inset_0_0_24px_rgba(0,0,0,0.95)]'
+        }`}
+      >
+        {raBlessingBonus.active && (
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_0%,rgba(253,224,71,0.22)_0%,transparent_70%)] animate-pulse" />
+        )}
         {teaserActiveOnReel5 && (
           <div className="mb-2 rounded-xl border-2 border-yellow-300 bg-gradient-to-r from-amber-700 via-yellow-500 to-amber-700 px-3 py-1 text-center text-[10px] font-black uppercase tracking-wider text-slate-950 shadow-[0_0_20px_rgba(250,204,21,0.9)] animate-pulse">
             ✨ 2 ПИРАМИДЫ РА! ОЖИДАНИЕ БОНУСА НА 5-М БАРАБАНЕ... ✨
@@ -1725,42 +1963,79 @@ export const EgyptianSlots5x3GameView: React.FC<SubGameCommonProps> = ({
           </div>
         )}
 
-        {/* ALTAR OF SACRIFICE (Алтарь Жертвоприношения - Супер-Спины) */}
-        <div className="flex items-center justify-between gap-2 rounded-xl border border-purple-500/50 bg-gradient-to-r from-slate-950 via-purple-950/60 to-slate-950 p-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-lg">🔥</span>
+        {/* BLESSING OF THE GODS: BLESSING OF RA (Благословение Ра — динамическая золотая строка на месте удаленного алтаря) */}
+        <div
+          className={`relative overflow-hidden flex items-center justify-between gap-2.5 rounded-xl border-2 px-3 py-2 transition-all duration-300 ${
+            raBlessingBonus.active
+              ? 'border-yellow-300 bg-gradient-to-r from-[#381d04] via-[#5c3206] to-[#381d04] shadow-[0_0_26px_rgba(250,204,21,0.75),inset_0_1px_0_rgba(254,249,195,0.65)]'
+              : 'border-amber-500/45 bg-gradient-to-r from-[#170e06] via-[#241508] to-[#170e06] shadow-inner'
+          }`}
+        >
+          {raBlessingBonus.active && (
+            <div
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(253,224,71,0.28)_0%,rgba(245,158,11,0.12)_50%,transparent_80%)] animate-pulse"
+              aria-hidden="true"
+            />
+          )}
+
+          <div className="relative z-10 flex items-center gap-2.5 min-w-0">
+            <div
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border-2 transition-all duration-300 ${
+                raBlessingBonus.active
+                  ? 'border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 shadow-[0_0_18px_rgba(253,224,71,0.95)] scale-105'
+                  : 'border-amber-500/50 bg-gradient-to-b from-amber-900/70 to-slate-950 text-amber-300'
+              }`}
+            >
+              <span className={`text-lg leading-none ${raBlessingBonus.active ? 'animate-spin' : ''}`} style={{ animationDuration: '9s' }}>
+                ☀️
+              </span>
+            </div>
+
             <div className="min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-wider text-purple-300 flex items-center gap-1">
-                <span>АЛТАРЬ ЖЕРТВОПРИНОШЕНИЯ</span>
-                {isSuperSpinActive && (
-                  <span className="rounded bg-purple-500/90 px-1 py-0.2 text-[7px] font-black uppercase text-white animate-pulse">
-                    АКТИВЕН
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                  className={`text-[9.5px] font-black uppercase tracking-wider ${
+                    raBlessingBonus.active ? 'text-yellow-200 drop-shadow' : 'text-amber-300'
+                  }`}
+                >
+                  𓇳 БЛАГОСЛОВЕНИЕ РА
+                </span>
+                {raBlessingBonus.active ? (
+                  <span className="rounded-md border border-yellow-200 bg-gradient-to-r from-yellow-300 to-amber-400 px-1.5 py-0.2 text-[7.5px] font-black uppercase text-slate-950 shadow-[0_0_10px_rgba(250,204,21,0.9)] animate-pulse">
+                    ДАР БОГОВ АКТИВЕН!
+                  </span>
+                ) : (
+                  <span className="rounded bg-amber-950/90 border border-amber-600/40 px-1.5 py-0.2 text-[7px] font-bold uppercase text-amber-300/80">
+                    Случайный дар перед спином
                   </span>
                 )}
               </div>
-              <div className="text-[8px] text-slate-400 truncate">
-                {isSuperSpinActive
-                  ? 'Супер-Спин: Шанс Маски Фараона и Пирамид повышен в 3X (+1 💎/спин)'
-                  : 'Пожертвовать 1 💎 за спин для увеличения шанса Джекпота и Бонуса в 3 раза'}
+              <div
+                className={`text-[8px] mt-0.5 leading-snug ${
+                  raBlessingBonus.active ? 'text-yellow-100 font-bold' : 'text-amber-100/70'
+                }`}
+              >
+                {raBlessingBonus.active
+                  ? `✨ Солнечное сияние Ра озарило барабаны: следующая победа увеличена на +${raBlessingBonus.bonusPct}%!`
+                  : 'С небольшим шансом пробуждается перед спином и дарует солнечный бонус к следующей победе'}
               </div>
             </div>
           </div>
 
-          <button
-            type="button"
-            disabled={isAnySpinning}
-            onClick={() => {
-              playClickSound();
-              setIsSuperSpinActive((prev) => !prev);
-            }}
-            className={`shrink-0 rounded-xl border px-3 py-1.5 text-[8.5px] font-black uppercase transition-all cursor-pointer ${
-              isSuperSpinActive
-                ? 'border-purple-300 bg-gradient-to-b from-purple-500 to-indigo-700 text-white shadow-[0_0_14px_rgba(168,85,247,0.7)]'
-                : 'border-slate-700 bg-slate-900 text-slate-300 hover:border-purple-400'
+          <div
+            className={`relative z-10 shrink-0 rounded-xl border px-2.5 py-1.5 text-center transition-all ${
+              raBlessingBonus.active
+                ? 'border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 shadow-[0_0_16px_rgba(250,204,21,0.85)]'
+                : 'border-amber-700/45 bg-[#120b05] text-amber-300/80'
             }`}
           >
-            {isSuperSpinActive ? 'ВКЛЮЧЕНО (3X)' : 'АКТИВИРОВАТЬ'}
-          </button>
+            <div className="text-[7px] font-black uppercase tracking-wider leading-none opacity-85">
+              {raBlessingBonus.active ? 'БОНУС РА' : 'ШАНС ДАРА'}
+            </div>
+            <div className="mt-0.5 text-[11px] font-black tabular-nums leading-none">
+              {raBlessingBonus.active ? `+${raBlessingBonus.bonusPct}%` : '+50..100%'}
+            </div>
+          </div>
         </div>
       </div>
 
