@@ -163,6 +163,45 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     'Выберите локацию и наживку, затем нажмите «Забросить удочку»'
   );
 
+  // Time-of-Day state synchronized with global game time ('morning' | 'day' | 'sunset' | 'night')
+  const [forceTimeOfDay, setForceTimeOfDay] = useState<'morning' | 'day' | 'sunset' | 'night' | null>(() => {
+    try {
+      const saved = localStorage.getItem('bigwar_force_time_of_day');
+      if (saved === 'morning' || saved === 'day' || saved === 'sunset' || saved === 'night') {
+        return saved;
+      }
+    } catch {}
+    return null;
+  });
+
+  const handleSelectTimeOfDay = (mode: 'morning' | 'day' | 'sunset' | 'night' | null) => {
+    setForceTimeOfDay(mode);
+    try {
+      if (mode) {
+        localStorage.setItem('bigwar_force_time_of_day', mode);
+      } else {
+        localStorage.removeItem('bigwar_force_time_of_day');
+      }
+    } catch {}
+  };
+
+  const activeTimeOfDay = useMemo<'morning' | 'day' | 'sunset' | 'night'>(() => {
+    if (forceTimeOfDay) return forceTimeOfDay;
+    const h = new Date().getHours();
+    if (h >= 5 && h < 8) return 'morning';
+    if (h >= 8 && h < 17) return 'day';
+    if (h >= 17 && h < 20) return 'sunset';
+    return 'night';
+  }, [forceTimeOfDay]);
+
+  // Water Splash & Golden Radiance VFX when pulling out a catch or rare artifact
+  const [catchSplashVfx, setCatchSplashVfx] = useState<{
+    active: boolean;
+    isGolden: boolean;
+    title: string;
+    subtitle: string;
+  } | null>(null);
+
   // Refs for 60fps canvas & real-time reeling physics loop
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const phaseRef = useRef<FishingPhase>(phase);
@@ -179,6 +218,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
   holdingReelRef.current = isHoldingReel;
   const pendingHookOutcomeRef = useRef<FishingRollOutcome | null>(null);
   const activeBaitUsedRef = useRef<FishingBaitTemplate | null>(null);
+  const castSplashTimestampRef = useRef<number>(0);
+  const catchSplashTimestampRef = useRef<number>(0);
+  const catchIsGoldenRef = useRef<boolean>(false);
 
   const timersRef = useRef<number[]>([]);
   const clearAllTimers = () => {
@@ -827,6 +869,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       setCastProgress(p);
       if (p >= 1) {
         window.clearInterval(castTick);
+        castSplashTimestampRef.current = performance.now();
         setPhase('waiting');
 
         // Bite Waiting Timer (Таймер ожидания клёва): 3.0s - 5.0s base delay, accelerated by weather biteDelayMultiplier
@@ -1171,7 +1214,40 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       }
     }
 
-    // 3. Trigger Flying Catch Animation into Keepnet
+    // 3. Trigger Flying Catch Animation into Keepnet + Cinematic Water Splash & Golden Radiance VFX
+    const isRareOrArtifact =
+      outcome.type === 'chest' ||
+      Boolean(outcome.trophyAwarded) ||
+      (outcome.type === 'fish' &&
+        (outcome.fish.rarity === 'rare' ||
+          outcome.fish.rarity === 'epic' ||
+          outcome.fish.rarity === 'legendary' ||
+          outcome.fish.rarity === 'mythic' ||
+          outcome.weightKg >= 5 ||
+          outcome.isRecordWeight));
+
+    catchSplashTimestampRef.current = performance.now();
+    catchIsGoldenRef.current = isRareOrArtifact;
+
+    setCatchSplashVfx({
+      active: true,
+      isGolden: isRareOrArtifact,
+      title:
+        outcome.type === 'fish'
+          ? isRareOrArtifact
+            ? `✨ ЦАРСКИЙ УЛОВ: ${outcome.fish.name.toUpperCase()}!`
+            : `💦 УЛОВ: ${outcome.fish.name}`
+          : '👑 СОКРОВИЩЕ ГЛУБИН НИЛА!',
+      subtitle:
+        outcome.type === 'fish'
+          ? `${outcome.weightKg} кг · +${outcome.goldEarned} 🪙${
+              outcome.crystalsEarned > 0 ? ` +${outcome.crystalsEarned} 💎` : ''
+            }`
+          : 'Затонувший сундук фараона поднят на берег!'
+    });
+    const splashVfxTimer = window.setTimeout(() => setCatchSplashVfx(null), 2200);
+    timersRef.current.push(splashVfxTimer);
+
     setFlyingCatchAnim({
       active: true,
       icon: outcome.type === 'fish' ? (outcome.fish.image || outcome.fish.iconUrl || '🐟') : '🧰',
@@ -1265,7 +1341,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     onCatchOutcome(outcome, nextState, energyCost);
   };
 
-  // Classic 2D Canvas Renderer for the selected Fishing Location & Active Net
+  // Cinematic 2D Canvas Renderer for the Nile River, Dynamic Time-of-Day Reflection, Atmospheric VFX & Fishing Physics
   useEffect(() => {
     if (activeTab !== 'play') return;
     const canvas = canvasRef.current;
@@ -1277,11 +1353,34 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     const startTime = performance.now();
 
     const swimmers = [
-      { x: 0.2, y: 0.58, speed: 0.04, scale: 0.55, dir: 1, depth: 0.35 },
-      { x: 0.75, y: 0.68, speed: 0.055, scale: 0.75, dir: -1, depth: 0.6 },
-      { x: 0.45, y: 0.78, speed: 0.035, scale: 0.95, dir: 1, depth: 0.85 },
-      { x: 0.6, y: 0.52, speed: 0.06, scale: 0.45, dir: -1, depth: 0.25 }
+      { x: 0.18, y: 0.56, speed: 0.038, scale: 0.55, dir: 1, depth: 0.35 },
+      { x: 0.76, y: 0.67, speed: 0.052, scale: 0.78, dir: -1, depth: 0.6 },
+      { x: 0.44, y: 0.79, speed: 0.033, scale: 0.96, dir: 1, depth: 0.85 },
+      { x: 0.62, y: 0.51, speed: 0.058, scale: 0.45, dir: -1, depth: 0.25 },
+      { x: 0.31, y: 0.72, speed: 0.044, scale: 0.68, dir: 1, depth: 0.5 }
     ];
+
+    // Atmospheric Wind Dust / Golden Sand Specks (All times of day)
+    const windParticles = Array.from({ length: 28 }, (_, i) => ({
+      x: (i * 0.037) % 1,
+      y: (i * 0.071 + 0.05) % 0.92,
+      speedX: 0.022 + (i % 5) * 0.009,
+      ampY: 3 + (i % 4) * 2.5,
+      freqY: 1.4 + (i % 3) * 0.6,
+      size: 0.9 + (i % 3) * 0.55,
+      phase: i * 1.13
+    }));
+
+    // Night Fireflies & Glowing Nile Midges
+    const fireflies = Array.from({ length: 18 }, (_, i) => ({
+      baseX: 0.06 + ((i * 0.053) % 0.88),
+      baseY: 0.32 + ((i * 0.041) % 0.58),
+      orbitRx: 8 + (i % 4) * 5,
+      orbitRy: 4 + (i % 3) * 3.5,
+      speed: 0.9 + (i % 5) * 0.32,
+      phase: i * 1.7,
+      hue: i % 3 === 0 ? '163, 230, 53' : i % 3 === 1 ? '253, 224, 71' : '56, 189, 248'
+    }));
 
     const renderFrame = (now: number) => {
       if (document.visibilityState === 'hidden') {
@@ -1298,28 +1397,30 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ctx.clearRect(0, 0, w, h);
 
       // 1. Dynamic Time-of-Day Lighting (Morning, Day, Sunset, Night)
-      const curHour = new Date().getHours();
-      const isNight = curHour >= 22 || curHour < 5;
-      const isMorning = curHour >= 5 && curHour < 11;
-      const isSunset = curHour >= 18 && curHour < 22;
+      const isNight = activeTimeOfDay === 'night';
+      const isMorning = activeTimeOfDay === 'morning';
+      const isSunset = activeTimeOfDay === 'sunset';
 
-      const horizonY = h * 0.27;
+      const horizonY = h * 0.28;
       const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
 
       if (isNight) {
-        skyGrad.addColorStop(0, '#020617');
-        skyGrad.addColorStop(0.5, '#090d16');
-        skyGrad.addColorStop(1, '#0f172a');
+        skyGrad.addColorStop(0, '#02040a');
+        skyGrad.addColorStop(0.42, '#070f24');
+        skyGrad.addColorStop(0.78, '#0c1938');
+        skyGrad.addColorStop(1, '#152c52');
       } else if (isSunset) {
-        skyGrad.addColorStop(0, '#4c0519');
-        skyGrad.addColorStop(0.45, '#9f1239');
-        skyGrad.addColorStop(0.8, '#d97706');
-        skyGrad.addColorStop(1, '#fde047');
-      } else if (isMorning) {
-        skyGrad.addColorStop(0, '#0c4a6e');
-        skyGrad.addColorStop(0.5, '#0284c7');
-        skyGrad.addColorStop(0.85, '#fdba74');
+        skyGrad.addColorStop(0, '#2e0518');
+        skyGrad.addColorStop(0.35, '#7f1d1d');
+        skyGrad.addColorStop(0.68, '#ea580c');
+        skyGrad.addColorStop(0.9, '#f59e0b');
         skyGrad.addColorStop(1, '#fef08a');
+      } else if (isMorning) {
+        skyGrad.addColorStop(0, '#082f49');
+        skyGrad.addColorStop(0.38, '#0369a1');
+        skyGrad.addColorStop(0.72, '#f97316');
+        skyGrad.addColorStop(0.9, '#fdba74');
+        skyGrad.addColorStop(1, '#fef9c3');
       } else {
         skyGrad.addColorStop(0, currentLocation.skyColors[0]);
         skyGrad.addColorStop(0.55, currentLocation.skyColors[1]);
@@ -1328,110 +1429,157 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ctx.fillStyle = skyGrad;
       ctx.fillRect(0, 0, w, horizonY + 2);
 
-      // Night Sky Stars
+      // 1.1. Night Sky Shining Stars, Constellations & Milky Way Glow
       if (isNight) {
+        const nebulaGrad = ctx.createRadialGradient(w * 0.52, horizonY * 0.35, 4, w * 0.52, horizonY * 0.35, w * 0.45);
+        nebulaGrad.addColorStop(0, 'rgba(56, 189, 248, 0.12)');
+        nebulaGrad.addColorStop(0.6, 'rgba(99, 102, 241, 0.06)');
+        nebulaGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = nebulaGrad;
+        ctx.fillRect(0, 0, w, horizonY);
+
         const starSeeds = [
-          [0.1, 0.06], [0.18, 0.14], [0.26, 0.05], [0.34, 0.18], [0.42, 0.08],
-          [0.55, 0.05], [0.62, 0.16], [0.71, 0.07], [0.82, 0.12], [0.89, 0.04],
-          [0.94, 0.19], [0.15, 0.22], [0.78, 0.23], [0.48, 0.21]
+          [0.06, 0.08], [0.12, 0.19], [0.18, 0.06], [0.24, 0.14], [0.31, 0.05],
+          [0.37, 0.21], [0.43, 0.09], [0.49, 0.17], [0.56, 0.06], [0.63, 0.15],
+          [0.69, 0.07], [0.75, 0.22], [0.81, 0.11], [0.87, 0.05], [0.93, 0.18],
+          [0.15, 0.25], [0.52, 0.24], [0.78, 0.26], [0.28, 0.12], [0.66, 0.19],
+          [0.09, 0.14], [0.45, 0.04], [0.84, 0.21], [0.96, 0.09]
         ];
         starSeeds.forEach(([sx, sy], idx) => {
-          const starAlpha = 0.35 + Math.sin(t * 2.8 + idx * 1.7) * 0.45;
-          ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0.1, Math.min(1, starAlpha))})`;
-          ctx.fillRect(sx * w, sy * horizonY, 1.6, 1.6);
+          const twinkle = 0.3 + (Math.sin(t * (2.2 + (idx % 4) * 0.7) + idx * 1.9) * 0.5 + 0.5) * 0.7;
+          const starX = sx * w;
+          const starY = sy * horizonY;
+          const isBrightStar = idx % 5 === 0;
+          ctx.fillStyle = isBrightStar
+            ? `rgba(224, 242, 254, ${twinkle.toFixed(2)})`
+            : `rgba(255, 255, 255, ${(twinkle * 0.85).toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(starX, starY, isBrightStar ? 1.45 : 0.95, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (isBrightStar && twinkle > 0.72) {
+            ctx.strokeStyle = `rgba(186, 230, 253, ${(twinkle * 0.45).toFixed(2)})`;
+            ctx.lineWidth = 0.7;
+            ctx.beginPath();
+            ctx.moveTo(starX - 4, starY);
+            ctx.lineTo(starX + 4, starY);
+            ctx.moveTo(starX, starY - 4);
+            ctx.lineTo(starX, starY + 4);
+            ctx.stroke();
+          }
         });
       }
 
-      // Sun / Moon Celestial Disc
-      const celestialX = w * (isNight ? 0.32 : isSunset ? 0.65 : isMorning ? 0.35 : 0.5);
-      const celestialY = horizonY * (isSunset ? 0.78 : isMorning ? 0.72 : 0.6);
-      const celestialGrad = ctx.createRadialGradient(celestialX, celestialY, 2, celestialX, celestialY, 36);
+      // 1.2. Sun / Moon Celestial Disc with Multi-Ring Corona
+      const celestialX = w * (isNight ? 0.32 : isSunset ? 0.66 : isMorning ? 0.34 : 0.5);
+      const celestialY = horizonY * (isSunset ? 0.76 : isMorning ? 0.7 : isNight ? 0.52 : 0.56);
+      const celestialRadius = isNight ? 32 : isSunset || isMorning ? 46 : 40;
+      const celestialGrad = ctx.createRadialGradient(
+        celestialX,
+        celestialY,
+        2,
+        celestialX,
+        celestialY,
+        celestialRadius
+      );
 
       if (isNight) {
-        // Glowing Crescent Moon
-        celestialGrad.addColorStop(0, '#f8fafc');
-        celestialGrad.addColorStop(0.35, '#cbd5e1');
+        // Sacred Crescent Moon of Khonsu
+        celestialGrad.addColorStop(0, 'rgba(248, 250, 252, 0.95)');
+        celestialGrad.addColorStop(0.32, 'rgba(186, 230, 253, 0.42)');
+        celestialGrad.addColorStop(0.7, 'rgba(56, 189, 248, 0.12)');
         celestialGrad.addColorStop(1, 'rgba(15, 23, 42, 0)');
         ctx.fillStyle = celestialGrad;
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 22, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, celestialRadius, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 11, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, 11.5, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#090d16';
+        ctx.fillStyle = '#070f24';
         ctx.beginPath();
-        ctx.arc(celestialX + 4.5, celestialY - 2, 9.5, 0, Math.PI * 2);
+        ctx.arc(celestialX + 4.8, celestialY - 2.2, 9.8, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        const glowColor = isSunset ? '#fb923c' : isMorning ? '#fde047' : currentLocation.sunColor;
-        celestialGrad.addColorStop(0, glowColor);
-        celestialGrad.addColorStop(0.45, isSunset ? '#b91c1c' : currentLocation.skyColors[2]);
+        const coreColor = isSunset ? '#fef08a' : isMorning ? '#ffffff' : '#fef9c3';
+        const midColor = isSunset ? '#fb923c' : isMorning ? '#fde047' : currentLocation.sunColor;
+        celestialGrad.addColorStop(0, coreColor);
+        celestialGrad.addColorStop(0.28, midColor);
+        celestialGrad.addColorStop(0.65, isSunset ? 'rgba(234, 88, 12, 0.35)' : 'rgba(251, 191, 36, 0.25)');
         celestialGrad.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = celestialGrad;
         ctx.beginPath();
-        ctx.arc(celestialX, celestialY, 36, 0, Math.PI * 2);
+        ctx.arc(celestialX, celestialY, celestialRadius, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Distant Pyramids, Sand Dunes & Palm Silhouettes on Far Nile Bank
-      const bankColor = isNight ? '#070b14' : isSunset ? '#3b0714' : isMorning ? '#1e293b' : '#291c12';
+      // 1.3. Distant Pyramids, Sand Dunes & Palm Silhouettes on Far Nile Bank
+      const bankColor = isNight ? '#060c18' : isSunset ? '#2d0610' : isMorning ? '#17253b' : '#291c12';
       ctx.fillStyle = bankColor;
       ctx.beginPath();
       ctx.moveTo(0, horizonY);
-      ctx.quadraticCurveTo(w * 0.15, horizonY - 8, w * 0.35, horizonY - 4);
-      ctx.quadraticCurveTo(w * 0.65, horizonY - 10, w, horizonY - 3);
+      ctx.quadraticCurveTo(w * 0.15, horizonY - 9, w * 0.35, horizonY - 4);
+      ctx.quadraticCurveTo(w * 0.65, horizonY - 11, w, horizonY - 3);
       ctx.lineTo(w, horizonY + 2);
       ctx.lineTo(0, horizonY + 2);
       ctx.closePath();
       ctx.fill();
 
-      // Great Pyramids on Horizon with Lit Facets
-      ctx.fillStyle = isNight ? '#0b1120' : isSunset ? '#4c0519' : '#3a2618';
+      // Great Pyramids on Horizon with Sun/Moon-lit Facets
+      ctx.fillStyle = isNight ? '#0a1326' : isSunset ? '#3f0814' : isMorning ? '#1e293b' : '#3a2618';
       ctx.beginPath();
       ctx.moveTo(w * 0.07, horizonY);
-      ctx.lineTo(w * 0.21, horizonY - 36);
+      ctx.lineTo(w * 0.21, horizonY - 38);
       ctx.lineTo(w * 0.35, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      // Sunlit pyramid facet
       ctx.fillStyle = isNight
-        ? 'rgba(148, 163, 184, 0.12)'
+        ? 'rgba(186, 230, 253, 0.14)'
         : isSunset
-        ? 'rgba(251, 146, 60, 0.28)'
-        : 'rgba(253, 224, 71, 0.22)';
+        ? 'rgba(251, 146, 60, 0.34)'
+        : isMorning
+        ? 'rgba(254, 240, 138, 0.32)'
+        : 'rgba(253, 224, 71, 0.24)';
       ctx.beginPath();
-      ctx.moveTo(w * 0.21, horizonY - 36);
+      ctx.moveTo(w * 0.21, horizonY - 38);
       ctx.lineTo(w * 0.35, horizonY);
-      ctx.lineTo(w * 0.24, horizonY);
+      ctx.lineTo(w * 0.23, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      ctx.fillStyle = isNight ? '#090d16' : isSunset ? '#3b0610' : '#2e1d12';
+      ctx.fillStyle = isNight ? '#081020' : isSunset ? '#33050f' : '#2e1d12';
       ctx.beginPath();
       ctx.moveTo(w * 0.68, horizonY);
-      ctx.lineTo(w * 0.79, horizonY - 28);
+      ctx.lineTo(w * 0.79, horizonY - 29);
       ctx.lineTo(w * 0.9, horizonY);
       ctx.closePath();
       ctx.fill();
 
-      // Far-bank Nile Date Palms
-      const palmXList = [w * 0.04, w * 0.38, w * 0.64, w * 0.93];
+      // Far-bank & Shore Date Palms with swaying fronds
+      const palmXList = [w * 0.04, w * 0.11, w * 0.38, w * 0.64, w * 0.88, w * 0.95];
       palmXList.forEach((px, pIdx) => {
-        const sway = Math.sin(t * 1.4 + pIdx) * 1.8;
+        const sway = Math.sin(t * 1.45 + pIdx * 0.9) * 2.1;
+        const trunkH = pIdx === 0 || pIdx === 5 ? 25 : 18;
         ctx.strokeStyle = bankColor;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = pIdx === 0 || pIdx === 5 ? 2.4 : 1.9;
         ctx.beginPath();
         ctx.moveTo(px, horizonY);
-        ctx.quadraticCurveTo(px + sway * 0.5, horizonY - 10, px + sway, horizonY - 18);
+        ctx.quadraticCurveTo(px + sway * 0.5, horizonY - trunkH * 0.55, px + sway, horizonY - trunkH);
         ctx.stroke();
-        for (let f = -2; f <= 2; f++) {
+        for (let f = -3; f <= 3; f++) {
+          if (f === 0) continue;
+          ctx.lineWidth = 1.2;
           ctx.beginPath();
-          ctx.moveTo(px + sway, horizonY - 18);
-          ctx.quadraticCurveTo(px + sway + f * 4, horizonY - 21, px + sway + f * 7, horizonY - 15 + Math.abs(f));
+          ctx.moveTo(px + sway, horizonY - trunkH);
+          ctx.quadraticCurveTo(
+            px + sway + f * 3.5,
+            horizonY - trunkH - 3.5,
+            px + sway + f * 6.5,
+            horizonY - trunkH + 3 + Math.abs(f) * 0.8
+          );
           ctx.stroke();
         }
       });
@@ -1440,13 +1588,13 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       if (!isNight) {
         ctx.save();
         ctx.fillStyle = isSunset
-          ? 'rgba(253, 186, 116, 0.18)'
+          ? 'rgba(253, 186, 116, 0.22)'
           : isMorning
-          ? 'rgba(254, 249, 195, 0.24)'
+          ? 'rgba(254, 249, 195, 0.26)'
           : 'rgba(255, 255, 255, 0.22)';
         for (let c = 0; c < 3; c++) {
-          const cx = ((w * (0.2 + c * 0.33) + t * (4 + c * 1.5)) % (w + 80)) - 40;
-          const cy = horizonY * (0.28 + (c % 2) * 0.2);
+          const cx = ((w * (0.2 + c * 0.33) + t * (4.5 + c * 1.5)) % (w + 80)) - 40;
+          const cy = horizonY * (0.26 + (c % 2) * 0.2);
           ctx.beginPath();
           ctx.ellipse(cx, cy, 26 + c * 6, 5.5, 0, 0, Math.PI * 2);
           ctx.ellipse(cx - 12, cy + 2, 16, 4, 0, 0, Math.PI * 2);
@@ -1456,23 +1604,25 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         ctx.restore();
       }
 
-      // 2. Realistic Multi-Depth Nile Water Surface
+      // 2. Living Flowing Nile Water Surface with Dynamic Sky Reflection
       const waterGrad = ctx.createLinearGradient(0, horizonY, 0, h);
       if (isNight) {
-        waterGrad.addColorStop(0, '#040d1a');
-        waterGrad.addColorStop(0.28, '#062038');
-        waterGrad.addColorStop(0.68, '#082f49');
-        waterGrad.addColorStop(1, '#041322');
+        waterGrad.addColorStop(0, '#07152b');
+        waterGrad.addColorStop(0.24, '#092240');
+        waterGrad.addColorStop(0.62, '#062842');
+        waterGrad.addColorStop(1, '#020d1a');
       } else if (isSunset) {
-        waterGrad.addColorStop(0, '#7c2d12');
-        waterGrad.addColorStop(0.25, '#5b1c14');
-        waterGrad.addColorStop(0.65, '#164e63');
-        waterGrad.addColorStop(1, '#082f49');
+        waterGrad.addColorStop(0, '#9a3412');
+        waterGrad.addColorStop(0.22, '#7c2d12');
+        waterGrad.addColorStop(0.52, '#1e3a5f');
+        waterGrad.addColorStop(0.82, '#0c4a6e');
+        waterGrad.addColorStop(1, '#062033');
       } else if (isMorning) {
-        waterGrad.addColorStop(0, '#0e7490');
-        waterGrad.addColorStop(0.3, '#0284c7');
-        waterGrad.addColorStop(0.7, '#0369a1');
-        waterGrad.addColorStop(1, '#083344');
+        waterGrad.addColorStop(0, '#fb923c');
+        waterGrad.addColorStop(0.18, '#0e7490');
+        waterGrad.addColorStop(0.52, '#0284c7');
+        waterGrad.addColorStop(0.82, '#0369a1');
+        waterGrad.addColorStop(1, '#06283d');
       } else {
         waterGrad.addColorStop(0, currentLocation.waterColors[0]);
         waterGrad.addColorStop(0.3, currentLocation.waterColors[1]);
@@ -1482,7 +1632,29 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ctx.fillStyle = waterGrad;
       ctx.fillRect(0, horizonY, w, h - horizonY);
 
-      // 2.1. Dynamic Sun/Moon Shimmering Reflection Path on Water
+      // 2.05. Reflected Pyramids & Sky Horizon Glow on the Water Surface
+      ctx.save();
+      ctx.globalAlpha = isNight ? 0.22 : isSunset || isMorning ? 0.32 : 0.2;
+      const reflGrad = ctx.createLinearGradient(0, horizonY, 0, horizonY + (h - horizonY) * 0.35);
+      reflGrad.addColorStop(
+        0,
+        isNight ? '#1e3a8a' : isSunset ? '#f97316' : isMorning ? '#fde047' : currentLocation.skyColors[2]
+      );
+      reflGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = reflGrad;
+      ctx.fillRect(0, horizonY, w, (h - horizonY) * 0.35);
+
+      // Inverted wavy pyramid reflection
+      ctx.fillStyle = isNight ? 'rgba(15, 23, 42, 0.55)' : isSunset ? 'rgba(67, 20, 7, 0.45)' : 'rgba(12, 74, 110, 0.35)';
+      ctx.beginPath();
+      ctx.moveTo(w * 0.07, horizonY);
+      ctx.lineTo(w * 0.21 + Math.sin(t * 2.5) * 3, horizonY + 26);
+      ctx.lineTo(w * 0.35, horizonY);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // 2.1. Dynamic Sun / Moon Shimmering Reflection Path on Water (Dancing Glints)
       const shimmerCenterX = celestialX;
       const shimmerBaseColor = isNight
         ? 'rgba(186, 230, 253,'
@@ -1491,23 +1663,32 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         : isMorning
         ? 'rgba(254, 240, 138,'
         : 'rgba(253, 224, 71,';
-      for (let sr = 0; sr < 14; sr++) {
-        const srRatio = sr / 14;
-        const sy = horizonY + 4 + Math.pow(srRatio, 1.35) * (h - horizonY - 22);
-        const spread = (6 + srRatio * 42) + Math.sin(t * 3.2 + sr * 0.9) * 5;
-        const sxOffset = Math.sin(t * 2.4 + sr * 1.3) * (3 + srRatio * 8);
-        const alpha = (1 - srRatio * 0.65) * 0.28;
+      for (let sr = 0; sr < 22; sr++) {
+        const srRatio = sr / 22;
+        const sy = horizonY + 3 + Math.pow(srRatio, 1.3) * (h - horizonY - 16);
+        const spread = 5 + srRatio * 48 + Math.sin(t * 3.6 + sr * 0.85) * 6;
+        const sxOffset = Math.sin(t * 2.7 + sr * 1.25) * (2.5 + srRatio * 9);
+        const alpha = (1 - srRatio * 0.58) * (isSunset || isMorning ? 0.38 : 0.3);
         ctx.fillStyle = `${shimmerBaseColor}${alpha.toFixed(3)})`;
         ctx.beginPath();
-        ctx.ellipse(shimmerCenterX + sxOffset, sy, spread, 1.2 + srRatio * 1.6, 0, 0, Math.PI * 2);
+        ctx.ellipse(shimmerCenterX + sxOffset, sy, spread, 1.1 + srRatio * 1.7, 0, 0, Math.PI * 2);
         ctx.fill();
+
+        // Bright specular diamond glints inside the reflection path
+        if (sr % 2 === 0) {
+          const glintX = shimmerCenterX + sxOffset + Math.cos(t * 4.2 + sr) * (spread * 0.45);
+          ctx.fillStyle = `rgba(255, 255, 255, ${(alpha * 1.35).toFixed(3)})`;
+          ctx.beginPath();
+          ctx.ellipse(glintX, sy, spread * 0.24, 0.8 + srRatio * 0.7, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
 
       // 2.2. Sunken Barge Silhouette (Deep Water Landmark)
       const bargeX = w * 0.68;
       const bargeY = h * 0.72;
       ctx.save();
-      ctx.fillStyle = 'rgba(7, 24, 42, 0.55)';
+      ctx.fillStyle = 'rgba(7, 24, 42, 0.52)';
       ctx.beginPath();
       ctx.moveTo(bargeX - 42, bargeY + 8);
       ctx.quadraticCurveTo(bargeX, bargeY + 18, bargeX + 48, bargeY + 5);
@@ -1521,9 +1702,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ctx.moveTo(bargeX - 5, bargeY);
       ctx.lineTo(bargeX - 18, bargeY - 32);
       ctx.stroke();
-      ctx.fillStyle = 'rgba(251, 191, 36, 0.45)';
+      ctx.fillStyle = 'rgba(251, 191, 36, 0.55)';
       ctx.beginPath();
-      ctx.arc(bargeX + 15, bargeY + 2, 2.5, 0, Math.PI * 2);
+      ctx.arc(bargeX + 15, bargeY + 2, 2.5 + Math.sin(t * 4) * 0.6, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
 
@@ -1532,42 +1713,83 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       const ccCenterX =
         ccZoneId === 'shallow' ? w * 0.32 : ccZoneId === 'canyon' ? w * 0.48 : w * 0.64;
       const ccGrad = ctx.createRadialGradient(ccCenterX, h * 0.65, 5, ccCenterX, h * 0.65, 68);
-      ccGrad.addColorStop(0, 'rgba(56, 189, 248, 0.28)');
-      ccGrad.addColorStop(0.6, 'rgba(14, 165, 233, 0.1)');
+      ccGrad.addColorStop(0, 'rgba(56, 189, 248, 0.3)');
+      ccGrad.addColorStop(0.6, 'rgba(14, 165, 233, 0.11)');
       ccGrad.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = ccGrad;
       ctx.beginPath();
       ctx.ellipse(ccCenterX, h * 0.65, 62, 24, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Multi-layered Realistic Nile Wave Crest Glints
-      for (let layer = 0; layer < 7; layer++) {
-        const depthRatio = layer / 6;
-        const baseY = horizonY + 8 + Math.pow(depthRatio, 1.28) * (h - horizonY - 16);
-        const amp = 1.2 + depthRatio * 3.5;
-        const freq = 0.038 - depthRatio * 0.015;
-        const speed = (0.75 + depthRatio * 1.25) * (layer % 2 === 0 ? 1 : -0.85);
+      // 2.4. Multi-layered Flowing Nile Waves & Realistic Ripple Crests (10 Parallax Layers)
+      for (let layer = 0; layer < 10; layer++) {
+        const depthRatio = layer / 9;
+        const baseY = horizonY + 5 + Math.pow(depthRatio, 1.25) * (h - horizonY - 12);
+        const amp = 1.0 + depthRatio * 3.8;
+        const freq = 0.042 - depthRatio * 0.017;
+        const speed = (0.95 + depthRatio * 1.45) * (layer % 2 === 0 ? 1 : -0.78);
 
         ctx.strokeStyle = isNight
-          ? `rgba(125, 211, 252, ${0.09 + depthRatio * 0.11})`
+          ? `rgba(125, 211, 252, ${0.08 + depthRatio * 0.13})`
           : isMorning
-          ? `rgba(254, 240, 138, ${0.15 + depthRatio * 0.16})`
+          ? `rgba(254, 240, 138, ${0.14 + depthRatio * 0.18})`
           : isSunset
-          ? `rgba(253, 186, 116, ${0.15 + depthRatio * 0.15})`
+          ? `rgba(253, 186, 116, ${0.15 + depthRatio * 0.18})`
           : layer % 2 === 0
-          ? `rgba(186, 230, 253, ${0.16 + depthRatio * 0.15})`
-          : `rgba(253, 224, 71, ${0.09 + (1 - depthRatio) * 0.12})`;
-        ctx.lineWidth = 0.9 + depthRatio * 1.25;
+          ? `rgba(186, 230, 253, ${0.15 + depthRatio * 0.17})`
+          : `rgba(253, 224, 71, ${0.1 + (1 - depthRatio) * 0.14})`;
+        ctx.lineWidth = 0.8 + depthRatio * 1.35;
         ctx.beginPath();
-        for (let x = 0; x <= w; x += 10) {
+        for (let x = 0; x <= w; x += 8) {
           const y =
             baseY +
-            Math.sin(x * freq + t * speed + layer) * amp +
-            Math.cos(x * freq * 1.7 - t * speed * 0.6) * (amp * 0.35);
+            Math.sin(x * freq + t * speed + layer * 0.8) * amp +
+            Math.cos(x * freq * 1.85 - t * speed * 0.65) * (amp * 0.38);
           if (x === 0) ctx.moveTo(x, y);
           else ctx.lineTo(x, y);
         }
         ctx.stroke();
+      }
+
+      // 2.5. ATMOSPHERIC VFX: Morning / Sunset Rolling Water Mist & Crepuscular God Rays through Palms
+      if (isMorning || isSunset) {
+        // Low-lying flowing mist drifting across the Nile surface
+        ctx.save();
+        for (let m = 0; m < 4; m++) {
+          const mistX = ((w * (m * 0.28) + t * (9 + m * 2.5)) % (w + 180)) - 90;
+          const mistY = horizonY + 8 + m * 14 + Math.sin(t * 1.1 + m) * 3;
+          const mistW = 95 + m * 22;
+          const mistH = 11 + m * 3.5;
+          const mistGrad = ctx.createRadialGradient(mistX, mistY, 2, mistX, mistY, mistW);
+          const mistColor = isMorning ? '254, 249, 195' : '253, 186, 116';
+          mistGrad.addColorStop(0, `rgba(${mistColor}, 0.22)`);
+          mistGrad.addColorStop(0.55, `rgba(${mistColor}, 0.1)`);
+          mistGrad.addColorStop(1, `rgba(${mistColor}, 0)`);
+          ctx.fillStyle = mistGrad;
+          ctx.beginPath();
+          ctx.ellipse(mistX, mistY, mistW, mistH, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Soft Crepuscular Sunbeams (God Rays) piercing through shore palms
+        const rayOrigins = isMorning ? [w * 0.08, w * 0.22, w * 0.39] : [w * 0.62, w * 0.78, w * 0.91];
+        rayOrigins.forEach((rx, rIdx) => {
+          const raySway = Math.sin(t * 0.8 + rIdx * 1.3) * 8;
+          const rayGrad = ctx.createLinearGradient(rx, horizonY - 22, rx + (isMorning ? 55 : -55), h * 0.78);
+          const rayRgb = isMorning ? '254, 240, 138' : '251, 146, 60';
+          rayGrad.addColorStop(0, `rgba(${rayRgb}, 0.22)`);
+          rayGrad.addColorStop(0.5, `rgba(${rayRgb}, 0.09)`);
+          rayGrad.addColorStop(1, `rgba(${rayRgb}, 0)`);
+          ctx.fillStyle = rayGrad;
+          ctx.beginPath();
+          ctx.moveTo(rx - 6, horizonY - 20);
+          ctx.lineTo(rx + 8, horizonY - 20);
+          ctx.lineTo(rx + (isMorning ? 68 : -42) + raySway, h * 0.82);
+          ctx.lineTo(rx + (isMorning ? 28 : -82) + raySway, h * 0.82);
+          ctx.closePath();
+          ctx.fill();
+        });
+        ctx.restore();
       }
 
       // 3. Cast Fishing Net Buoys on Left Side of Water
@@ -1656,11 +1878,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       });
 
       // Swaying Papyrus stalks on bottom-left corner
-      const reedOffsets = [8, 16, 25, 34];
+      const reedOffsets = [8, 16, 25, 34, 43];
       reedOffsets.forEach((rx, rIdx) => {
-        const reedSway = Math.sin(t * 1.8 + rIdx * 0.7) * 4;
+        const reedSway = Math.sin(t * 1.8 + rIdx * 0.7) * 4.2;
         const topX = rx + reedSway;
-        const topY = h - 38 - (rIdx % 2) * 12;
+        const topY = h - 38 - (rIdx % 3) * 10;
         ctx.strokeStyle = isNight ? '#064e3b' : '#166534';
         ctx.lineWidth = 2.2;
         ctx.beginPath();
@@ -1679,28 +1901,64 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       });
       ctx.restore();
 
+      // 4.8. ATMOSPHERIC VFX: Night Fireflies / Midges & Wind-Borne Sand/Pollen Specks
+      if (isNight) {
+        ctx.save();
+        fireflies.forEach((ff) => {
+          const fx = ff.baseX * w + Math.cos(t * ff.speed + ff.phase) * ff.orbitRx;
+          const fy = ff.baseY * h + Math.sin(t * ff.speed * 1.3 + ff.phase) * ff.orbitRy;
+          const pulse = 0.25 + (Math.sin(t * 3.8 + ff.phase) * 0.5 + 0.5) * 0.75;
+          const ffGrad = ctx.createRadialGradient(fx, fy, 0.5, fx, fy, 7.5);
+          ffGrad.addColorStop(0, `rgba(255, 255, 255, ${pulse.toFixed(2)})`);
+          ffGrad.addColorStop(0.35, `rgba(${ff.hue}, ${(pulse * 0.75).toFixed(2)})`);
+          ffGrad.addColorStop(1, `rgba(${ff.hue}, 0)`);
+          ctx.fillStyle = ffGrad;
+          ctx.beginPath();
+          ctx.arc(fx, fy, 7.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+        ctx.restore();
+      }
+
+      // Wind-borne glowing sand/dust particles drifting with the Nile breeze
+      ctx.save();
+      windParticles.forEach((wp) => {
+        const px = ((wp.x + t * wp.speedX) % 1.08 - 0.04) * w;
+        const py = wp.y * h + Math.sin(t * wp.freqY + wp.phase) * wp.ampY;
+        const alpha = 0.22 + Math.sin(t * 2.5 + wp.phase) * 0.14;
+        ctx.fillStyle = isNight
+          ? `rgba(186, 230, 253, ${Math.max(0.08, alpha).toFixed(2)})`
+          : `rgba(254, 240, 138, ${Math.max(0.12, alpha + 0.1).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(px, py, wp.size, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
+
       // 5. Float & High-Detail Rod Coordinates (Anchored to selected Depth Zone!)
       const rodBaseX = w * 0.84;
       const rodBaseY = h * 0.99;
       const biteShake =
         curPhase === 'bite'
-          ? Math.sin(t * 36) * 6
+          ? Math.sin(t * 42) * 7.5
           : curPhase === 'reeling'
-          ? Math.sin(t * (isThrash ? 45 : 24)) * (isThrash ? 7 : 3)
+          ? Math.sin(t * (isThrash ? 48 : 26)) * (isThrash ? 8.5 : 3.5)
           : curPhase === 'nibble'
-          ? Math.sin(t * 20) * 2.5
+          ? Math.sin(t * 24) * 3.8
           : 0;
       const rodBend =
         curPhase === 'reeling'
-          ? 22 + (tensionRef.current / 100) * 28
+          ? 24 + (tensionRef.current / 100) * 30
           : curPhase === 'bite'
-          ? 19
+          ? 22
+          : curPhase === 'nibble'
+          ? 8 + Math.sin(t * 18) * 3
           : curPhase === 'casting'
-          ? -12
+          ? -14
           : 4;
 
-      const rodTipX = w * 0.56 - rodBend * 0.62 + biteShake * 0.4;
-      const rodTipY = h * 0.2 + rodBend * 0.88 + Math.sin(t * 2.2) * 2;
+      const rodTipX = w * 0.56 - rodBend * 0.62 + biteShake * 0.45;
+      const rodTipY = h * 0.2 + rodBend * 0.88 + Math.sin(t * 2.2) * 2 + biteShake * 0.35;
       const rodCtrlX = w * 0.72 - rodBend * 0.2;
       const rodCtrlY = h * 0.5 + rodBend * 0.42;
 
@@ -1715,7 +1973,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         showFloat = true;
         const p = Math.min(1, Math.max(0, castProgRef.current));
         floatX = rodTipX + (targetFloatX - rodTipX) * p;
-        const arcLift = Math.sin(p * Math.PI) * 58;
+        const arcLift = Math.sin(p * Math.PI) * 62;
         floatY = rodTipY + (targetFloatY - rodTipY) * p - arcLift;
       } else if (
         curPhase === 'waiting' ||
@@ -1725,66 +1983,155 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ) {
         showFloat = true;
         const reelPull = curPhase === 'reeling' ? (reelProgRef.current / 100) * 0.65 : 0;
-        // Bobber plunges deep underwater during bite
+        // Bobber plunges deep underwater during bite & jerks on nibble
         const bobOffset =
           curPhase === 'bite'
-            ? 14 + Math.sin(t * 36) * 6.5
+            ? 15 + Math.sin(t * 38) * 7.2
             : curPhase === 'nibble'
-            ? 4 + Math.sin(t * 22) * 3.2
+            ? 4.5 + Math.sin(t * 26) * 4.2
             : curPhase === 'reeling'
-            ? 5 + Math.sin(t * (isThrash ? 38 : 20)) * (isThrash ? 6.5 : 3.2)
+            ? 5.5 + Math.sin(t * (isThrash ? 40 : 22)) * (isThrash ? 7.2 : 3.5)
             : Math.sin(t * 3.2) * 2.5;
         floatX =
           targetFloatX +
           (rodBaseX * 0.68 - targetFloatX) * reelPull +
-          (curPhase === 'reeling' ? Math.sin(t * (isThrash ? 18 : 9)) * (isThrash ? 22 : 11) : 0);
+          (curPhase === 'reeling' ? Math.sin(t * (isThrash ? 18 : 9)) * (isThrash ? 24 : 12) : 0) +
+          (curPhase === 'nibble' ? Math.cos(t * 20) * 2.2 : 0);
         floatY = targetFloatY + (h * 0.84 - targetFloatY) * reelPull + bobOffset;
       }
 
-      // 6. Water Ripples, Splash Droplets & High-Detail Egyptian Bobber
+      // 6. Cast Touchdown Concentric Water Rings, Bite Ripples, Splash Droplets & Bobber
+      const msSinceCastLand = now - castSplashTimestampRef.current;
+      if (msSinceCastLand >= 0 && msSinceCastLand < 2200) {
+        // Expanding concentric rings when the bobber hits the water on cast!
+        const castSplashProg = msSinceCastLand / 2200;
+        ctx.save();
+        for (let cr = 0; cr < 5; cr++) {
+          const ringDelay = cr * 0.12;
+          const rLocal = Math.max(0, Math.min(1, (castSplashProg - ringDelay) / (1 - ringDelay)));
+          if (rLocal <= 0 || rLocal >= 1) continue;
+          const rx = 6 + rLocal * (48 + cr * 12);
+          const ry = rx * 0.36;
+          const alpha = (1 - rLocal) * 0.82;
+          ctx.strokeStyle = `rgba(224, 242, 254, ${alpha.toFixed(3)})`;
+          ctx.lineWidth = (1 - rLocal) * 2.4 + 0.5;
+          ctx.beginPath();
+          ctx.ellipse(targetFloatX, targetFloatY + 3, rx, ry, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // Initial water crown droplets on cast impact (first 650ms)
+        if (msSinceCastLand < 650) {
+          const dropP = msSinceCastLand / 650;
+          ctx.fillStyle = `rgba(224, 242, 254, ${(1 - dropP) * 0.9})`;
+          for (let d = 0; d < 10; d++) {
+            const ang = -Math.PI * 0.15 - (d / 9) * Math.PI * 0.7;
+            const dist = dropP * (18 + (d % 3) * 8);
+            const dx = targetFloatX + Math.cos(ang) * dist;
+            const dy = targetFloatY + Math.sin(ang) * dist + dropP * dropP * 22;
+            ctx.beginPath();
+            ctx.arc(dx, dy, (1 - dropP) * 2.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
+      // Catch Extraction Water Splash & Golden Burst on Canvas (when fish/artifact is pulled out!)
+      const msSinceCatch = now - catchSplashTimestampRef.current;
+      if (msSinceCatch >= 0 && msSinceCatch < 1800) {
+        const cp = msSinceCatch / 1800;
+        const isGold = catchIsGoldenRef.current;
+        const splashCX = w * 0.54;
+        const splashCY = h * 0.76;
+        ctx.save();
+        if (isGold) {
+          const burstGrad = ctx.createRadialGradient(splashCX, splashCY, 4, splashCX, splashCY, 95 * (0.4 + cp * 0.8));
+          burstGrad.addColorStop(0, `rgba(254, 240, 138, ${((1 - cp) * 0.75).toFixed(2)})`);
+          burstGrad.addColorStop(0.5, `rgba(245, 158, 11, ${((1 - cp) * 0.4).toFixed(2)})`);
+          burstGrad.addColorStop(1, 'rgba(0,0,0,0)');
+          ctx.fillStyle = burstGrad;
+          ctx.beginPath();
+          ctx.arc(splashCX, splashCY, 110, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        for (let sr = 0; sr < 4; sr++) {
+          const rp = Math.min(1, cp * 1.25 - sr * 0.12);
+          if (rp > 0 && rp < 1) {
+            ctx.strokeStyle = isGold
+              ? `rgba(253, 224, 71, ${((1 - rp) * 0.85).toFixed(2)})`
+              : `rgba(186, 230, 253, ${((1 - rp) * 0.8).toFixed(2)})`;
+            ctx.lineWidth = 2.4 * (1 - rp);
+            ctx.beginPath();
+            ctx.ellipse(splashCX, splashCY, 12 + rp * 68, (12 + rp * 68) * 0.36, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        for (let sp = 0; sp < 22; sp++) {
+          const angle = -Math.PI * 0.1 - (sp / 21) * Math.PI * 0.8;
+          const speed = 28 + (sp % 5) * 14;
+          const dx = splashCX + Math.cos(angle) * speed * cp;
+          const dy = splashCY + Math.sin(angle) * speed * cp + cp * cp * 48;
+          ctx.fillStyle =
+            isGold && sp % 2 === 0
+              ? `rgba(253, 224, 71, ${((1 - cp) * 0.95).toFixed(2)})`
+              : `rgba(224, 242, 254, ${((1 - cp) * 0.9).toFixed(2)})`;
+          ctx.beginPath();
+          ctx.arc(dx, dy, (1 - cp) * (sp % 3 === 0 ? 3.2 : 2.1), 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
       if (showFloat && (curPhase !== 'casting' || castProgRef.current > 0.85)) {
-        // Ambient concentric water ripples while bobber rests on water
+        // Ambient & Nibble concentric water ripples while bobber rests/jerks on water
         if (curPhase === 'waiting' || curPhase === 'nibble') {
-          for (let wr = 0; wr < 3; wr++) {
-            const ripProg = (t * 0.85 + wr * 0.33) % 1;
-            const rRadX = 6 + ripProg * (curPhase === 'nibble' ? 34 : 24);
+          const ringTotal = curPhase === 'nibble' ? 5 : 3;
+          for (let wr = 0; wr < ringTotal; wr++) {
+            const ripProg = (t * (curPhase === 'nibble' ? 1.65 : 0.85) + wr / ringTotal) % 1;
+            const rRadX = 5 + ripProg * (curPhase === 'nibble' ? 40 : 26);
             const rRadY = rRadX * 0.38;
-            ctx.strokeStyle = `rgba(186, 230, 253, ${(1 - ripProg) * (curPhase === 'nibble' ? 0.7 : 0.48)})`;
-            ctx.lineWidth = curPhase === 'nibble' ? 1.7 : 1.15;
+            ctx.strokeStyle =
+              curPhase === 'nibble'
+                ? `rgba(253, 224, 71, ${(1 - ripProg) * 0.78})`
+                : `rgba(186, 230, 253, ${(1 - ripProg) * 0.52})`;
+            ctx.lineWidth = curPhase === 'nibble' ? 1.85 : 1.15;
             ctx.beginPath();
             ctx.ellipse(floatX, floatY + 3, rRadX, rRadY, 0, 0, Math.PI * 2);
             ctx.stroke();
           }
         }
 
-        const rippleCount = curPhase === 'bite' || curPhase === 'reeling' ? 4 : 2;
+        const rippleCount = curPhase === 'bite' || curPhase === 'reeling' ? 5 : 2;
         for (let r = 0; r < rippleCount; r++) {
           const rPhase =
-            (t * (curPhase === 'bite' || curPhase === 'reeling' ? 2.5 : 0.9) + r / rippleCount) % 1;
-          const rx = 8 + rPhase * (curPhase === 'bite' || isThrash ? 45 : 25);
+            (t * (curPhase === 'bite' || curPhase === 'reeling' ? 2.6 : 0.9) + r / rippleCount) % 1;
+          const rx = 8 + rPhase * (curPhase === 'bite' || isThrash ? 48 : 26);
           const ry = rx * 0.38;
           ctx.strokeStyle =
             curPhase === 'reeling' && isThrash
-              ? `rgba(252, 165, 165, ${(1 - rPhase) * 0.8})`
+              ? `rgba(252, 165, 165, ${(1 - rPhase) * 0.85})`
+              : curPhase === 'bite'
+              ? `rgba(253, 224, 71, ${(1 - rPhase) * 0.85})`
               : `rgba(186, 230, 253, ${(1 - rPhase) * 0.7})`;
-          ctx.lineWidth = curPhase === 'bite' || isThrash ? 2.3 : 1.3;
+          ctx.lineWidth = curPhase === 'bite' || isThrash ? 2.4 : 1.3;
           ctx.beginPath();
           ctx.ellipse(floatX, floatY + 4, rx, ry, 0, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Splash droplets flying up on active bite or fish thrashing
-        if (curPhase === 'bite' || (curPhase === 'reeling' && isThrash)) {
+        // Splash droplets flying up on nibble, active bite, or fish thrashing
+        if (curPhase === 'nibble' || curPhase === 'bite' || (curPhase === 'reeling' && isThrash)) {
           ctx.save();
-          ctx.fillStyle = 'rgba(224, 242, 254, 0.85)';
-          for (let sp = 0; sp < 6; sp++) {
-            const spPhase = (t * 4.5 + sp * 0.55) % 1;
-            const angle = -Math.PI * 0.18 - (sp / 5) * Math.PI * 0.64;
-            const dist = spPhase * 22;
+          const dropCount = curPhase === 'nibble' ? 4 : 9;
+          ctx.fillStyle = 'rgba(224, 242, 254, 0.9)';
+          for (let sp = 0; sp < dropCount; sp++) {
+            const spPhase = (t * (curPhase === 'nibble' ? 3.2 : 4.8) + sp * (1 / dropCount)) % 1;
+            const angle = -Math.PI * 0.16 - (sp / Math.max(1, dropCount - 1)) * Math.PI * 0.68;
+            const dist = spPhase * (curPhase === 'nibble' ? 14 : 26);
             const dx = floatX + Math.cos(angle) * dist;
-            const dy = floatY + Math.sin(angle) * dist + spPhase * spPhase * 16;
+            const dy = floatY + Math.sin(angle) * dist + spPhase * spPhase * 18;
             ctx.beginPath();
-            ctx.arc(dx, dy, (1 - spPhase) * 2.2, 0, Math.PI * 2);
+            ctx.arc(dx, dy, (1 - spPhase) * (curPhase === 'nibble' ? 1.6 : 2.4), 0, Math.PI * 2);
             ctx.fill();
           }
           ctx.restore();
@@ -1806,22 +2153,24 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         ctx.translate(floatX, floatY);
         ctx.rotate(
           curPhase === 'bite'
-            ? Math.sin(t * 25) * 0.38
+            ? Math.sin(t * 28) * 0.44
+            : curPhase === 'nibble'
+            ? Math.sin(t * 22) * 0.24
             : curPhase === 'reeling'
             ? isThrash
-              ? Math.sin(t * 35) * 0.52
+              ? Math.sin(t * 36) * 0.54
               : -0.42
             : Math.sin(t * 2.5) * 0.08
         );
 
         // Golden aura around bobber during bite or active cold current/chum
         if (curPhase === 'bite' || Boolean(activeBait) || activeColdCurrent.zoneId === selectedDepthZoneId) {
-          const auraGrad = ctx.createRadialGradient(0, -4, 2, 0, -4, curPhase === 'bite' ? 20 : 13);
-          auraGrad.addColorStop(0, curPhase === 'bite' ? 'rgba(250, 204, 21, 0.75)' : 'rgba(56, 189, 248, 0.45)');
+          const auraGrad = ctx.createRadialGradient(0, -4, 2, 0, -4, curPhase === 'bite' ? 22 : 14);
+          auraGrad.addColorStop(0, curPhase === 'bite' ? 'rgba(250, 204, 21, 0.8)' : 'rgba(56, 189, 248, 0.48)');
           auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = auraGrad;
           ctx.beginPath();
-          ctx.arc(0, -4, curPhase === 'bite' ? 20 : 13, 0, Math.PI * 2);
+          ctx.arc(0, -4, curPhase === 'bite' ? 22 : 14, 0, Math.PI * 2);
           ctx.fill();
         }
 
@@ -1865,7 +2214,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
         ctx.fillStyle = curPhase === 'bite' ? '#22d3ee' : '#fb7185';
         ctx.beginPath();
-        ctx.arc(0, -19.5, 2.6, 0, Math.PI * 2);
+        ctx.arc(0, -19.5, 2.8, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
@@ -1879,12 +2228,12 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         : lineMedTension
         ? '#fbbf24'
         : curPhase === 'bite'
-        ? '#38bdf8'
+        ? '#fde047'
         : 'rgba(241, 245, 249, 0.92)';
-      ctx.lineWidth = curPhase === 'reeling' ? 1.9 : 1.3;
+      ctx.lineWidth = curPhase === 'reeling' ? 1.9 : 1.35;
       if (lineHighTension || curPhase === 'bite') {
-        ctx.shadowColor = lineHighTension ? '#ef4444' : '#38bdf8';
-        ctx.shadowBlur = 6;
+        ctx.shadowColor = lineHighTension ? '#ef4444' : '#fde047';
+        ctx.shadowBlur = 7;
       }
       ctx.beginPath();
       ctx.moveTo(rodTipX, rodTipY);
@@ -1893,6 +2242,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
         const isTaut = curPhase === 'reeling' || curPhase === 'bite';
         const vibration = isTaut
           ? Math.sin(t * (lineHighTension ? 75 : 42)) * (lineHighTension ? 3.5 : 1.8)
+          : curPhase === 'nibble'
+          ? Math.sin(t * 28) * 1.2
           : 0;
         const slack = isTaut ? vibration : 18 + Math.sin(t * 2.5) * 2;
         const midY = (rodTipY + floatY) * 0.5 + slack;
@@ -1957,6 +2308,12 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       ctx.quadraticCurveTo(rodCtrlX, rodCtrlY, rodTipX, rodTipY);
       ctx.stroke();
 
+      // Glowing rod tip indicator so player clearly sees rod tip twitching on nibble/bite
+      ctx.fillStyle = curPhase === 'bite' ? '#fef08a' : curPhase === 'nibble' ? '#38bdf8' : '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(rodTipX, rodTipY, curPhase === 'bite' || curPhase === 'nibble' ? 3.2 : 2.2, 0, Math.PI * 2);
+      ctx.fill();
+
       // Ornate Egyptian Cork/Gold Handle Grip & Spinning Reel at base
       const reelT = 0.22;
       const omtR = 1 - reelT;
@@ -1986,7 +2343,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
     animId = requestAnimationFrame(renderFrame);
     return () => cancelAnimationFrame(animId);
-  }, [activeTab, equippedRod.level, currentLocation, fishingState.activeNet, selectedDepthZoneId, activeBait, activeColdCurrent.zoneId]);
+  }, [activeTab, equippedRod.level, currentLocation, fishingState.activeNet, selectedDepthZoneId, activeBait, activeColdCurrent.zoneId, activeTimeOfDay]);
 
   // Filtered fishes for the Collection Album tab
   const filteredFishes = useMemo(() => {
@@ -2024,25 +2381,25 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-1.5 sm:p-2 backdrop-blur-sm">
-      <div className="relative flex h-[94dvh] max-h-[820px] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border-2 border-cyan-500/80 bg-gradient-to-b from-slate-950 via-[#071324] to-slate-950 text-white shadow-[0_0_30px_rgba(6,182,212,0.3)]">
-        {/* Top Header */}
-        <div className="flex shrink-0 items-center justify-between border-b border-cyan-500/40 bg-slate-950/90 px-3 py-2">
+      <div className="relative flex h-[94dvh] max-h-[820px] w-full max-w-[440px] flex-col overflow-hidden rounded-2xl border-2 border-amber-500/85 bg-gradient-to-b from-[#16100a] via-[#0c131d] to-[#120c07] text-white shadow-[0_0_40px_rgba(245,158,11,0.32),inset_0_1px_0_rgba(254,240,138,0.4)]">
+        {/* Top Header — Polished Egyptian Obsidian & Gold Frieze */}
+        <div className="flex shrink-0 items-center justify-between border-b-2 border-amber-500/45 bg-gradient-to-r from-[#1f1308] via-[#130d06] to-[#1f1308] px-3 py-2 shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan-400/60 bg-cyan-950/80 text-lg">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border-2 border-amber-400/80 bg-gradient-to-b from-amber-900/90 via-[#1a1105] to-amber-950 text-lg shadow-[0_0_12px_rgba(251,191,36,0.35)]">
               🎣
             </div>
             <div className="min-w-0">
-              <h2 className="truncate text-xs font-black uppercase tracking-wider text-cyan-200">
-                Рыбалка Древнего Египта
+              <h2 className="truncate text-xs font-black uppercase tracking-wider text-amber-200 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                Священная Рыбалка Нила
               </h2>
-              <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-slate-300 tabular-nums">
+              <div className="flex flex-wrap items-center gap-1.5 text-[9px] text-amber-100/80 tabular-nums">
                 <span>
                   Улов: <strong className="text-emerald-300">{fishingState.totalFishCaught}</strong>
                 </span>
                 <span>·</span>
                 <span className="inline-flex items-center gap-1">
                   <span>Садок:</span>
-                  <strong className={isKeepnetFull ? 'text-red-400' : 'text-cyan-300'}>
+                  <strong className={isKeepnetFull ? 'text-red-400' : 'text-amber-300'}>
                     {keepnetFishList.length}/{keepnetCapacity}
                   </strong>
                   <button
@@ -2058,8 +2415,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     }
                     className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[8px] font-black transition-all cursor-pointer ${
                       keepnetFishList.length > 0
-                        ? 'border border-amber-300 bg-amber-400 text-slate-950 hover:bg-amber-300 active:scale-95 shadow-xs'
-                        : 'border border-slate-700 bg-slate-900 text-slate-500 opacity-60 cursor-not-allowed'
+                        ? 'border border-amber-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 hover:brightness-110 active:scale-95 shadow-xs'
+                        : 'border border-amber-900/50 bg-[#140d06] text-slate-500 opacity-60 cursor-not-allowed'
                     }`}
                   >
                     <span>🪙</span>
@@ -2084,7 +2441,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
               <button
                 type="button"
                 onClick={onOpenLeaderboard}
-                className="flex items-center gap-1 rounded-lg border border-amber-400/80 bg-gradient-to-b from-amber-500/30 to-amber-950/90 px-2 py-1 text-[9.5px] font-black text-amber-200 hover:border-yellow-300 hover:text-white active:scale-95 shadow cursor-pointer"
+                className="flex items-center gap-1 rounded-lg border border-amber-400/80 bg-gradient-to-b from-amber-500/35 to-amber-950/90 px-2 py-1 text-[9.5px] font-black text-amber-200 hover:border-yellow-300 hover:text-white active:scale-95 shadow cursor-pointer"
                 title="Открыть еженедельный рейтинг лучших рыболовов Нила (по весу пойманной рыбы)"
               >
                 <span>🏆</span>
@@ -2093,15 +2450,15 @@ export const FishingModal: React.FC<FishingModalProps> = ({
             )}
             <button
               onClick={onClose}
-              className="rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1 text-xs font-bold text-slate-300 hover:border-red-400 hover:text-white active:scale-95 cursor-pointer"
+              className="rounded-lg border border-amber-500/50 bg-[#1c1209] px-2.5 py-1 text-xs font-bold text-amber-200 hover:border-red-400 hover:text-white active:scale-95 cursor-pointer"
             >
               ✕
             </button>
           </div>
         </div>
 
-        {/* Live Synchronized Player Resources Strip */}
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-slate-800 bg-slate-900/90 px-3 py-1.5 text-[10px] font-bold tabular-nums">
+        {/* Live Synchronized Player Resources Strip — Carved Sandstone & Gold Trim */}
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-1.5 border-b border-amber-500/30 bg-gradient-to-r from-[#170f07] via-[#1f150a] to-[#170f07] px-3 py-1.5 text-[10px] font-bold tabular-nums shadow-inner">
           <div className="flex items-center gap-2.5">
             <span className="flex items-center gap-1 text-amber-300">
               <GoldCoinIcon size="sm" />
@@ -2143,14 +2500,14 @@ export const FishingModal: React.FC<FishingModalProps> = ({
           </div>
         </div>
 
-        {/* 5 Main Navigation Tabs */}
-        <div className="grid shrink-0 grid-cols-5 gap-1 border-b border-amber-500/30 bg-slate-950 p-1">
+        {/* 5 Main Navigation Tabs — Ancient Egyptian Stone Tablets */}
+        <div className="grid shrink-0 grid-cols-5 gap-1 border-b border-amber-500/40 bg-[#110b05] p-1">
           <button
             onClick={() => setActiveTab('play')}
             className={`flex flex-col items-center justify-center rounded-lg py-1 text-[8.5px] font-black transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'play'
-                ? 'border border-cyan-400 bg-gradient-to-b from-cyan-700 to-cyan-950 text-white shadow'
-                : 'border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                ? 'border border-amber-300 bg-gradient-to-b from-amber-600 via-amber-800 to-[#241406] text-amber-100 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                : 'border border-amber-900/40 bg-[#1a1108] text-amber-200/60 hover:text-amber-100'
             }`}
           >
             <span className="text-sm leading-none">🎣</span>
@@ -2161,8 +2518,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
             onClick={() => setActiveTab('museum')}
             className={`relative flex flex-col items-center justify-center rounded-lg py-1 text-[8.5px] font-black transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'museum'
-                ? 'border border-amber-400 bg-gradient-to-b from-amber-700 to-amber-950 text-white shadow-[0_0_10px_rgba(251,191,36,0.3)]'
-                : 'border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                ? 'border border-amber-300 bg-gradient-to-b from-amber-600 via-amber-800 to-[#241406] text-amber-100 shadow-[0_0_12px_rgba(251,191,36,0.4)]'
+                : 'border border-amber-900/40 bg-[#1a1108] text-amber-200/60 hover:text-amber-100'
             }`}
           >
             <span className="text-sm leading-none">🏛️</span>
@@ -2181,8 +2538,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
             onClick={() => setActiveTab('collection')}
             className={`flex flex-col items-center justify-center rounded-lg py-1 text-[8.5px] font-black transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'collection'
-                ? 'border border-sky-400 bg-gradient-to-b from-sky-700 to-sky-950 text-white shadow'
-                : 'border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                ? 'border border-amber-300 bg-gradient-to-b from-amber-600 via-amber-800 to-[#241406] text-amber-100 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                : 'border border-amber-900/40 bg-[#1a1108] text-amber-200/60 hover:text-amber-100'
             }`}
           >
             <span className="text-sm leading-none">📘</span>
@@ -2193,8 +2550,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
             onClick={() => setActiveTab('shop')}
             className={`flex flex-col items-center justify-center rounded-lg py-1 text-[8.5px] font-black transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'shop'
-                ? 'border border-emerald-400 bg-gradient-to-b from-emerald-700 to-emerald-950 text-white shadow'
-                : 'border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                ? 'border border-amber-300 bg-gradient-to-b from-amber-600 via-amber-800 to-[#241406] text-amber-100 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                : 'border border-amber-900/40 bg-[#1a1108] text-amber-200/60 hover:text-amber-100'
             }`}
           >
             <span className="text-sm leading-none">🛒</span>
@@ -2205,8 +2562,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
             onClick={() => setActiveTab('achievements')}
             className={`relative flex flex-col items-center justify-center rounded-lg py-1 text-[8.5px] font-black transition-all cursor-pointer whitespace-nowrap ${
               activeTab === 'achievements'
-                ? 'border border-purple-400 bg-gradient-to-b from-purple-700 to-purple-950 text-white shadow'
-                : 'border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200'
+                ? 'border border-amber-300 bg-gradient-to-b from-amber-600 via-amber-800 to-[#241406] text-amber-100 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                : 'border border-amber-900/40 bg-[#1a1108] text-amber-200/60 hover:text-amber-100'
             }`}
           >
             <span className="text-sm leading-none">🏆</span>
@@ -2224,22 +2581,22 @@ export const FishingModal: React.FC<FishingModalProps> = ({
           {/* ================= TAB 1: НА РЫБАЛКУ ================= */}
           {activeTab === 'play' && (
             <div className="flex flex-col gap-2">
-              {/* Keepnet (Садок) Bar + Quick Sell Catch Button */}
+              {/* Keepnet (Садок) Bar — Carved Egyptian Sandstone & Papyrus Scroll Panel */}
               <div
-                className={`rounded-xl border p-2 transition-colors ${
+                className={`rounded-xl border-2 p-2.5 transition-colors shadow-[0_6px_18px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(253,224,71,0.22)] ${
                   isKeepnetFull
-                    ? 'border-red-500/80 bg-red-950/35'
-                    : 'border-cyan-500/40 bg-slate-900/95'
+                    ? 'border-red-500/85 bg-gradient-to-b from-red-950/70 via-[#240b0b] to-[#140606]'
+                    : 'border-amber-500/55 bg-gradient-to-b from-[#24170b] via-[#171008] to-[#110b05]'
                 }`}
               >
                 <div className="flex flex-wrap items-center justify-between gap-1.5">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 text-[10px] font-black tabular-nums">
                       <span>🪣</span>
-                      <span className={isKeepnetFull ? 'text-red-300' : 'text-cyan-200'}>
-                        Садок: {keepnetFishList.length} / {keepnetCapacity}
+                      <span className={isKeepnetFull ? 'text-red-300' : 'text-amber-200'}>
+                        Садок фараона: {keepnetFishList.length} / {keepnetCapacity}
                       </span>
-                      <span className="text-[8.5px] font-bold text-slate-400">
+                      <span className="text-[8.5px] font-bold text-amber-400/80">
                         (Ур. {fishingState.keepnetLevel || 1})
                       </span>
                       {isKeepnetFull && (
@@ -2248,14 +2605,14 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-950 border border-slate-800">
+                    <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-[#0b0703] border border-amber-500/40 shadow-inner">
                       <div
                         className={`h-full transition-all duration-300 ${
                           isKeepnetFull
-                            ? 'bg-red-500'
+                            ? 'bg-gradient-to-r from-red-600 to-rose-400'
                             : keepnetFishList.length >= keepnetCapacity * 0.75
-                            ? 'bg-amber-400'
-                            : 'bg-emerald-400'
+                            ? 'bg-gradient-to-r from-amber-600 to-yellow-300'
+                            : 'bg-gradient-to-r from-emerald-600 via-teal-400 to-amber-300'
                         }`}
                         style={{
                           width: `${Math.min(
@@ -2274,8 +2631,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       disabled={keepnetFishList.length === 0}
                       className={`rounded-lg px-2.5 py-1.5 text-[9.5px] font-black transition-all cursor-pointer ${
                         keepnetFishList.length > 0
-                          ? 'border border-amber-300 bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow hover:brightness-110 active:scale-95'
-                          : 'border border-slate-800 bg-slate-950 text-slate-500 opacity-60 cursor-not-allowed'
+                          ? 'border-2 border-amber-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 shadow-[0_2px_10px_rgba(245,158,11,0.45)] hover:brightness-110 active:scale-95'
+                          : 'border border-amber-900/40 bg-[#140d07] text-slate-500 opacity-60 cursor-not-allowed'
                       }`}
                     >
                       💰 Продать улов
@@ -2293,7 +2650,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                           setShopSubTab('keepnet');
                         }}
                         title="Увеличить вместимость садка в Магазине рыбалки"
-                        className="rounded-lg border border-cyan-500/60 bg-cyan-950/90 px-2 py-1.5 text-[9px] font-black text-cyan-200 hover:bg-cyan-900 cursor-pointer"
+                        className="rounded-lg border border-amber-400/60 bg-gradient-to-b from-amber-900/70 to-[#1a1006] px-2 py-1.5 text-[9px] font-black text-amber-200 hover:border-amber-300 cursor-pointer"
                       >
                         +Места
                       </button>
@@ -2301,11 +2658,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   </div>
                 </div>
 
-                {/* Daily Quest Fish Species Tracker */}
+                {/* Daily Quest Fish Species Tracker — Papyrus Strip */}
                 {dailyCatchQuest && (
-                  <div className="mt-1.5 flex items-center justify-between rounded-lg border border-amber-500/35 bg-slate-950/90 px-2 py-1 text-[8.5px]">
-                    <span className="truncate font-bold text-amber-200">
-                      📋 Заказ дня: поймать «{dailyCatchQuest.targetFishName || 'рыбу'}»
+                  <div className="mt-1.5 flex items-center justify-between rounded-lg border border-amber-500/45 bg-gradient-to-r from-[#2c1d0d] via-[#211509] to-[#2c1d0d] px-2.5 py-1 text-[8.5px] shadow-inner">
+                    <span className="truncate font-bold text-amber-100">
+                      📜 Папирус дня: поймать «{dailyCatchQuest.targetFishName || 'рыбу'}»
                     </span>
                     <span
                       className={`ml-2 shrink-0 font-black tabular-nums ${
@@ -2321,9 +2678,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
               </div>
 
               {/* 1. Fishing Locations Selector (5 Locations, locked by Rod Level) + Dynamic Weather Banner */}
-              <div className="rounded-xl border border-cyan-500/35 bg-slate-900/90 p-2 space-y-1.5">
-                <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-cyan-200">
-                  <span>🗺️ Локации рыбалки (Удочка Ур. {equippedRod.level}/5)</span>
+              <div className="rounded-xl border-2 border-amber-500/50 bg-gradient-to-b from-[#21150a] via-[#150e07] to-[#0e0904] p-2.5 space-y-1.5 shadow-[0_6px_16px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(253,224,71,0.2)]">
+                <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-amber-200">
+                  <span>🗺️ Берега Нила (Удилище Ур. {equippedRod.level}/5)</span>
                   <span className="text-amber-300">
                     {currentLocation.icon} {currentLocation.shortName}
                   </span>
@@ -2345,10 +2702,10 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         onClick={() => handleSelectLocation(loc.id)}
                         className={`flex flex-col items-center justify-between rounded-lg border p-1 text-center transition-all cursor-pointer ${
                           isSelected
-                            ? 'border-amber-400 bg-amber-950/80 text-white shadow-[0_0_10px_rgba(251,191,36,0.3)]'
+                            ? 'border-2 border-amber-300 bg-gradient-to-b from-amber-700/80 via-amber-950 to-[#1a0f05] text-white shadow-[0_0_12px_rgba(251,191,36,0.4)]'
                             : isUnlocked
-                            ? 'border-slate-700 bg-slate-950 text-slate-200 hover:border-cyan-400/60'
-                            : 'border-slate-800 bg-slate-950/60 text-slate-500 opacity-65'
+                            ? 'border-amber-700/40 bg-[#170f08] text-amber-100 hover:border-amber-400/70'
+                            : 'border-stone-800 bg-[#0f0a06]/70 text-stone-500 opacity-65'
                         }`}
                         title={`${loc.name} — требуется удочка Ур. ${loc.minRodLevel}+ (${locWeather.icon} ${locWeather.name})`}
                       >
@@ -2391,11 +2748,11 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                 </div>
               </div>
 
-              {/* 2. Equipped Rod & Active Bait Selector Bar */}
-              <div className="rounded-xl border border-slate-800 bg-slate-900/90 p-2 space-y-1.5">
+              {/* 2. Equipped Rod & Active Bait Selector Bar — Polished Egyptian Granite & Gold Inlay */}
+              <div className="rounded-xl border-2 border-amber-500/50 bg-gradient-to-b from-[#23160b] via-[#160e07] to-[#0f0904] p-2.5 space-y-1.5 shadow-[0_6px_16px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(253,224,71,0.22)]">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-cyan-400/50 bg-cyan-950 text-base">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-amber-400/75 bg-gradient-to-b from-amber-900/80 via-[#170f06] to-amber-950 text-base shadow-inner">
                       <ItemIcon
                         icon={equippedRod.icon}
                         alt={equippedRod.name}
@@ -2404,12 +2761,12 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       />
                     </div>
                     <div className="min-w-0">
-                      <div className="truncate text-[10px] font-black text-cyan-200">
+                      <div className="truncate text-[10px] font-black text-amber-200">
                         {equippedRod.name} (Ур. {equippedRod.level})
                       </div>
-                      <div className="text-[8.5px] text-slate-300 tabular-nums">
+                      <div className="text-[8.5px] text-amber-100/80 tabular-nums">
                         Редкие:{' '}
-                        <span className="text-emerald-300">
+                        <span className="text-emerald-300 font-bold">
                           +
                           {equippedRod.rareFishChanceBonusPct +
                             currentLocation.rareBonusPct +
@@ -2418,7 +2775,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                             (activeWeatherInfo.weather.rareBonusPct || 0)}
                           %
                         </span>{' '}
-                        · Леска: <span className="text-sky-300">{equippedRod.lineStrength}</span>
+                        · Леска: <span className="text-amber-300 font-bold">{equippedRod.lineStrength}</span>
                         {fishingState.equippedLine && (
                           <span className="text-emerald-300">
                             {' '}
@@ -2434,7 +2791,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         setActiveTab('shop');
                         setShopSubTab('baits');
                       }}
-                      className="rounded-lg border border-emerald-500/60 bg-emerald-950/80 px-2 py-1 text-[8.5px] font-black text-emerald-200 hover:bg-emerald-900 cursor-pointer whitespace-nowrap"
+                      className="rounded-lg border border-amber-400/60 bg-gradient-to-b from-amber-800/70 to-[#241507] px-2 py-1 text-[8.5px] font-black text-amber-100 hover:border-yellow-300 cursor-pointer whitespace-nowrap shadow-xs"
                     >
                       🪱 Наживки
                     </button>
@@ -2443,14 +2800,14 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         setActiveTab('shop');
                         setShopSubTab('lines');
                       }}
-                      className="rounded-lg border border-cyan-500/60 bg-cyan-950/80 px-2 py-1 text-[8.5px] font-black text-cyan-200 hover:bg-cyan-900 cursor-pointer whitespace-nowrap"
+                      className="rounded-lg border border-amber-400/60 bg-gradient-to-b from-amber-800/70 to-[#241507] px-2 py-1 text-[8.5px] font-black text-amber-100 hover:border-yellow-300 cursor-pointer whitespace-nowrap shadow-xs"
                     >
                       🧵 Снасти
                     </button>
                   </div>
                 </div>
 
-                {/* 2.1. Rod Experience Progress Bar */}
+                {/* 2.1. Rod Experience Progress Bar — Golden Papyrus Meter */}
                 {(() => {
                   const curRodExp = fishingState.rodExp || 0;
                   const reqRodExp = getRodExpRequiredForNextLevel(equippedRod.level);
@@ -2460,21 +2817,21 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     : Math.min(100, Math.round((curRodExp / Math.max(1, reqRodExp)) * 100));
 
                   return (
-                    <div className="rounded-lg border border-cyan-500/30 bg-slate-950/80 p-1.5 space-y-1">
+                    <div className="rounded-lg border border-amber-500/40 bg-[#120b05] p-1.5 space-y-1 shadow-inner">
                       <div className="flex items-center justify-between text-[8px] font-black tabular-nums">
-                        <span className="text-cyan-300 flex items-center gap-1">
-                          <span>⚡ Опыт удочки:</span>
-                          <span className="text-white">
+                        <span className="text-amber-300 flex items-center gap-1">
+                          <span>⚡ Мастерство удилища:</span>
+                          <span className="text-amber-100">
                             {isMaxLvl ? 'МАКС. УРОВЕНЬ' : `${curRodExp} / ${reqRodExp} EXP`}
                           </span>
                         </span>
-                        <span className={isMaxLvl ? 'text-amber-300' : 'text-emerald-300'}>
+                        <span className={isMaxLvl ? 'text-yellow-300' : 'text-emerald-300'}>
                           {isMaxLvl ? '★ УР. 5' : `${rodExpPct}%`}
                         </span>
                       </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-900 border border-slate-800">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-black border border-amber-700/50">
                         <div
-                          className="h-full bg-gradient-to-r from-cyan-500 via-sky-400 to-amber-300 transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-300"
                           style={{ width: `${rodExpPct}%` }}
                         />
                       </div>
@@ -2490,8 +2847,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     onClick={() => setIsLineModalOpen(true)}
                     className={`relative flex items-center gap-2 rounded-xl border p-2 text-left transition-all cursor-pointer ${
                       fishingState.equippedLine
-                        ? 'border-amber-500/80 bg-gradient-to-br from-[#2a1708] via-[#1a0f07] to-[#0d0703] shadow-[0_2px_10px_rgba(217,119,6,0.25)] hover:border-amber-300'
-                        : 'border-dashed border-amber-600/40 bg-gradient-to-br from-[#1c120a] to-[#0a0502] hover:border-amber-500'
+                        ? 'border-amber-400/85 bg-gradient-to-br from-[#2e1a09] via-[#1c1007] to-[#0f0803] shadow-[0_3px_12px_rgba(217,119,6,0.3)] hover:border-yellow-300'
+                        : 'border-dashed border-amber-600/45 bg-gradient-to-br from-[#1c120a] to-[#0a0502] hover:border-amber-400'
                     }`}
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-amber-400/70 bg-gradient-to-b from-amber-950 via-slate-900 to-amber-950 text-lg shadow-inner">
@@ -2508,7 +2865,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       </div>
                       {fishingState.equippedLine ? (
                         <div className="space-y-0.5 mt-0.5">
-                          <div className="flex items-center justify-between text-[7px] text-slate-300 font-bold tabular-nums">
+                          <div className="flex items-center justify-between text-[7px] text-amber-100/80 font-bold tabular-nums">
                             <span>Прочность:</span>
                             <span className="text-amber-300">
                               {fishingState.equippedLine.durability}/
@@ -2545,8 +2902,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     onClick={() => setIsHookModalOpen(true)}
                     className={`relative flex items-center gap-2 rounded-xl border p-2 text-left transition-all cursor-pointer ${
                       fishingState.equippedHook
-                        ? 'border-amber-500/80 bg-gradient-to-br from-[#2a1708] via-[#1a0f07] to-[#0d0703] shadow-[0_2px_10px_rgba(217,119,6,0.25)] hover:border-amber-300'
-                        : 'border-dashed border-amber-600/40 bg-gradient-to-br from-[#1c120a] to-[#0a0502] hover:border-amber-500'
+                        ? 'border-amber-400/85 bg-gradient-to-br from-[#2e1a09] via-[#1c1007] to-[#0f0803] shadow-[0_3px_12px_rgba(217,119,6,0.3)] hover:border-yellow-300'
+                        : 'border-dashed border-amber-600/45 bg-gradient-to-br from-[#1c120a] to-[#0a0502] hover:border-amber-400'
                     }`}
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-amber-400/70 bg-gradient-to-b from-amber-950 via-slate-900 to-amber-950 text-lg shadow-inner">
@@ -2563,7 +2920,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       </div>
                       {fishingState.equippedHook ? (
                         <div className="space-y-0.5 mt-0.5">
-                          <div className="flex items-center justify-between text-[7px] text-slate-300 font-bold tabular-nums">
+                          <div className="flex items-center justify-between text-[7px] text-amber-100/80 font-bold tabular-nums">
                             <span>Прочность:</span>
                             <span className="text-amber-300">
                               {fishingState.equippedHook.durability}/
@@ -2595,15 +2952,15 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   </button>
                 </div>
 
-                {/* Quick Bait Selector Pills */}
+                {/* Quick Bait Selector Buttons — Carved Papyrus Tablets */}
                 <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
                   <button
                     type="button"
                     onClick={() => handleSelectBait(null)}
                     className={`shrink-0 rounded-md border px-2 py-0.5 text-[8.5px] font-bold cursor-pointer ${
                       !activeBait
-                        ? 'border-cyan-400 bg-cyan-950 text-cyan-200'
-                        : 'border-slate-800 bg-slate-950 text-slate-400'
+                        ? 'border-amber-400 bg-amber-950/90 text-amber-200 shadow-xs'
+                        : 'border-amber-900/40 bg-[#120b05] text-amber-200/60'
                     }`}
                   >
                     🪝 Без наживки
@@ -2619,10 +2976,10 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         onClick={() => handleSelectBait(bait.id)}
                         className={`shrink-0 flex items-center gap-1 rounded-md border px-2 py-0.5 text-[8.5px] font-bold transition-all cursor-pointer ${
                           isSelected
-                            ? 'border-amber-400 bg-amber-950/90 text-amber-200'
+                            ? 'border-amber-300 bg-gradient-to-b from-amber-700 to-amber-950 text-amber-100 shadow-xs'
                             : count > 0
-                            ? 'border-slate-700 bg-slate-950 text-slate-200 hover:border-amber-400/50'
-                            : 'border-slate-800/70 bg-slate-950/40 text-slate-500 opacity-55 cursor-not-allowed'
+                            ? 'border-amber-800/50 bg-[#160e07] text-amber-100/90 hover:border-amber-400/60'
+                            : 'border-stone-800/70 bg-[#0d0804]/50 text-stone-500 opacity-55 cursor-not-allowed'
                         }`}
                         title={`${bait.name}: ${bait.description}`}
                       >
@@ -2636,14 +2993,14 @@ export const FishingModal: React.FC<FishingModalProps> = ({
               </div>
 
               {/* 2.3. Карта глубин и «Холодные течения» (Depth Zones & Current Selection) */}
-              <div className="rounded-xl border border-cyan-500/50 bg-gradient-to-b from-[#09182b] via-[#071322] to-slate-950 p-2 space-y-1.5">
+              <div className="rounded-xl border-2 border-amber-500/50 bg-gradient-to-b from-[#1f140a] via-[#121622] to-[#0b0e17] p-2.5 space-y-1.5 shadow-[0_6px_16px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(253,224,71,0.2)]">
                 <div className="flex items-center justify-between text-[9px] font-black uppercase tracking-wider">
-                  <span className="flex items-center gap-1 text-cyan-200">
+                  <span className="flex items-center gap-1 text-amber-200">
                     <span>🌊</span>
-                    <span>Карта глубин и зоны заброса</span>
+                    <span>Карта глубин Нила и зоны заброса</span>
                   </span>
-                  <span className="text-sky-300 text-[8px] tabular-nums">
-                    Текущая: {activeDepthZoneObj.depthMeters}
+                  <span className="text-amber-300 text-[8px] tabular-nums">
+                    Глубина: {activeDepthZoneObj.depthMeters}
                   </span>
                 </div>
 
@@ -2659,8 +3016,8 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         onClick={() => setSelectedDepthZoneId(zone.id)}
                         className={`relative flex flex-col items-center justify-between rounded-xl border p-1.5 text-center transition-all cursor-pointer ${
                           isSelected
-                            ? 'border-amber-400 bg-gradient-to-b from-amber-950/80 to-slate-950 text-white shadow-[0_0_12px_rgba(251,191,36,0.35)]'
-                            : 'border-slate-800 bg-slate-950/80 text-slate-300 hover:border-cyan-400/60'
+                            ? 'border-2 border-amber-300 bg-gradient-to-b from-amber-800/80 via-[#241608] to-[#120b04] text-white shadow-[0_0_14px_rgba(251,191,36,0.4)]'
+                            : 'border-amber-900/45 bg-[#120d08]/90 text-amber-100/80 hover:border-amber-400/60'
                         }`}
                       >
                         {isColdActive && (
@@ -2704,161 +3061,232 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                 </div>
               </div>
 
-              {/* 3. Interactive Water Canvas with Bite Waiting Timer & Reeling Tension Zone HUD */}
-              <div className="relative overflow-hidden rounded-2xl border-2 border-cyan-500/60 bg-slate-950 shadow-[0_0_24px_rgba(6,182,212,0.18)]">
-                <canvas
-                  ref={canvasRef}
-                  width={380}
-                  height={215}
-                  className="block h-[210px] w-full select-none pointer-events-none"
-                />
-
-                {/* Top Overlay Status Banner */}
-                <div className="pointer-events-none absolute top-2 left-2 right-2 flex items-center justify-between gap-1.5">
-                  <div
-                    className={`w-full rounded-lg border px-2.5 py-1 text-[9.5px] font-bold shadow ${
-                      phase === 'escaped'
-                        ? 'border-rose-400/80 bg-rose-950/90 text-rose-100'
-                        : phase === 'reeling' && isFishThrashing
-                        ? 'border-red-400 bg-red-950/95 text-red-100 animate-pulse'
-                        : phase === 'bite'
-                        ? 'border-amber-300 bg-amber-950/95 text-amber-100 animate-pulse'
-                        : 'border-cyan-400/40 bg-slate-950/85 text-cyan-100'
-                    }`}
-                  >
-                    {statusBanner}
+              {/* 3. Cinematic Nile River Viewport + Time-of-Day Switcher + Ancient Egyptian Nilometer Tension Gauge */}
+              <div className="relative overflow-hidden rounded-2xl border-2 border-amber-400/85 bg-[#090d16] shadow-[0_0_28px_rgba(245,158,11,0.28),inset_0_0_18px_rgba(0,0,0,0.85)]">
+                {/* Time-of-Day & Atmospheric VFX Selector Bar */}
+                <div className="flex items-center justify-between gap-1 border-b border-amber-500/40 bg-gradient-to-r from-[#1f1308] via-[#140d06] to-[#1f1308] px-2.5 py-1 text-[8px]">
+                  <span className="font-black uppercase tracking-wider text-amber-200 flex items-center gap-1">
+                    <span>
+                      {activeTimeOfDay === 'morning'
+                        ? '🌅 Рассвет (Туман и лучи)'
+                        : activeTimeOfDay === 'day'
+                        ? '☀️ Полдень Ра (Блики Нила)'
+                        : activeTimeOfDay === 'sunset'
+                        ? '🌇 Закат (Дымка и багрянец)'
+                        : '🌙 Ночь Хонсу (Светлячки и звёзды)'}
+                    </span>
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    {(
+                      [
+                        { id: 'morning', label: '🌅 Утро' },
+                        { id: 'day', label: '☀️ День' },
+                        { id: 'sunset', label: '🌇 Закат' },
+                        { id: 'night', label: '🌙 Ночь' }
+                      ] as const
+                    ).map((tod) => {
+                      const isActive = activeTimeOfDay === tod.id;
+                      return (
+                        <button
+                          key={tod.id}
+                          type="button"
+                          onClick={() => handleSelectTimeOfDay(tod.id)}
+                          className={`rounded px-1.5 py-0.5 font-black transition-all cursor-pointer ${
+                            isActive
+                              ? 'border border-amber-300 bg-amber-500 text-slate-950 shadow-xs'
+                              : 'border border-amber-800/40 bg-[#1a1007] text-amber-200/75 hover:text-white'
+                          }`}
+                        >
+                          {tod.label}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                {/* Bite Waiting Timer (Таймер ожидания клёва) */}
-                {(phase === 'waiting' || phase === 'nibble') && waitTimeTotalMs > 0 && (
-                  <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border border-sky-400/70 bg-slate-950/95 p-2 shadow-lg">
-                    <div className="flex items-center justify-between text-[9px] font-black text-sky-200 mb-1 tabular-nums">
-                      <span>
-                        {phase === 'nibble'
-                          ? '〰️ Рыба пробует наживку (поплавок дрожит)...'
-                          : '⏳ Ожидание поклёвки...'}
-                      </span>
-                      <span className="text-amber-300">
-                        {(waitTimeLeftMs / 1000).toFixed(1)} сек
-                      </span>
-                    </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800 border border-sky-500/30">
-                      <div
-                        className="h-full bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 transition-all duration-75"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(
-                              0,
-                              ((waitTimeTotalMs - waitTimeLeftMs) / Math.max(1, waitTimeTotalMs)) * 100
-                            )
-                          )}%`
-                        }}
-                      />
+                <div className="relative">
+                  <canvas
+                    ref={canvasRef}
+                    width={390}
+                    height={225}
+                    className="block h-[220px] w-full select-none pointer-events-none"
+                  />
+
+                  {/* Top Overlay Status Banner — Carved Papyrus Plaque */}
+                  <div className="pointer-events-none absolute top-2 left-2 right-2 flex items-center justify-between gap-1.5">
+                    <div
+                      className={`w-full rounded-lg border px-2.5 py-1 text-[9.5px] font-bold shadow-lg backdrop-blur-xs ${
+                        phase === 'escaped'
+                          ? 'border-rose-400/90 bg-rose-950/90 text-rose-100'
+                          : phase === 'reeling' && isFishThrashing
+                          ? 'border-red-400 bg-red-950/95 text-red-100 animate-pulse'
+                          : phase === 'bite'
+                          ? 'border-amber-300 bg-amber-950/95 text-amber-100 animate-pulse'
+                          : 'border-amber-400/55 bg-[#140d06]/85 text-amber-100'
+                      }`}
+                    >
+                      {statusBanner}
                     </div>
                   </div>
-                )}
 
-                {/* Bite Reaction Window Bar */}
-                {phase === 'bite' && (
-                  <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border-2 border-amber-400 bg-slate-950/95 p-2 shadow-lg">
-                    <div className="flex items-center justify-between text-[9.5px] font-black text-amber-300 mb-1 tabular-nums">
-                      <span>⚡ ПОПЛАВОК УШЁЛ ПОД ВОДУ! ЖМИТЕ «ПОДСЕЧЬ» СПРАВА!</span>
-                      <span>{(biteTimeLeftMs / 1000).toFixed(1)} сек</span>
-                    </div>
-                    <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                  {/* Catch Extraction Water Splash & Golden Radiance VFX Overlay */}
+                  {catchSplashVfx && catchSplashVfx.active && (
+                    <div className="pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center overflow-hidden animate-fade-in">
+                      {/* Golden Radiance Sunburst / Water Splash Aura */}
                       <div
-                        className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-emerald-400 transition-all duration-75"
-                        style={{ width: `${Math.min(100, (biteTimeLeftMs / 3000) * 100)}%` }}
+                        className={`absolute inset-0 ${
+                          catchSplashVfx.isGolden
+                            ? 'bg-[radial-gradient(circle_at_center,rgba(253,224,71,0.52)_0%,rgba(245,158,11,0.26)_45%,transparent_75%)]'
+                            : 'bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.38)_0%,rgba(253,224,71,0.18)_45%,transparent_72%)]'
+                        } animate-pulse`}
                       />
-                    </div>
-                  </div>
-                )}
-
-                {/* Real-Time Reeling Distance & Interactive Optimal Tension Zone Slider */}
-                {phase === 'reeling' && (
-                  <div className="pointer-events-none absolute bottom-1.5 left-2 right-2 rounded-xl border border-cyan-400/80 bg-slate-950/95 p-2 shadow-lg space-y-1.5">
-                    {/* Bar 1: Fish Distance / Reel Progress with Fish Runner */}
-                    <div>
-                      <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
-                        <span className="text-emerald-300">
-                          🐟 ПОДТЯГИВАНИЕ К БЕРЕГУ (100% = В САДОК)
-                        </span>
-                        <span className="text-white">{reelProgress}%</span>
-                      </div>
-                      <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-slate-800 border border-emerald-500/40">
-                        <div
-                          className="h-full bg-gradient-to-r from-sky-500 via-emerald-400 to-amber-300 transition-all duration-75"
-                          style={{ width: `${reelProgress}%` }}
-                        />
-                        <div
-                          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[9px] leading-none transition-all duration-75"
-                          style={{ left: `${Math.min(96, Math.max(4, reelProgress))}%` }}
-                        >
-                          🐟
+                      <div
+                        className={`relative rounded-2xl border-2 px-4 py-2 text-center shadow-[0_0_35px_rgba(251,191,36,0.85)] ${
+                          catchSplashVfx.isGolden
+                            ? 'border-yellow-200 bg-gradient-to-b from-amber-600/95 via-[#2e1805]/95 to-[#140a02]/95 text-yellow-100'
+                            : 'border-amber-300 bg-gradient-to-b from-[#2b1a09]/95 to-[#120b04]/95 text-amber-100'
+                        }`}
+                      >
+                        <div className="text-[11px] font-black uppercase tracking-wider drop-shadow">
+                          💦 {catchSplashVfx.title} ✨
+                        </div>
+                        <div className="text-[9.5px] font-extrabold text-amber-200 mt-0.5">
+                          {catchSplashVfx.subtitle}
                         </div>
                       </div>
                     </div>
+                  )}
 
-                    {/* Bar 2: Interactive Line Tension Slider with Green/Gold Optimal Zone */}
-                    <div>
-                      <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
-                        <span
-                          className={
-                            lineTension >= 78
-                              ? 'text-red-400 animate-pulse'
-                              : isFishThrashing
-                              ? 'text-amber-300'
-                              : 'text-emerald-300'
-                          }
-                        >
-                          {isFishThrashing
-                            ? '💢 РЫБА БЬЁТСЯ! ОТПУСТИТЕ КАТУШКУ!'
-                            : '🟢 РЫБА УСТАЛА — УДЕРЖИВАЙТЕ В ЗЕЛЁНОЙ/ЗОЛОТОЙ ЗОНЕ!'}
+                  {/* Bite Waiting Timer (Таймер ожидания клёва — Египетский свиток) */}
+                  {(phase === 'waiting' || phase === 'nibble') && waitTimeTotalMs > 0 && (
+                    <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border-2 border-amber-400/75 bg-gradient-to-b from-[#211408]/95 to-[#110a04]/95 p-2 shadow-[0_4px_16px_rgba(0,0,0,0.8)]">
+                      <div className="flex items-center justify-between text-[9px] font-black text-amber-100 mb-1 tabular-nums">
+                        <span>
+                          {phase === 'nibble'
+                            ? '〰️ Рыба пробует наживку (поплавок и кончик удилища дрожат)...'
+                            : '⏳ Ожидание поклёвки... Круги на воде расходятся'}
                         </span>
-                        <span
-                          className={
-                            lineTension >= 78 ? 'text-red-400 font-black' : 'text-amber-300 font-black'
-                          }
-                        >
-                          {lineTension}%
+                        <span className="text-amber-300">
+                          {(waitTimeLeftMs / 1000).toFixed(1)} сек
                         </span>
                       </div>
-                      <div className="relative h-3 w-full overflow-hidden rounded-full bg-slate-900 border border-slate-700">
-                        {/* Optimal Green/Gold Zone (25% - 75%) */}
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-black border border-amber-500/45">
                         <div
-                          className="absolute inset-y-0 bg-emerald-500/25 border-x border-emerald-400/60"
-                          style={{ left: '25%', width: '50%' }}
-                        />
-                        {/* Danger Red Zone (78% - 100%) */}
-                        <div
-                          className="absolute inset-y-0 bg-red-500/25 border-l border-red-500/60"
-                          style={{ left: '78%', width: '22%' }}
-                        />
-                        {/* Active Tension Fill */}
-                        <div
-                          className={`h-full transition-all duration-75 ${
-                            lineTension >= 78
-                              ? 'bg-gradient-to-r from-amber-500 to-red-600'
-                              : lineTension >= 55
-                              ? 'bg-gradient-to-r from-emerald-400 to-amber-400'
-                              : 'bg-gradient-to-r from-cyan-400 to-emerald-400'
-                          }`}
-                          style={{ width: `${lineTension}%` }}
-                        />
-                        {/* Slider Marker Needle */}
-                        <div
-                          className="absolute top-0 bottom-0 w-1 -translate-x-1/2 bg-white shadow-[0_0_6px_#fff] transition-all duration-75"
-                          style={{ left: `${Math.min(99, Math.max(1, lineTension))}%` }}
+                          className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-75"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.max(
+                                0,
+                                ((waitTimeTotalMs - waitTimeLeftMs) / Math.max(1, waitTimeTotalMs)) * 100
+                              )
+                            )}%`
+                          }}
                         />
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
+
+                  {/* Bite Reaction Window Bar */}
+                  {phase === 'bite' && (
+                    <div className="pointer-events-none absolute bottom-2 left-2.5 right-2.5 rounded-xl border-2 border-yellow-300 bg-gradient-to-b from-[#331b05]/95 to-[#170b02]/95 p-2 shadow-[0_0_24px_rgba(251,191,36,0.6)]">
+                      <div className="flex items-center justify-between text-[9.5px] font-black text-yellow-200 mb-1 tabular-nums">
+                        <span>⚡ ПОПЛАВОК НЫРНУЛ! ЖМИТЕ «ПОДСЕЧЬ» СПРАВА!</span>
+                        <span>{(biteTimeLeftMs / 1000).toFixed(1)} сек</span>
+                      </div>
+                      <div className="h-2.5 w-full overflow-hidden rounded-full bg-black border border-amber-400/60">
+                        <div
+                          className="h-full bg-gradient-to-r from-red-500 via-amber-400 to-yellow-200 transition-all duration-75"
+                          style={{ width: `${Math.min(100, (biteTimeLeftMs / 3000) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Real-Time Reeling Distance & Ancient Egyptian Nilometer Line Tension Gauge */}
+                  {phase === 'reeling' && (
+                    <div className="pointer-events-none absolute bottom-1.5 left-2 right-2 rounded-xl border-2 border-amber-400/85 bg-gradient-to-b from-[#241609]/95 via-[#170e05]/95 to-[#0e0803]/95 p-2 shadow-[0_6px_20px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(254,240,138,0.35)] space-y-1.5">
+                      {/* Bar 1: Fish Distance / Reel Progress with Fish Runner */}
+                      <div>
+                        <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
+                          <span className="text-amber-200">
+                            🐟 ПОДТЯГИВАНИЕ УЛОВА К БЕРЕГУ (100% = В САДОК)
+                          </span>
+                          <span className="text-yellow-300">{reelProgress}%</span>
+                        </div>
+                        <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-[#090603] border border-amber-500/55 shadow-inner">
+                          <div
+                            className="h-full bg-gradient-to-r from-amber-600 via-yellow-400 to-emerald-400 transition-all duration-75"
+                            style={{ width: `${reelProgress}%` }}
+                          />
+                          <div
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 text-[9px] leading-none transition-all duration-75 drop-shadow"
+                            style={{ left: `${Math.min(96, Math.max(4, reelProgress))}%` }}
+                          >
+                            🐟
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bar 2: Egyptian Golden Nilometer Line Tension Gauge */}
+                      <div>
+                        <div className="flex items-center justify-between text-[8.5px] font-black tabular-nums mb-0.5">
+                          <span
+                            className={
+                              lineTension >= 78
+                                ? 'text-red-400 animate-pulse'
+                                : isFishThrashing
+                                ? 'text-amber-300'
+                                : 'text-emerald-300'
+                            }
+                          >
+                            {isFishThrashing
+                              ? '💢 РЫБА БЬЁТСЯ! ОТПУСТИТЕ КАТУШКУ!'
+                              : '⚖️ ШКАЛА НАТЯЖЕНИЯ ЛЕСКИ — ДЕРЖИТЕ В ЗОЛОТОЙ ЗОНЕ!'}
+                          </span>
+                          <span
+                            className={
+                              lineTension >= 78 ? 'text-red-400 font-black' : 'text-yellow-300 font-black'
+                            }
+                          >
+                            {lineTension}%
+                          </span>
+                        </div>
+                        <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-[#090502] border-2 border-amber-500/70 shadow-inner">
+                          {/* Optimal Sacred Emerald/Gold Zone (25% - 75%) */}
+                          <div
+                            className="absolute inset-y-0 bg-emerald-500/25 border-x-2 border-amber-300/80"
+                            style={{ left: '25%', width: '50%' }}
+                          />
+                          {/* Danger Ruby Overload Zone (78% - 100%) */}
+                          <div
+                            className="absolute inset-y-0 bg-red-600/30 border-l-2 border-red-400/80"
+                            style={{ left: '78%', width: '22%' }}
+                          />
+                          {/* Active Tension Fill */}
+                          <div
+                            className={`h-full transition-all duration-75 ${
+                              lineTension >= 78
+                                ? 'bg-gradient-to-r from-amber-500 via-orange-600 to-red-600'
+                                : lineTension >= 55
+                                ? 'bg-gradient-to-r from-emerald-500 via-amber-400 to-yellow-300'
+                                : 'bg-gradient-to-r from-amber-700 via-amber-500 to-emerald-400'
+                            }`}
+                            style={{ width: `${lineTension}%` }}
+                          />
+                          {/* Golden Needle Pointer */}
+                          <div
+                            className="absolute top-0 bottom-0 w-1.5 -translate-x-1/2 bg-yellow-100 border-x border-amber-600 shadow-[0_0_8px_#fde047] transition-all duration-75"
+                            style={{ left: `${Math.min(99, Math.max(1, lineTension))}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
-              {/* 4. Physically Separated Dual-Zone Fishing Controls (Anti-Accidental Tap Protection) */}
+              {/* 4. Physically Separated Dual-Zone Fishing Controls — Sculpted Pharaoh Gold & Stone Tablets */}
               <div className="grid grid-cols-12 gap-2 items-stretch">
                 {/* LEFT ZONE (5 cols): Cast Rod / Sell Keepnet / Cast Status ONLY */}
                 <div className="col-span-5 flex">
@@ -2867,7 +3295,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                       <button
                         type="button"
                         onClick={handleSellKeepnetCatch}
-                        className="w-full rounded-xl border-2 border-amber-300 bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 px-2 py-2.5 text-[10.5px] font-black uppercase tracking-wide text-slate-950 shadow-md hover:brightness-110 active:scale-[0.98] cursor-pointer"
+                        className="w-full rounded-xl border-2 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 px-2 py-2.5 text-[10.5px] font-black uppercase tracking-wide text-slate-950 shadow-[0_4px_16px_rgba(245,158,11,0.5),inset_0_1px_0_#fff] hover:brightness-110 active:scale-[0.98] cursor-pointer"
                       >
                         🪣 Продать улов (+{keepnetTotals.gold}🪙)
                       </button>
@@ -2876,21 +3304,21 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         type="button"
                         onClick={handleStartCast}
                         disabled={hero.energy < (fishingConfig.energyPerCast || 2)}
-                        className="w-full rounded-xl border-2 border-cyan-300 bg-gradient-to-b from-cyan-400 via-sky-500 to-blue-600 px-2.5 py-2.5 text-[11px] font-black uppercase tracking-wide text-slate-950 shadow-[0_0_16px_rgba(6,182,212,0.35)] hover:brightness-110 active:scale-[0.98] disabled:opacity-45 cursor-pointer"
+                        className="w-full rounded-xl border-2 border-amber-300 bg-gradient-to-b from-yellow-300 via-amber-500 to-amber-700 px-2.5 py-2.5 text-[11px] font-black uppercase tracking-wide text-slate-950 shadow-[0_4px_18px_rgba(245,158,11,0.45),inset_0_1px_0_rgba(255,255,255,0.65)] hover:brightness-110 active:scale-[0.98] disabled:opacity-45 cursor-pointer"
                       >
                         🎣 Забросить (-{fishingConfig.energyPerCast || 2} ⚡)
                       </button>
                     )
                   ) : (
-                    <div className="w-full flex flex-col items-center justify-center rounded-xl border border-slate-800 bg-slate-950/90 px-2 py-2 text-center select-none">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-cyan-400">
+                    <div className="w-full flex flex-col items-center justify-center rounded-xl border-2 border-amber-600/45 bg-gradient-to-b from-[#21150a] to-[#110a04] px-2 py-2 text-center select-none shadow-inner">
+                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-300">
                         {phase === 'casting'
                           ? '🎣 Заброс снасти...'
                           : phase === 'reeling'
                           ? '🐟 Вываживание'
-                          : '🌊 Удочка в воде'}
+                          : '🌊 Снасть в водах Нила'}
                       </span>
-                      <span className="text-[8px] text-slate-400 mt-0.5">
+                      <span className="text-[8px] text-amber-200/60 mt-0.5">
                         Защита от случайного перезаброса
                       </span>
                     </div>
@@ -2900,22 +3328,22 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                 {/* RIGHT ZONE (7 cols): Hook Bite / Interactive Reel Tension Controls ONLY */}
                 <div className="col-span-7 flex">
                   {phase === 'idle' || phase === 'caught' || phase === 'escaped' || phase === 'casting' ? (
-                    <div className="w-full flex items-center justify-center rounded-xl border border-slate-800/90 bg-slate-900/50 px-3 py-2.5 text-center text-[9.5px] font-bold text-slate-500 select-none">
+                    <div className="w-full flex items-center justify-center rounded-xl border-2 border-amber-800/40 bg-gradient-to-b from-[#1a1108] to-[#0f0904] px-3 py-2.5 text-center text-[9.5px] font-bold text-amber-200/60 select-none shadow-inner">
                       {phase === 'casting'
-                        ? 'Поплавок летит в выбранную зону...'
-                        : 'Сначала забросьте удочку кнопкой слева'}
+                        ? 'Поплавок летит в воды Нила...'
+                        : 'Нажмите «Забросить» на золотой плите слева'}
                     </div>
                   ) : phase === 'waiting' || phase === 'nibble' ? (
-                    <div className="w-full flex items-center justify-between gap-2 rounded-xl border border-sky-500/40 bg-slate-900/90 px-3 py-2 select-none">
+                    <div className="w-full flex items-center justify-between gap-2 rounded-xl border-2 border-amber-500/50 bg-gradient-to-b from-[#23160a] to-[#120b05] px-3 py-2 select-none shadow-inner">
                       <div className="text-left">
-                        <div className="text-[9.5px] font-black uppercase text-sky-200">
-                          {phase === 'nibble' ? '〰️ Поплавок качается...' : '⏳ Ждите поклёвки...'}
+                        <div className="text-[9.5px] font-black uppercase text-amber-200">
+                          {phase === 'nibble' ? '〰️ Поплавок дрожит...' : '⏳ Ждите поклёвки...'}
                         </div>
-                        <div className="text-[8px] text-slate-400">
-                          Кнопка подсечки загорится при клёве ({(waitTimeLeftMs / 1000).toFixed(1)}с)
+                        <div className="text-[8px] text-amber-100/70">
+                          Кнопка подсечки вспыхнет при клёве ({(waitTimeLeftMs / 1000).toFixed(1)}с)
                         </div>
                       </div>
-                      <span className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-1 text-[9px] font-black text-amber-300 tabular-nums">
+                      <span className="rounded-lg border border-amber-500/50 bg-[#0d0804] px-2 py-1 text-[9px] font-black text-amber-300 tabular-nums">
                         {(waitTimeLeftMs / 1000).toFixed(1)}с
                       </span>
                     </div>
@@ -2923,7 +3351,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     <button
                       type="button"
                       onClick={handleHookFish}
-                      className="w-full animate-bounce rounded-xl border-2 border-amber-300 bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 px-3 py-2.5 text-xs font-black uppercase tracking-wider text-slate-950 shadow-[0_0_22px_rgba(245,158,11,0.65)] active:scale-95 cursor-pointer"
+                      className="w-full animate-bounce rounded-xl border-2 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-500 to-orange-600 px-3 py-2.5 text-xs font-black uppercase tracking-wider text-slate-950 shadow-[0_0_24px_rgba(251,191,36,0.75),inset_0_1px_0_#fff] active:scale-95 cursor-pointer"
                     >
                       ⚡ ПОДСЕЧЬ СЕЙЧАС! ({(biteTimeLeftMs / 1000).toFixed(1)}с)
                     </button>
@@ -2950,16 +3378,16 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                         }}
                         className={`flex-[2] select-none rounded-xl border-2 px-2 py-2.5 text-[10.5px] font-black uppercase tracking-wide transition-all active:scale-95 cursor-pointer ${
                           isFishThrashing
-                            ? 'border-amber-400 bg-amber-900/90 text-amber-100'
-                            : 'border-emerald-300 bg-gradient-to-r from-emerald-400 via-teal-400 to-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                            ? 'border-amber-400 bg-gradient-to-b from-amber-800 via-[#2b1606] to-[#170b02] text-amber-100 shadow-inner'
+                            : 'border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 shadow-[0_0_18px_rgba(245,158,11,0.55),inset_0_1px_0_#fff]'
                         }`}
                       >
-                        {isHoldingReel ? '🔄 ТЯНЕМ К БЕРЕГУ...' : '🎣 УДЕРЖИВАТЬ КАТУШКУ'}
+                        {isHoldingReel ? '🔄 ПОДМОТКА КАТУШКИ...' : '🎣 КРУТИТЬ КАТУШКУ'}
                       </button>
                       <button
                         type="button"
                         onClick={handleSlackLineImpulse}
-                        className="flex-1 select-none rounded-xl border border-sky-400/70 bg-slate-900 px-1.5 py-2.5 text-[9.5px] font-black uppercase text-sky-200 hover:bg-slate-800 active:scale-95 cursor-pointer"
+                        className="flex-1 select-none rounded-xl border-2 border-amber-500/70 bg-gradient-to-b from-[#291a0b] to-[#130b04] px-1.5 py-2.5 text-[9.5px] font-black uppercase text-amber-200 hover:border-amber-300 active:scale-95 cursor-pointer shadow-md"
                       >
                         ✋ Стравить
                       </button>
@@ -2970,7 +3398,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
 
               {/* Escaped Fish Alert Card */}
               {phase === 'escaped' && escapeReason && (
-                <div className="rounded-xl border-2 border-rose-500/80 bg-rose-950/60 p-2.5 text-[10.5px] font-bold text-rose-100 flex items-center gap-2.5">
+                <div className="rounded-xl border-2 border-rose-500/80 bg-gradient-to-b from-rose-950/80 to-[#1a0609] p-2.5 text-[10.5px] font-bold text-rose-100 flex items-center gap-2.5 shadow-lg">
                   <span className="text-2xl">💨</span>
                   <div>
                     <div className="font-black uppercase text-rose-300">Рыба сорвалась!</div>
@@ -2979,12 +3407,12 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                 </div>
               )}
 
-              {/* Last Caught Result Showcase Card */}
+              {/* Last Caught Result Showcase Card — Golden Pharaoh Tablet with Glow */}
               {lastOutcome && phase === 'caught' && (
-                <div className="rounded-xl border-2 border-amber-400/80 bg-gradient-to-b from-slate-900 via-slate-950 to-slate-900 p-2.5 shadow-lg">
+                <div className="rounded-xl border-2 border-amber-300 bg-gradient-to-b from-[#2b1a09] via-[#170e05] to-[#0e0803] p-2.5 shadow-[0_0_24px_rgba(251,191,36,0.35),inset_0_1px_0_rgba(254,240,138,0.4)]">
                   {lastOutcome.type === 'fish' ? (
                     <div className="flex items-center gap-3">
-                      <div className="relative flex h-14 w-18 shrink-0 items-center justify-center rounded-xl border border-cyan-500/40 bg-slate-950 p-1">
+                      <div className="relative flex h-14 w-18 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400/70 bg-[#0d0804] p-1 shadow-[0_0_15px_rgba(251,191,36,0.3)]">
                         <img
                           src={lastOutcome.fish.iconUrl}
                           alt={lastOutcome.fish.name}
@@ -3004,13 +3432,13 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                             <span className="text-amber-300">· 🏆 РЕКОРД ВЕСА!</span>
                           )}
                         </div>
-                        <div className="truncate text-xs font-black text-white mt-0.5">
+                        <div className="truncate text-xs font-black text-amber-100 mt-0.5">
                           {lastOutcome.fish.name}
                         </div>
                         <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-extrabold tabular-nums">
                           <span className="text-sky-200">⚖️ {lastOutcome.weightKg} кг</span>
-                          <span className="text-cyan-300">🪣 В садок ({keepnetFishList.length}/{keepnetCapacity})</span>
-                          <span className="text-amber-300">Оценка: +{lastOutcome.goldEarned} 🪙</span>
+                          <span className="text-amber-200">🪣 В садок ({keepnetFishList.length}/{keepnetCapacity})</span>
+                          <span className="text-yellow-300">Оценка: +{lastOutcome.goldEarned} 🪙</span>
                           {lastOutcome.crystalsEarned > 0 && (
                             <span className="text-cyan-300">+{lastOutcome.crystalsEarned} 💎</span>
                           )}
@@ -3020,7 +3448,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     </div>
                   ) : (
                     <div className="flex items-center gap-3">
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-amber-400/60 bg-amber-950/60 text-2xl">
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 border-amber-300 bg-amber-950/70 text-2xl shadow-[0_0_18px_rgba(251,191,36,0.5)]">
                         🧰
                       </div>
                       <div className="min-w-0 flex-1">
@@ -3041,7 +3469,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
               )}
 
               {/* 5. FISHING NET PANEL (Заброс сети по лицензии + таймер свежести улова) */}
-              <div className="rounded-xl border-2 border-teal-500/50 bg-slate-900/95 p-2.5 space-y-2">
+              <div className="rounded-xl border-2 border-amber-500/55 bg-gradient-to-b from-[#23160a] via-[#150e06] to-[#0d0804] p-2.5 space-y-2 shadow-[0_6px_16px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(253,224,71,0.2)]">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5">
                     <span className="text-base">🕸️</span>
