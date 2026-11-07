@@ -1481,11 +1481,11 @@ export const ClanModal: React.FC<ClanModalProps> = ({
                       </div>
                     ) : (
                       <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
-                        {depositableItems.map((item) => {
+                        {depositableItems.map((item, idx) => {
                           const q = getQualityConfig(item.quality);
                           return (
                             <div
-                              key={item.id}
+                              key={`${item.id}_${idx}`}
                               className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-900 p-2"
                             >
                               <div className="flex items-center gap-2 min-w-0">

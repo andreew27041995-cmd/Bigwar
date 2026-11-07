@@ -6373,11 +6373,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
                   {bagItems.length > 0 ? (
                     <div className="max-h-96 space-y-1 overflow-y-auto pr-1">
-                      {bagItems.map((it) => {
+                      {bagItems.map((it, idx) => {
                         const qCfg = getQualityConfig(it.quality);
                         return (
                           <div
-                            key={it.id}
+                            key={`${it.id}_${idx}`}
                             className="flex items-center justify-between rounded-lg border border-slate-800 bg-slate-950 px-2.5 py-1 text-[11px]"
                           >
                             <div className="flex items-center gap-1.5 min-w-0">
@@ -9705,9 +9705,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     .filter((item) =>
                       shopCategoryFilter === 'all' ? true : item.slot === shopCategoryFilter
                     )
-                    .map((item) => (
+                    .map((item, idx) => (
                       <div
-                        key={item.id}
+                        key={`${item.id}_${idx}`}
                         className={`rounded-lg border p-2.5 ${
                           item.enabled !== false
                             ? 'border-slate-700 bg-slate-950'

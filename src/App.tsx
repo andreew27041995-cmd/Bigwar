@@ -1962,24 +1962,32 @@ export default function App() {
               });
             }
 
-            if (Array.isArray(player.inventory) && player.inventory.length > 0) {
-              setInventory((prev) => {
-                const map = new Map<string, GameItem>();
-                player.inventory!.forEach((it) => {
-                  if (it && it.id) map.set(it.id, it);
-                });
-                prev.forEach((it) => {
-                  if (it && it.id && !map.has(it.id)) map.set(it.id, it);
-                });
-                const next = Array.from(map.values());
-                inventoryRef.current = next;
-                return next;
-              });
-            }
             if (player.equipped && typeof player.equipped === 'object') {
               setEquipped((prev) => {
                 const next = { ...prev, ...player.equipped };
                 equippedRef.current = next;
+                return next;
+              });
+            }
+            if (Array.isArray(player.inventory) && player.inventory.length > 0) {
+              setInventory((prev) => {
+                const eqObj = player.equipped && typeof player.equipped === 'object'
+                  ? { ...(equippedRef.current || {}), ...player.equipped }
+                  : (equippedRef.current || {});
+                const equippedIds = new Set<string>(
+                  Object.values(eqObj)
+                    .map((eqIt: any) => eqIt?.id)
+                    .filter(Boolean)
+                );
+                const map = new Map<string, GameItem>();
+                player.inventory!.forEach((it) => {
+                  if (it && it.id && !equippedIds.has(it.id)) map.set(it.id, it);
+                });
+                prev.forEach((it) => {
+                  if (it && it.id && !equippedIds.has(it.id) && !map.has(it.id)) map.set(it.id, it);
+                });
+                const next = Array.from(map.values());
+                inventoryRef.current = next;
                 return next;
               });
             }
@@ -2180,24 +2188,32 @@ export default function App() {
                 });
               }
 
-              if (Array.isArray(meInDb.inventory) && meInDb.inventory.length > 0) {
-                setInventory((prev) => {
-                  const map = new Map<string, GameItem>();
-                  meInDb.inventory!.forEach((it) => {
-                    if (it && it.id) map.set(it.id, it);
-                  });
-                  prev.forEach((it) => {
-                    if (it && it.id && !map.has(it.id)) map.set(it.id, it);
-                  });
-                  const next = Array.from(map.values());
-                  inventoryRef.current = next;
-                  return next;
-                });
-              }
               if (meInDb.equipped && typeof meInDb.equipped === 'object') {
                 setEquipped((prev) => {
                   const next = { ...prev, ...meInDb.equipped };
                   equippedRef.current = next;
+                  return next;
+                });
+              }
+              if (Array.isArray(meInDb.inventory) && meInDb.inventory.length > 0) {
+                setInventory((prev) => {
+                  const eqObj = meInDb.equipped && typeof meInDb.equipped === 'object'
+                    ? { ...(equippedRef.current || {}), ...meInDb.equipped }
+                    : (equippedRef.current || {});
+                  const equippedIds = new Set<string>(
+                    Object.values(eqObj)
+                      .map((eqIt: any) => eqIt?.id)
+                      .filter(Boolean)
+                  );
+                  const map = new Map<string, GameItem>();
+                  meInDb.inventory!.forEach((it) => {
+                    if (it && it.id && !equippedIds.has(it.id)) map.set(it.id, it);
+                  });
+                  prev.forEach((it) => {
+                    if (it && it.id && !equippedIds.has(it.id) && !map.has(it.id)) map.set(it.id, it);
+                  });
+                  const next = Array.from(map.values());
+                  inventoryRef.current = next;
                   return next;
                 });
               }
@@ -5376,10 +5392,9 @@ export default function App() {
       [slot]: normalizedItem
     };
 
-    // Update inventory: remove newly equipped, add old back if existed
-    const newInventory = [...curInv];
-    newInventory.splice(itemIndex, 1);
-    if (oldEquipped) {
+    // Update inventory: remove newly equipped, add old back if existed (deduplicated by id)
+    const newInventory = curInv.filter((it, idx) => idx !== itemIndex && it.id !== normalizedItem.id);
+    if (oldEquipped && !newInventory.some((it) => it.id === oldEquipped.id)) {
       newInventory.push(oldEquipped);
     }
 
@@ -5436,7 +5451,7 @@ export default function App() {
       [slot]: null
     };
 
-    const newInventory = [item, ...curInv];
+    const newInventory = [item, ...curInv.filter((it) => it.id !== item.id)];
     const updatedHero = recalcGear(newEquipped, curHero);
 
     equippedRef.current = newEquipped;
@@ -9008,6 +9023,21 @@ export default function App() {
         }
       }
     } catch {}
+    // Deduplicate loadedInventory by id and exclude any item currently equipped in loadedEquipped
+    {
+      const equippedIds = new Set<string>(
+        Object.values(loadedEquipped)
+          .map((eqIt: any) => eqIt?.id)
+          .filter(Boolean)
+      );
+      const seenInvIds = new Set<string>();
+      loadedInventory = loadedInventory.filter((it) => {
+        if (!it || !it.id) return false;
+        if (equippedIds.has(it.id) || seenInvIds.has(it.id)) return false;
+        seenInvIds.add(it.id);
+        return true;
+      });
+    }
     const loadedTradeProtocol = Array.isArray(supaPlayer?.trade_protocol)
       ? supaPlayer.trade_protocol
       : defaultData.tradeProtocol;
@@ -9983,6 +10013,21 @@ export default function App() {
                 }
               }
             } catch {}
+            // Deduplicate loadedInventory by id and exclude any item currently equipped in loadedEquipped
+            {
+              const equippedIds = new Set<string>(
+                Object.values(loadedEquipped)
+                  .map((eqIt: any) => eqIt?.id)
+                  .filter(Boolean)
+              );
+              const seenInvIds = new Set<string>();
+              loadedInventory = loadedInventory.filter((it) => {
+                if (!it || !it.id) return false;
+                if (equippedIds.has(it.id) || seenInvIds.has(it.id)) return false;
+                seenInvIds.add(it.id);
+                return true;
+              });
+            }
             const loadedTradeProtocol = Array.isArray(supaPlayer.trade_protocol)
               ? supaPlayer.trade_protocol
               : defaultData.tradeProtocol;

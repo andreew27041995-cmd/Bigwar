@@ -188,13 +188,13 @@ export const TradeProtocolModal: React.FC<TradeProtocolModalProps> = ({
             </div>
 
             <div className="space-y-2">
-              {rentedItems.map((item) => {
+              {rentedItems.map((item, idx) => {
                 const rent = item.rent!;
                 const isExpired = nowTick >= rent.until;
                 const q = getQualityConfig(item.quality || 'common');
                 return (
                   <div
-                    key={item.id}
+                    key={`${item.id}_${idx}`}
                     className={`flex items-center justify-between gap-2 rounded-lg border p-2 transition-all ${
                       isExpired
                         ? 'border-emerald-400 bg-emerald-950/35 shadow-[0_0_12px_rgba(16,185,129,0.25)]'

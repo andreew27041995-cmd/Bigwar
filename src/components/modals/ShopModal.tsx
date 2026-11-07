@@ -1498,7 +1498,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             В категории «{SHOP_CATEGORY_LABELS[activeCategory] || activeCategory}» пока нет товаров.
           </div>
         ) : (
-          filteredItems.map((item) => {
+          filteredItems.map((item, idx) => {
             const itemPrice = Math.max(0, Number(item.price || 0));
             const canAfford = heroGold >= itemPrice;
             const itemLvl = Number(item.lvl || 1);
@@ -1564,7 +1564,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
 
             return (
               <div
-                key={item.id}
+                key={`${item.id}_${idx}`}
                 className={`rounded-xl p-2.5 flex items-center justify-between gap-2.5 transition-all ${rarityMeta.cardClass}`}
               >
                 <div className="flex items-center gap-2.5 min-w-0">

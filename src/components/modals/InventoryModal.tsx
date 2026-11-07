@@ -533,7 +533,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
           </div>
         ) : (
           <div className="space-y-2">
-            {filteredItems.map((item) => {
+            {filteredItems.map((item, idx) => {
               const q = getQualityConfig(item.quality || 'common');
               const slotKey = (item.slot || (item as any).type || 'weapon') as keyof typeof SLOT_INFO;
               const slotInfo = SLOT_INFO[slotKey] || SLOT_INFO.weapon;
@@ -560,7 +560,7 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
 
               return (
                 <div
-                  key={item.id}
+                  key={`${item.id}_${idx}`}
                   className="rounded-lg border bg-slate-900/90 p-2.5 shadow transition-all"
                   style={{
                     borderColor: permanentlyBroken

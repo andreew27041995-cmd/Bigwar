@@ -241,22 +241,35 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
   // All player equipment items eligible to be placed on the Top Altar (equipped + inventory, excluding Relics & Transports)
   const allTargetCandidates = useMemo(() => {
     const list: { item: GameItem; isEquipped: boolean; equippedSlot?: ItemSlot }[] = [];
+    const seenIds = new Set<string>();
     const safeEq = equipped || ({} as EquippedGear);
     (Object.keys(safeEq) as ItemSlot[]).forEach((slot) => {
       const eqItem = safeEq[slot];
-      if (eqItem && !eqItem.rent && !eqItem.isClanRented && !isRelicItem(eqItem) && !isTransportItem(eqItem)) {
+      if (
+        eqItem &&
+        eqItem.id &&
+        !seenIds.has(eqItem.id) &&
+        !eqItem.rent &&
+        !eqItem.isClanRented &&
+        !isRelicItem(eqItem) &&
+        !isTransportItem(eqItem)
+      ) {
+        seenIds.add(eqItem.id);
         list.push({ item: eqItem, isEquipped: true, equippedSlot: slot });
       }
     });
     safeInventory.forEach((invItem) => {
       if (
         invItem &&
+        invItem.id &&
+        !seenIds.has(invItem.id) &&
         !invItem.rent &&
         !invItem.isClanRented &&
         !invItem.isElixirLot &&
         !isRelicItem(invItem) &&
         !isTransportItem(invItem)
       ) {
+        seenIds.add(invItem.id);
         list.push({ item: invItem, isEquipped: false });
       }
     });
@@ -771,13 +784,13 @@ export const ModificationAltarModal: React.FC<ModificationAltarModalProps> = ({
                 <div className="text-[9.5px] font-black uppercase tracking-wider text-cyan-300 px-1">
                   Выберите экипировку для модификации ({allTargetCandidates.length}):
                 </div>
-                {allTargetCandidates.map(({ item, isEquipped }) => {
+                {allTargetCandidates.map(({ item, isEquipped }, idx) => {
                   const modCls = getItemModClass(item);
                   const isSelected = item.id === selectedTargetId;
                   const q = getQualityConfig(item.quality || 'common');
                   return (
                     <button
-                      key={item.id}
+                      key={`${item.id}_${idx}`}
                       type="button"
                       onClick={() => {
                         setSelectedTargetId(item.id);
