@@ -458,6 +458,21 @@ export interface PortFactoryWorkerSession {
   claimed?: boolean;
 }
 
+export type PortTerminalResourceKey =
+  | 'raw_fish'
+  | 'fish_semifinished'
+  | 'alchemy_reagents'
+  | 'gold_ingots'
+  | 'port_relics';
+
+export interface PortPendingClanControl {
+  clanId: string | null;
+  clanName: string;
+  clanTag: string;
+  clanEmblem: string;
+  requestedAt: number;
+}
+
 export interface PortProductionState {
   factoryType: string;
   factoryCategoryLabel: string;
@@ -465,14 +480,18 @@ export interface PortProductionState {
   productionStage?: 'raw_processing' | 'relic_foundry';
   /** ID связанного объекта в межпроизводственной цепочке (поставщик или потребитель) */
   linkedSectorId?: string | null;
-  /** Название промежуточного ресурса цепочки (например, «Эликсир Рыбьего Жира») */
+  /** Название промежуточного ресурса цепочки (например, «Рыбный полуфабрикат») */
   intermediateResourceName?: string;
   /** Уровень объекта недвижимости (1 — базовый, 2 — объединённый/расширенный) */
   facilityLevel?: number;
   /** Текущий баланс объекта недвижимости (в золоте) для выплаты зарплат и содержания */
   facilityBalanceGold?: number;
-  /** Ставка оплаты за 1 час смены (по умолчанию 250 золота) */
+  /** Ставка оплаты за 1 час смены (регулируется владельцем, по умолчанию 250 золота) */
   workerWageGold?: number;
+  /** Цена закупки единицы сырья объектом (регулируется владельцем, по умолчанию 50 золота) */
+  rawBuyPriceGold?: number;
+  /** Цена продажи готовой продукции объектом (регулируется владельцем, по умолчанию 200 золота) */
+  productSellPriceGold?: number;
   isMerged?: boolean;
   mergedWithSectorId?: string | null;
   fishStock: number;
@@ -494,8 +513,15 @@ export interface ClanTerritorySector {
   icon: string;
   description: string;
   zone?: 'port';
-  /** Официальный владелец недвижимости (никнейм игрока, по ТЗ все объекты переданы RedBlack) */
+  /** Официальный владелец недвижимости (никнейм игрока) */
   ownerNick?: string | null;
+  /** Признак созданного игроком объекта недвижимости за 3 000 кристаллов */
+  isCustomCreated?: boolean;
+  createdAt?: number;
+  /** Признак того, что владелец вручную делегировал контроль клану */
+  ownerDelegatedClan?: boolean;
+  /** Отложенная передача контроля клану, если объект находился под активным нападением */
+  pendingClanControl?: PortPendingClanControl | null;
   ownerClanId: string | null;
   ownerClanName: string | null;
   ownerClanTag: string | null;
@@ -845,6 +871,7 @@ export interface HeroState {
   productionHours?: number;
   productionLevel?: number;
   hasClanBadge?: boolean;
+  portResources?: Partial<Record<PortTerminalResourceKey, number>>;
 }
 
 export interface NpcLogEntry {

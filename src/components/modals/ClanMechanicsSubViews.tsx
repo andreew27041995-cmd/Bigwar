@@ -43,6 +43,12 @@ import {
   claimPortFactoryWorkShift,
   getPlayerActivePortWorkShift,
   mergeClanPortFactories,
+  getAllClans,
+  ESTATE_CREATION_COST_CRYSTALS,
+  PORT_ESTATE_TEMPLATES,
+  createPortRealEstateObject,
+  updatePortEstateOwnerSettings,
+  delegatePortEstateClanControl,
   DEFAULT_PORT_ESTATE_OWNER_NICK,
   PORT_BASE_MAX_WORKERS,
   PORT_MERGED_MAX_WORKERS,
@@ -64,6 +70,7 @@ interface ClanSubViewsCommonProps {
   initialSectorId?: string | null;
   onUpdateHero: (updated: Partial<HeroState>) => void;
   onUpdateInventory: (updated: GameItem[]) => void;
+  onOpenProfileEstate?: () => void;
   showToast: (text: string) => void;
   triggerRefresh: () => void;
   requestConfirm: (
@@ -157,6 +164,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   initialSectorId,
   onUpdateHero,
   onUpdateInventory,
+  onOpenProfileEstate,
   showToast,
   triggerRefresh,
   requestConfirm
@@ -170,6 +178,22 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   const [selectedEnemyNick, setSelectedEnemyNick] = useState<string | null>(null);
   const [viewingReportSectorId, setViewingReportSectorId] = useState<string | null>(null);
   const [shiftDurationBySector, setShiftDurationBySector] = useState<Record<string, 1 | 2>>({});
+  const [showCreateEstateModal, setShowCreateEstateModal] = useState(false);
+  const [selectedEstateTemplateId, setSelectedEstateTemplateId] = useState<string>(
+    PORT_ESTATE_TEMPLATES[0]?.id || 'tpl_fish_plant'
+  );
+  const [customEstateName, setCustomEstateName] = useState('');
+  const [ownerSettingsBySector, setOwnerSettingsBySector] = useState<
+    Record<
+      string,
+      {
+        rawBuyPriceGold: string;
+        productSellPriceGold: string;
+        workerWageGold: string;
+        clanQuery: string;
+      }
+    >
+  >({});
 
   const effectiveMyNick = (myNick || hero.nick || 'Игрок').trim();
 
@@ -397,6 +421,90 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
       return;
     }
     showToast(res.message || '🏗️ Производства объединены!');
+    forceRefreshAll();
+  };
+
+  const getSectorOwnerDraft = (sec: (typeof territories)[number]) => {
+    const existing = ownerSettingsBySector[sec.id];
+    if (existing) return existing;
+    return {
+      rawBuyPriceGold: String(sec.production?.rawBuyPriceGold ?? 45),
+      productSellPriceGold: String(sec.production?.productSellPriceGold ?? 220),
+      workerWageGold: String(sec.production?.workerWageGold ?? PORT_WORKER_GOLD_PER_HOUR),
+      clanQuery: sec.ownerClanName || sec.ownerClanTag || ''
+    };
+  };
+
+  const updateSectorOwnerDraft = (
+    sectorId: string,
+    patch: Partial<{
+      rawBuyPriceGold: string;
+      productSellPriceGold: string;
+      workerWageGold: string;
+      clanQuery: string;
+    }>,
+    sec: (typeof territories)[number]
+  ) => {
+    const base = getSectorOwnerDraft(sec);
+    setOwnerSettingsBySector((prev) => ({
+      ...prev,
+      [sectorId]: {
+        ...base,
+        ...patch
+      }
+    }));
+  };
+
+  const handleCreateNewEstate = () => {
+    const res = createPortRealEstateObject(
+      effectiveMyNick,
+      selectedEstateTemplateId,
+      customEstateName.trim(),
+      hero.crystals || 0
+    );
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return;
+    }
+    onUpdateHero({
+      crystals: Math.max(0, (hero.crystals || 0) - (res.costCrystals || ESTATE_CREATION_COST_CRYSTALS))
+    });
+    setShowCreateEstateModal(false);
+    setCustomEstateName('');
+    showToast(
+      res.message ||
+        '🏗️ Недвижимость успешно создана за 3 000 💎 и перенесена во вкладку «Недвижимость» в профиле!'
+    );
+    forceRefreshAll();
+    if (onOpenProfileEstate) {
+      onOpenProfileEstate();
+    }
+  };
+
+  const handleSaveOwnerPricesAndWage = (sec: (typeof territories)[number]) => {
+    const draft = getSectorOwnerDraft(sec);
+    const res = updatePortEstateOwnerSettings(sec.id, effectiveMyNick, {
+      rawBuyPriceGold: Number(draft.rawBuyPriceGold || 45),
+      productSellPriceGold: Number(draft.productSellPriceGold || 220),
+      workerWageGold: Number(draft.workerWageGold || PORT_WORKER_GOLD_PER_HOUR)
+    });
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return;
+    }
+    showToast(res.message || '⚙️ Настройки цен и зарплаты сохранены!');
+    forceRefreshAll();
+  };
+
+  const handleDelegateClanControl = (sec: (typeof territories)[number], overrideClanQuery?: string) => {
+    const draft = getSectorOwnerDraft(sec);
+    const q = (overrideClanQuery ?? draft.clanQuery).trim();
+    const res = delegatePortEstateClanControl(sec.id, effectiveMyNick, q);
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return;
+    }
+    showToast(res.message || '🚩 Контроль клана обновлён!');
     forceRefreshAll();
   };
 
@@ -739,8 +847,101 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                 Объектов у клана: {myBuffs.ownedSectors.length}/{territories.length}
               </div>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowCreateEstateModal((prev) => !prev)}
+              className="rounded-xl border-2 border-cyan-300 bg-gradient-to-r from-cyan-500 via-teal-400 to-amber-400 px-3 py-2 text-[10px] font-black uppercase text-slate-950 shadow-[0_0_18px_rgba(34,211,238,0.45)] hover:brightness-110 active:scale-95 cursor-pointer"
+            >
+              🏗️ Создать недвижимость ({ESTATE_CREATION_COST_CRYSTALS.toLocaleString('ru-RU')} 💎)
+            </button>
           </div>
         </div>
+
+        {/* Модальное окно / панель создания нового объекта недвижимости за 3 000 кристаллов */}
+        {showCreateEstateModal && (
+          <div className="rounded-2xl border-2 border-cyan-400/80 bg-gradient-to-b from-cyan-950/60 via-slate-900 to-slate-950 p-3.5 space-y-3 shadow-[0_0_25px_rgba(34,211,238,0.3)]">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/30 pb-2">
+              <div>
+                <div className="text-xs font-black uppercase text-cyan-200 flex items-center gap-1.5">
+                  <span>🏗️ Создание новой недвижимости в Порту</span>
+                  <span className="rounded bg-cyan-500/30 border border-cyan-300/60 px-1.5 py-0.5 text-[9px] font-black text-white">
+                    Стоимость: {ESTATE_CREATION_COST_CRYSTALS.toLocaleString('ru-RU')} 💎
+                  </span>
+                </div>
+                <p className="text-[9.5px] text-slate-300 mt-0.5">
+                  Выберите тип производства из списка ниже. После оплаты объект автоматически создаётся в Порту и переносится во вкладку <strong>«Недвижимость»</strong> в профиле персонажа!
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-lg border border-cyan-500/40 bg-slate-950 px-2.5 py-1 text-[10px] font-black text-cyan-300">
+                  Ваш баланс: {(hero.crystals || 0).toLocaleString('ru-RU')} 💎
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateEstateModal(false)}
+                  className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] font-bold text-slate-300 hover:text-white cursor-pointer"
+                >
+                  ✕ Закрыть
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {PORT_ESTATE_TEMPLATES.map((tpl) => {
+                const isSelected = selectedEstateTemplateId === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setSelectedEstateTemplateId(tpl.id)}
+                    className={`rounded-xl border p-2.5 text-left transition-all cursor-pointer space-y-1 ${
+                      isSelected
+                        ? 'border-2 border-cyan-300 bg-cyan-950/60 shadow-[0_0_15px_rgba(34,211,238,0.3)]'
+                        : 'border-slate-800 bg-slate-950/80 hover:border-cyan-500/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[11px] font-black text-white">{tpl.name}</span>
+                      <span className="rounded bg-amber-500/20 border border-amber-400/50 px-1.5 py-0.2 text-[8px] font-black text-amber-200">
+                        {tpl.bonusLabel}
+                      </span>
+                    </div>
+                    <div className="text-[9px] font-bold text-cyan-300">{tpl.categoryLabel}</div>
+                    <div className="text-[8.5px] text-slate-400 leading-snug">{tpl.description}</div>
+                    <div className="text-[8.5px] font-semibold text-purple-300 pt-0.5">
+                      📦 Ресурс цепочки: {tpl.intermediateResourceName}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-1">
+              <input
+                type="text"
+                maxLength={32}
+                value={customEstateName}
+                onChange={(e) => setCustomEstateName(e.target.value)}
+                placeholder="Своё название объекта (необязательно, напр. «Мастерская Реликвий #2»)..."
+                className="flex-1 rounded-xl border border-cyan-500/50 bg-slate-950 px-3 py-2 text-[10.5px] font-bold text-white placeholder-slate-500 focus:border-cyan-300 focus:outline-none"
+              />
+              <button
+                type="button"
+                disabled={(hero.crystals || 0) < ESTATE_CREATION_COST_CRYSTALS}
+                onClick={handleCreateNewEstate}
+                className={`rounded-xl px-4 py-2 text-[10.5px] font-black uppercase tracking-wide shadow transition-all cursor-pointer shrink-0 ${
+                  (hero.crystals || 0) >= ESTATE_CREATION_COST_CRYSTALS
+                    ? 'bg-gradient-to-r from-cyan-400 via-teal-400 to-amber-400 text-slate-950 hover:brightness-110 active:scale-95'
+                    : 'border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                {(hero.crystals || 0) >= ESTATE_CREATION_COST_CRYSTALS
+                  ? `💎 Оплатить ${ESTATE_CREATION_COST_CRYSTALS.toLocaleString('ru-RU')} 💎 и создать объект`
+                  : `⛔ Недостаточно кристаллов (нужно ${ESTATE_CREATION_COST_CRYSTALS.toLocaleString('ru-RU')} 💎)`}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Общий Рыбный рынок Порта и курс Реликвий */}
         <div className="rounded-xl border border-sky-500/40 bg-sky-950/30 p-2.5 flex flex-wrap items-center justify-between gap-2">
@@ -891,8 +1092,16 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                 {/* Верхняя плашка тревоги и статуса поля боя 7х7 */}
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rose-500/30 pb-2.5">
                   <div className="flex items-center gap-2.5">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-rose-400 bg-slate-950 text-2xl">
-                      {sec.icon}
+                    <div
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400 bg-amber-950/80 p-1 shadow"
+                      title={`Знак клана: [${sec.ownerClanTag || 'RB'}] ${sec.ownerClanName || 'Империя RedBlack'}`}
+                    >
+                      <ItemIcon
+                        icon={sec.ownerClanEmblem || '👑'}
+                        name={sec.ownerClanName || 'Клан'}
+                        className="w-7 h-7 text-xl"
+                        imgClassName="w-7 h-7 object-contain"
+                      />
                     </div>
                     <div>
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -1266,12 +1475,29 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
           <div className="rounded-2xl border-2 border-amber-400/80 bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 p-4 shadow-[0_0_30px_rgba(245,158,11,0.3)] space-y-3">
             <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
               <div className="flex items-center gap-2.5">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-amber-400/60 bg-slate-900 text-2xl shadow">
-                  {s.icon}
+                <div
+                  className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400 bg-amber-950/80 p-1 shadow"
+                  title={`Официальный Знак клана: [${s.ownerClanTag || 'RB'}] ${s.ownerClanName || 'Империя RedBlack'}`}
+                >
+                  <ItemIcon
+                    icon={s.ownerClanEmblem || '👑'}
+                    name={s.ownerClanName || 'Клан'}
+                    className="w-8 h-8 text-2xl"
+                    imgClassName="w-8 h-8 object-contain"
+                  />
                 </div>
                 <div>
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-sm font-black uppercase text-amber-300">{s.name}</span>
+                    <span className="rounded bg-amber-950 border border-amber-400/70 px-2 py-0.5 text-[9px] font-black text-amber-200 flex items-center gap-1">
+                      <ItemIcon
+                        icon={s.ownerClanEmblem || '👑'}
+                        name={s.ownerClanName || 'Клан'}
+                        className="w-3.5 h-3.5 text-xs"
+                        imgClassName="w-3.5 h-3.5 object-contain"
+                      />
+                      <span>[{s.ownerClanTag || 'RB'}] {s.ownerClanName || 'Империя RedBlack'}</span>
+                    </span>
                     <span className="rounded bg-amber-500/25 border border-amber-400/50 px-1.5 py-0.5 text-[9px] font-black text-amber-200">
                       Ур. {p.isMerged ? 2 : p.facilityLevel || 1} {p.isMerged ? '(Объединён x2)' : ''}
                     </span>
@@ -1527,6 +1753,141 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                 )}
               </div>
             </div>
+
+            {/* 5. ПАНЕЛЬ УПРАВЛЕНИЯ ВЛАДЕЛЬЦА НЕДВИЖИМОСТИ (Настройка цен, зарплат и делегирование контроля клана с защитой во время боя) */}
+            {isMyEstate && (() => {
+              const draft = getSectorOwnerDraft(s);
+              const allClansList = getAllClans();
+              return (
+                <div className="rounded-xl border-2 border-amber-400/70 bg-gradient-to-r from-amber-950/40 via-slate-900 to-slate-950 p-3 space-y-2.5 text-[10px]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-500/30 pb-1.5">
+                    <span className="font-black uppercase text-amber-300 flex items-center gap-1.5">
+                      <span>⚙️ 5. Панель управления владельца недвижимости ({ownerName})</span>
+                    </span>
+                    <span className="rounded bg-emerald-500/20 border border-emerald-400/50 px-2 py-0.5 text-[8.5px] font-black text-emerald-200">
+                      Полный доступ владельца
+                    </span>
+                  </div>
+
+                  {/* Настройка цен и зарплат */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="rounded-lg border border-slate-800 bg-slate-950 p-2 space-y-1">
+                      <label className="block text-[8.5px] font-bold text-sky-300">
+                        📥 Цена закупки сырья (🪙/ед.):
+                      </label>
+                      <input
+                        type="number"
+                        min={5}
+                        max={5000}
+                        value={draft.rawBuyPriceGold}
+                        onChange={(e) =>
+                          updateSectorOwnerDraft(s.id, { rawBuyPriceGold: e.target.value }, s)
+                        }
+                        className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-black text-white focus:border-amber-400 focus:outline-none"
+                      />
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950 p-2 space-y-1">
+                      <label className="block text-[8.5px] font-bold text-amber-300">
+                        📤 Цена продажи продукции (🪙/ед.):
+                      </label>
+                      <input
+                        type="number"
+                        min={20}
+                        max={25000}
+                        value={draft.productSellPriceGold}
+                        onChange={(e) =>
+                          updateSectorOwnerDraft(s.id, { productSellPriceGold: e.target.value }, s)
+                        }
+                        className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-black text-white focus:border-amber-400 focus:outline-none"
+                      />
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-slate-950 p-2 space-y-1">
+                      <label className="block text-[8.5px] font-bold text-emerald-300">
+                        👷 Зарплата / бонус рабочим (🪙/ч):
+                      </label>
+                      <input
+                        type="number"
+                        min={50}
+                        max={5000}
+                        value={draft.workerWageGold}
+                        onChange={(e) =>
+                          updateSectorOwnerDraft(s.id, { workerWageGold: e.target.value }, s)
+                        }
+                        className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs font-black text-white focus:border-amber-400 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveOwnerPricesAndWage(s)}
+                      className="rounded-lg bg-gradient-to-r from-amber-500 to-yellow-400 px-3 py-1.5 text-[9.5px] font-black uppercase text-slate-950 shadow hover:brightness-110 cursor-pointer"
+                    >
+                      💾 Сохранить цены и зарплату рабочим
+                    </button>
+                  </div>
+
+                  {/* Управление контролем клана с правилом безопасности во время боя */}
+                  <div className="border-t border-slate-800 pt-2 space-y-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-1">
+                      <span className="text-[9.5px] font-black text-cyan-300">
+                        🚩 Управление контролем клана (делегирование защиты и эмблемы объекта):
+                      </span>
+                      <span className="text-[8.5px] text-amber-200 font-semibold">
+                        🛡️ Правило безопасности: смена клана во время боя вступает в силу только после окончания атаки!
+                      </span>
+                    </div>
+
+                    {s.pendingClanControl && (
+                      <div className="rounded-lg border border-amber-400/70 bg-amber-950/50 p-2 text-[9px] text-amber-200 font-bold">
+                        ⏳ Ожидает вступления в силу после окончания текущего боя 7х7: передача контроля клану{' '}
+                        <strong>
+                          [{s.pendingClanControl.clanTag}] {s.pendingClanControl.clanName}
+                        </strong>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={draft.clanQuery}
+                        onChange={(e) =>
+                          updateSectorOwnerDraft(s.id, { clanQuery: e.target.value }, s)
+                        }
+                        placeholder="Введите название или тег клана для передачи контроля..."
+                        className="flex-1 rounded-lg border border-cyan-500/50 bg-slate-950 px-2.5 py-1.5 text-[10px] font-bold text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                      />
+                      {allClansList.length > 0 && (
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              updateSectorOwnerDraft(s.id, { clanQuery: e.target.value }, s);
+                            }
+                          }}
+                          className="rounded-lg border border-slate-700 bg-slate-900 px-2 py-1.5 text-[9.5px] font-bold text-amber-200"
+                        >
+                          <option value="">Выбрать из списка кланов...</option>
+                          {allClansList.map((c) => (
+                            <option key={c.id} value={c.name}>
+                              [{c.tag}] {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleDelegateClanControl(s)}
+                        className="rounded-lg border border-cyan-400 bg-cyan-600/30 hover:bg-cyan-600/50 px-3 py-1.5 text-[9.5px] font-black uppercase text-cyan-100 cursor-pointer shrink-0"
+                      >
+                        🚩 Передать контроль клану
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         );
       })()}
@@ -1609,10 +1970,18 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                       setInspectingSectorId(inspectingSectorId === sector.id ? null : sector.id)
                     }
                     className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
-                    title="Нажмите, чтобы открыть детальное информационное окно объекта недвижимости"
+                    title="Нажмите, чтобы открыть паспорт и панель управления владельца недвижимости"
                   >
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/50 bg-slate-950 text-2xl shadow-inner group-hover:border-amber-400">
-                      {sector.icon}
+                    <div
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-amber-400 bg-amber-950/90 p-1 shadow-inner group-hover:border-amber-300"
+                      title={`Знак контролирующего клана: [${sector.ownerClanTag || 'RB'}] ${sector.ownerClanName || 'Империя RedBlack'}`}
+                    >
+                      <ItemIcon
+                        icon={sector.ownerClanEmblem || '👑'}
+                        name={sector.ownerClanName || ownerName}
+                        className="w-7 h-7 text-xl"
+                        imgClassName="w-7 h-7 object-contain"
+                      />
                     </div>
                     <div className="min-w-0">
                       <div className="text-xs font-black text-white group-hover:text-amber-300 truncate flex items-center gap-1.5 flex-wrap">
@@ -1627,9 +1996,17 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] font-extrabold text-amber-300 mt-0.5 flex items-center gap-1.5 flex-wrap">
-                        <span>👑 Владелец: <strong className="text-white">{ownerName}</strong></span>
+                        <span className="inline-flex items-center gap-1 rounded bg-amber-950/90 border border-amber-400/60 px-1.5 py-0.2 text-[9px] font-black text-amber-200">
+                          <ItemIcon
+                            icon={sector.ownerClanEmblem || '👑'}
+                            name={sector.ownerClanName || ownerName}
+                            className="w-3 h-3 text-[10px]"
+                            imgClassName="w-3 h-3 object-contain"
+                          />
+                          <span>[{sector.ownerClanTag || 'RB'}] {sector.ownerClanName || 'Империя RedBlack'}</span>
+                        </span>
                         <span>•</span>
-                        <span>🎁 {sector.bonusLabel}</span>
+                        <span>👑 Владелец: <strong className="text-white">{ownerName}</strong></span>
                       </div>
                     </div>
                   </div>
@@ -1659,14 +2036,14 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                       }
                       className="rounded-md border border-amber-400/50 bg-slate-950 hover:bg-amber-500/20 px-2 py-0.5 text-[8.5px] font-black text-amber-200 cursor-pointer"
                     >
-                      📋 {inspectingSectorId === sector.id ? 'Скрыть инфо' : 'Инфо объекта'}
+                      ⚙️ {inspectingSectorId === sector.id ? 'Скрыть настройки' : isOwnedByMe ? 'Настройки владельца' : 'Паспорт объекта'}
                     </button>
                   </div>
                 </div>
 
                 <p className="text-[9.5px] text-slate-400 leading-snug">{sector.description}</p>
 
-                {/* Официальный Знак, Владелец RedBlack, Баланс объекта и Статус работы цеха */}
+                {/* Официальный Знак, Название контролирующего клана, Цены и Статус работы цеха */}
                 <div className="rounded-xl border border-amber-500/35 bg-slate-950/90 px-2.5 py-2 flex flex-wrap items-center justify-between gap-1.5 text-[9.5px]">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-amber-400 bg-amber-950 shadow">
@@ -1682,7 +2059,11 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                     </span>
                     <span className="text-slate-400">•</span>
                     <span className="font-bold text-emerald-300">
-                      🏦 Баланс: {(prod.facilityBalanceGold ?? 15000).toLocaleString()} 🪙
+                      🏦 Касса: {(prod.facilityBalanceGold ?? 15000).toLocaleString()} 🪙
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    <span className="font-semibold text-cyan-300">
+                      Сырьё: {prod.rawBuyPriceGold ?? 45}🪙 / Прод.: {prod.productSellPriceGold ?? 220}🪙
                     </span>
                   </div>
                   <span
@@ -1697,6 +2078,11 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                       : `⚙️ Цех активен (${activeWorkers.length}/${maxWorkers})`}
                   </span>
                 </div>
+                {sector.pendingClanControl && (
+                  <div className="rounded-lg border border-amber-400/60 bg-amber-950/40 px-2.5 py-1 text-[8.5px] font-bold text-amber-200">
+                    ⏳ Новый контроль клана <strong>[{sector.pendingClanControl.clanTag}] {sector.pendingClanControl.clanName}</strong> вступит в силу сразу после окончания текущей атаки!
+                  </div>
+                )}
 
                 {/* БЛОК 1: РАБОТА НА ПРОИЗВОДСТВЕ (ДЛЯ ВСЕХ ИГРОКОВ: ДО 3/6 ЧЕЛ, МАКС 2 ЧАСА, +250 ЗОЛОТА/Ч И +1 ПРОИЗВОДСТВО/Ч) */}
                 <div className="rounded-xl border border-cyan-500/35 bg-cyan-950/20 p-2.5 space-y-2">

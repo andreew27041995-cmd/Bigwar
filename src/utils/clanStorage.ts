@@ -29,7 +29,8 @@ import {
   ClanArenaPlayoffMatch,
   ClanArenaTournamentState,
   PortProductionState,
-  PortFactoryWorkerSession
+  PortFactoryWorkerSession,
+  PortTerminalResourceKey
 } from '../types/game';
 import { EXP_TABLE } from './gameData';
 import { getSupabaseClient } from './supabase';
@@ -2857,7 +2858,11 @@ export const PORT_WORKER_GOLD_PER_HOUR = 250; // +250 золота за кажд
 export const PORT_MAX_SHIFT_HOURS = 2; // Максимум 2 часа за подход
 export const CLAN_BADGE_COST_GOLD = 1000; // Стоимость выдачи Знака клана: 1 000 золота
 
+export const ESTATE_CREATION_COST_CRYSTALS = 3000;
+export const PORT_TERMINAL_INITIAL_STOCK = 20000;
+
 const PORT_FISH_MARKET_KEY = 'egypt_game_port_fish_market_v1';
+const PORT_TRADING_TERMINAL_KEY = 'egypt_game_port_trading_terminal_v1';
 
 export interface PortFishMarketState {
   fishStock: number;
@@ -2866,14 +2871,144 @@ export interface PortFishMarketState {
   totalRelicsSold: number;
 }
 
+export interface PortTerminalResourceMeta {
+  key: PortTerminalResourceKey;
+  name: string;
+  icon: string;
+  category: string;
+  buyPriceGold: number;
+  sellPriceGold: number;
+  description: string;
+}
+
+export const PORT_TERMINAL_CATALOG: PortTerminalResourceMeta[] = [
+  {
+    key: 'raw_fish',
+    name: 'Сырая рыба',
+    icon: '🐟',
+    category: 'Базовое сырьё',
+    buyPriceGold: 50,
+    sellPriceGold: 45,
+    description: 'Свежий улов для загрузки на Рыбные Комбинаты и фабрики Порта.'
+  },
+  {
+    key: 'fish_semifinished',
+    name: 'Рыбный полуфабрикат',
+    icon: '🥫',
+    category: 'Промежуточное сырьё',
+    buyPriceGold: 95,
+    sellPriceGold: 85,
+    description: 'Промежуточное сырьё Рыбного Комбината для выпуска продукции в Мастерской Реликвий.'
+  },
+  {
+    key: 'alchemy_reagents',
+    name: 'Алхимические реагенты',
+    icon: '🧪',
+    category: 'Промежуточное сырьё',
+    buyPriceGold: 110,
+    sellPriceGold: 95,
+    description: 'Очищенные реагенты Алхимической Лаборатории для Портовой Мануфактуры.'
+  },
+  {
+    key: 'gold_ingots',
+    name: 'Золотые слитки',
+    icon: '🪙',
+    category: 'Промежуточное сырьё',
+    buyPriceGold: 140,
+    sellPriceGold: 125,
+    description: 'Литые слитки Золотоплавильного Завода для ковки в Оружейной Кузнице.'
+  },
+  {
+    key: 'port_relics',
+    name: 'Реликвии Порта',
+    icon: '🏺',
+    category: 'Готовая продукция',
+    buyPriceGold: 200,
+    sellPriceGold: 180,
+    description: 'Готовые реликвии производств Порта для Алтаря Модификации и торговли.'
+  }
+];
+
+export interface PortTradingTerminalState {
+  stocks: Record<PortTerminalResourceKey, number>;
+  totalBought: number;
+  totalSold: number;
+  updatedAt: number;
+}
+
+let inMemoryPortTerminal: PortTradingTerminalState = {
+  stocks: {
+    raw_fish: PORT_TERMINAL_INITIAL_STOCK,
+    fish_semifinished: PORT_TERMINAL_INITIAL_STOCK,
+    alchemy_reagents: PORT_TERMINAL_INITIAL_STOCK,
+    gold_ingots: PORT_TERMINAL_INITIAL_STOCK,
+    port_relics: PORT_TERMINAL_INITIAL_STOCK
+  },
+  totalBought: 0,
+  totalSold: 0,
+  updatedAt: Date.now()
+};
+
+function loadPortTradingTerminal(): PortTradingTerminalState {
+  if (typeof window === 'undefined') return inMemoryPortTerminal;
+  try {
+    const raw = localStorage.getItem(PORT_TRADING_TERMINAL_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && parsed.stocks) {
+        inMemoryPortTerminal = {
+          stocks: {
+            raw_fish: Math.max(0, Math.floor(Number(parsed.stocks.raw_fish ?? PORT_TERMINAL_INITIAL_STOCK))),
+            fish_semifinished: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.fish_semifinished ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            alchemy_reagents: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.alchemy_reagents ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            gold_ingots: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.gold_ingots ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            port_relics: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.port_relics ?? PORT_TERMINAL_INITIAL_STOCK))
+            )
+          },
+          totalBought: Math.max(0, Math.floor(Number(parsed.totalBought ?? 0))),
+          totalSold: Math.max(0, Math.floor(Number(parsed.totalSold ?? 0))),
+          updatedAt: Number(parsed.updatedAt || Date.now())
+        };
+      }
+    } else {
+      localStorage.setItem(PORT_TRADING_TERMINAL_KEY, JSON.stringify(inMemoryPortTerminal));
+    }
+  } catch {}
+  return inMemoryPortTerminal;
+}
+
+function savePortTradingTerminal(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    inMemoryPortTerminal.updatedAt = Date.now();
+    localStorage.setItem(PORT_TRADING_TERMINAL_KEY, JSON.stringify(inMemoryPortTerminal));
+  } catch {}
+}
+
+export function getPortTradingTerminalState(): PortTradingTerminalState {
+  return loadPortTradingTerminal();
+}
+
 let inMemoryPortFishMarket: PortFishMarketState = {
-  fishStock: 120,
+  fishStock: PORT_TERMINAL_INITIAL_STOCK,
   fishPriceGold: PORT_DEFAULT_FISH_MARKET_PRICE,
   totalFishTraded: 0,
   totalRelicsSold: 0
 };
 
 function loadPortFishMarket(): PortFishMarketState {
+  const term = loadPortTradingTerminal();
   if (typeof window === 'undefined') return inMemoryPortFishMarket;
   try {
     const raw = localStorage.getItem(PORT_FISH_MARKET_KEY);
@@ -2881,12 +3016,14 @@ function loadPortFishMarket(): PortFishMarketState {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object') {
         inMemoryPortFishMarket = {
-          fishStock: Math.max(0, Math.floor(Number(parsed.fishStock ?? 120))),
+          fishStock: Math.max(0, Math.floor(Number(term.stocks.raw_fish ?? parsed.fishStock ?? PORT_TERMINAL_INITIAL_STOCK))),
           fishPriceGold: Math.max(10, Math.floor(Number(parsed.fishPriceGold ?? PORT_DEFAULT_FISH_MARKET_PRICE))),
           totalFishTraded: Math.max(0, Math.floor(Number(parsed.totalFishTraded ?? 0))),
           totalRelicsSold: Math.max(0, Math.floor(Number(parsed.totalRelicsSold ?? 0)))
         };
       }
+    } else {
+      inMemoryPortFishMarket.fishStock = term.stocks.raw_fish;
     }
   } catch {}
   return inMemoryPortFishMarket;
@@ -2917,7 +3054,7 @@ function createDefaultPortProduction(
   initialRelics = 8,
   productionStage: 'raw_processing' | 'relic_foundry' = 'relic_foundry',
   linkedSectorId: string | null = null,
-  intermediateResourceName = 'Очищенный Рыбий Эликсир',
+  intermediateResourceName = 'Рыбный полуфабрикат',
   initialProcessed = 16
 ): PortProductionState {
   return {
@@ -2929,6 +3066,8 @@ function createDefaultPortProduction(
     facilityLevel: 1,
     facilityBalanceGold: 15000,
     workerWageGold: PORT_WORKER_GOLD_PER_HOUR,
+    rawBuyPriceGold: PORT_DEFAULT_FISH_MARKET_PRICE,
+    productSellPriceGold: PORT_DEFAULT_FISH_MARKET_PRICE * PORT_RELIC_PRICE_FISH_MULT,
     isMerged: false,
     mergedWithSectorId: null,
     fishStock: initialFish,
@@ -2944,12 +3083,100 @@ function createDefaultPortProduction(
   };
 }
 
+export interface PortEstateTemplate {
+  id: string;
+  name: string;
+  categoryLabel: string;
+  factoryType: string;
+  productionStage: 'raw_processing' | 'relic_foundry';
+  intermediateResourceName: string;
+  bonusType: ClanTerritoryBonusType;
+  bonusValue: number;
+  bonusLabel: string;
+  description: string;
+}
+
+export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
+  {
+    id: 'tpl_fish_plant',
+    name: 'Рыбный Комбинат',
+    categoryLabel: 'Первичный цех: Рыбный полуфабрикат',
+    factoryType: 'solar_relic_foundry',
+    productionStage: 'raw_processing',
+    intermediateResourceName: 'Рыбный полуфабрикат',
+    bonusType: 'fishing_gold',
+    bonusValue: 8,
+    bonusLabel: '+8% к золоту на рыбалке',
+    description: 'Перерабатывает сырую рыбу в Рыбный полуфабрикат и снабжает Мастерские Реликвий.'
+  },
+  {
+    id: 'tpl_relic_workshop',
+    name: 'Мастерская Реликвий',
+    categoryLabel: 'Конечный цех: Выпуск Реликвий',
+    factoryType: 'solar_relic_foundry',
+    productionStage: 'relic_foundry',
+    intermediateResourceName: 'Рыбный полуфабрикат',
+    bonusType: 'slots_luck',
+    bonusValue: 10,
+    bonusLabel: '+10% к удаче в слотах',
+    description: 'Использует Рыбный полуфабрикат и сырьё Порта для огранки и выпуска готовых Реликвий.'
+  },
+  {
+    id: 'tpl_gold_smelter',
+    name: 'Золотоплавильный Завод',
+    categoryLabel: 'Первичный цех: Золотые слитки',
+    factoryType: 'gold_smelter_dock',
+    productionStage: 'raw_processing',
+    intermediateResourceName: 'Золотые слитки',
+    bonusType: 'pyramid_gold',
+    bonusValue: 10,
+    bonusLabel: '+10% к золоту в Пирамидах',
+    description: 'Плавильный комплекс Порта: выпускает Золотые слитки для Оружейных Кузниц.'
+  },
+  {
+    id: 'tpl_weapon_forge',
+    name: 'Оружейная Кузница',
+    categoryLabel: 'Конечный цех: Боевые Реликвии',
+    factoryType: 'gold_smelter_dock',
+    productionStage: 'relic_foundry',
+    intermediateResourceName: 'Золотые слитки',
+    bonusType: 'combat_dmg',
+    bonusValue: 7,
+    bonusLabel: '+7% к боевому урону',
+    description: 'Военная кузница Порта: принимает Золотые слитки и куёт боевые Реликвии.'
+  },
+  {
+    id: 'tpl_alchemy_lab',
+    name: 'Алхимическая Лаборатория',
+    categoryLabel: 'Первичный цех: Алхимические реагенты',
+    factoryType: 'alchemy_beacon',
+    productionStage: 'raw_processing',
+    intermediateResourceName: 'Алхимические реагенты',
+    bonusType: 'pyramid_exp',
+    bonusValue: 10,
+    bonusLabel: '+10% к опыту в боях',
+    description: 'Синтезирует Алхимические реагенты из сырья Порта и поставляет их на Мануфактуру.'
+  },
+  {
+    id: 'tpl_port_manufactory',
+    name: 'Портовая Мануфактура',
+    categoryLabel: 'Конечный цех: Сборка Реликвий',
+    factoryType: 'alchemy_beacon',
+    productionStage: 'relic_foundry',
+    intermediateResourceName: 'Алхимические реагенты',
+    bonusType: 'max_hp',
+    bonusValue: 8,
+    bonusLabel: '+8% к макс. здоровью',
+    description: 'Крупный производственный комплекс Порта: собирает Реликвии из Алхимических реагентов.'
+  }
+];
+
 export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
   {
     id: 'sector_ra_temple',
-    name: 'Портовая Мастерская Ра (Южный Причал)',
-    icon: '☀️',
-    description: 'Конечный цех огранки солнечных реликвий в Порту. Использует Солнечный Экстракт с Рыбной Фактории Дельты и рыбу Нила для выпуска Реликвий (+10% к удаче в Слотах).',
+    name: 'Мастерская Реликвий',
+    icon: '👑',
+    description: 'Конечный цех огранки реликвий в Порту. Использует Рыбный полуфабрикат с Рыбного Комбината для выпуска Реликвий (+10% к удаче в Слотах).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -2963,20 +3190,20 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'solar_relic_foundry',
-      'Конечный цех: Огранка Реликвий Ра',
+      'Конечный цех: Мастерская Реликвий',
       40,
       10,
       'relic_foundry',
       'sector_nile_oasis',
-      'Солнечный Рыбий Экстракт',
+      'Рыбный полуфабрикат',
       18
     )
   },
   {
     id: 'sector_nile_oasis',
-    name: 'Рыбная Фактория Дельты (Северный Причал)',
-    icon: '🐊',
-    description: 'Первичный сырьевой цех Порта. Перерабатывает сырую рыбу в Солнечный Рыбий Экстракт и снабжает Портовую Мастерскую Ра (+8% к золоту на рыбалке).',
+    name: 'Рыбный Комбинат',
+    icon: '👑',
+    description: 'Первичный сырьевой комбинат Порта. Перерабатывает сырую рыбу в Рыбный полуфабрикат и снабжает Мастерскую Реликвий (+8% к золоту на рыбалке).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -2990,20 +3217,20 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'solar_relic_foundry',
-      'Сырьевой цех: Выжимка Экстракта',
+      'Первичный цех: Рыбный Комбинат',
       50,
       12,
       'raw_processing',
       'sector_ra_temple',
-      'Солнечный Рыбий Экстракт',
+      'Рыбный полуфабрикат',
       24
     )
   },
   {
     id: 'sector_gold_mines',
-    name: 'Золотая Литейная Гавани (Восточный Док)',
-    icon: '⛏️',
-    description: 'Первичный плавильный цех Порта. Выплавляет Закалённый Костный Сплав из улова и поставляет его в Оружейный Арсенал Анубиса (+10% к золоту в Пирамидах).',
+    name: 'Золотоплавильный Завод',
+    icon: '👑',
+    description: 'Первичный плавильный завод Порта. Выплавляет Золотые слитки и поставляет их в Оружейную Кузницу (+10% к золоту в Пирамидах).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -3017,20 +3244,20 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'gold_smelter_dock',
-      'Сырьевой цех: Литейная Сплавов',
+      'Первичный цех: Золотоплавильный Завод',
       35,
       8,
       'raw_processing',
       'sector_anubis_citadel',
-      'Закалённый Костный Сплав',
+      'Золотые слитки',
       20
     )
   },
   {
     id: 'sector_anubis_citadel',
-    name: 'Оружейный Арсенал Анубиса (Западный Док)',
-    icon: '🐺',
-    description: 'Конечный цех военной мануфактуры Порта. Принимает Костный Сплав из Золотой Литейной Гавани и выпускает боевые Реликвии (+7% к боевому урону).',
+    name: 'Оружейная Кузница',
+    icon: '👑',
+    description: 'Конечный цех военной кузницы Порта. Принимает Золотые слитки с Золотоплавильного Завода и выпускает боевые Реликвии (+7% к боевому урону).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -3044,20 +3271,20 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'gold_smelter_dock',
-      'Конечный цех: Кузница Реликвий',
+      'Конечный цех: Оружейная Кузница',
       30,
       7,
       'relic_foundry',
       'sector_gold_mines',
-      'Закалённый Костный Сплав',
+      'Золотые слитки',
       15
     )
   },
   {
     id: 'sector_luxor_obelisk',
-    name: 'Алхимический Док Тота (Маяк Александрии)',
-    icon: '🔮',
-    description: 'Первичная лаборатория у морского маяка. Перегоняет рыбий жир в Алхимический Эликсир Тота для Цитадели Морского Бастиона (+10% к опыту в боях).',
+    name: 'Алхимическая Лаборатория',
+    icon: '👑',
+    description: 'Первичный научно-сырьевой цех Порта. Производит Алхимические реагенты для Портовой Мануфактуры (+10% к опыту в боях).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -3071,20 +3298,20 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'alchemy_beacon',
-      'Сырьевой цех: Дистилляция Эликсира',
+      'Первичный цех: Алхимическая Лаборатория',
       45,
       9,
       'raw_processing',
       'sector_alexandria_port',
-      'Алхимический Эликсир Тота',
+      'Алхимические реагенты',
       22
     )
   },
   {
     id: 'sector_alexandria_port',
-    name: 'Цитадель Морского Бастиона (Главный Порт)',
-    icon: '⚓',
-    description: 'Конечная верфь-мануфактура Порта. Закупает Алхимический Эликсир Тота и производит финальные Реликвии Бастиона (+8% к здоровью клана).',
+    name: 'Портовая Мануфактура',
+    icon: '👑',
+    description: 'Конечный производственный комплекс Порта. Закупает Алхимические реагенты и выпускает финальные Реликвии Порта (+8% к здоровью клана).',
     zone: 'port',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
@@ -3098,12 +3325,12 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     warScores: {},
     production: createDefaultPortProduction(
       'alchemy_beacon',
-      'Конечный цех: Верфь Реликвий',
+      'Конечный цех: Портовая Мануфактура',
       40,
       11,
       'relic_foundry',
       'sector_luxor_obelisk',
-      'Алхимический Эликсир Тота',
+      'Алхимические реагенты',
       16
     )
   }
@@ -3573,6 +3800,19 @@ function finalizeTerritory7x7Battle(sector: ClanTerritorySector, now: number): v
   sector.attackerClanTag = null;
   sector.attackerClanEmblem = null;
   sector.battle7x7 = null;
+
+  // Правило безопасности: если владелец делегировал контроль клану во время активного боя,
+  // то новый клановый контроль вступает в силу сразу после завершения этого нападения!
+  if (sector.pendingClanControl) {
+    const pending = sector.pendingClanControl;
+    sector.ownerClanId = pending.clanId;
+    sector.ownerClanName = pending.clanName;
+    sector.ownerClanTag = pending.clanTag;
+    sector.ownerClanEmblem = pending.clanEmblem;
+    sector.icon = pending.clanEmblem || '👑';
+    sector.ownerDelegatedClan = true;
+    sector.pendingClanControl = null;
+  }
 }
 
 function normalizeSectorProduction(
@@ -3585,7 +3825,7 @@ function normalizeSectorProduction(
     DEFAULT_CLAN_TERRITORIES[0];
   const defProd =
     defSector?.production ||
-    createDefaultPortProduction('solar_relic_foundry', 'Огранка Реликвий', 35, 8);
+    createDefaultPortProduction('solar_relic_foundry', 'Мастерская Реликвий', 35, 8);
   const raw = sector.production || defProd;
   const isMerged = Boolean(raw.isMerged);
   const maxFish = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
@@ -3593,17 +3833,31 @@ function normalizeSectorProduction(
   const maxRelic = isMerged ? PORT_MERGED_MAX_RELIC_STOCK : PORT_BASE_MAX_RELIC_STOCK;
   return {
     factoryType: raw.factoryType || defProd.factoryType,
-    factoryCategoryLabel: defProd.factoryCategoryLabel || raw.factoryCategoryLabel,
+    factoryCategoryLabel: raw.factoryCategoryLabel || defProd.factoryCategoryLabel,
     productionStage: raw.productionStage || defProd.productionStage || 'relic_foundry',
     linkedSectorId: raw.linkedSectorId ?? defProd.linkedSectorId ?? null,
     intermediateResourceName:
-      raw.intermediateResourceName || defProd.intermediateResourceName || 'Очищенный Рыбий Эликсир',
+      raw.intermediateResourceName || defProd.intermediateResourceName || 'Рыбный полуфабрикат',
     facilityLevel: isMerged ? 2 : Math.max(1, Number(raw.facilityLevel || defProd.facilityLevel || 1)),
     facilityBalanceGold: Math.max(
       0,
       Math.floor(Number(raw.facilityBalanceGold ?? defProd.facilityBalanceGold ?? 15000))
     ),
     workerWageGold: Math.max(50, Math.floor(Number(raw.workerWageGold || PORT_WORKER_GOLD_PER_HOUR))),
+    rawBuyPriceGold: Math.max(
+      10,
+      Math.floor(Number(raw.rawBuyPriceGold ?? defProd.rawBuyPriceGold ?? PORT_DEFAULT_FISH_MARKET_PRICE))
+    ),
+    productSellPriceGold: Math.max(
+      50,
+      Math.floor(
+        Number(
+          raw.productSellPriceGold ??
+            defProd.productSellPriceGold ??
+            PORT_DEFAULT_FISH_MARKET_PRICE * PORT_RELIC_PRICE_FISH_MULT
+        )
+      )
+    ),
     isMerged,
     mergedWithSectorId: raw.mergedWithSectorId || null,
     fishStock: Math.max(0, Math.min(maxFish, Math.floor(Number(raw.fishStock ?? defProd.fishStock)))),
@@ -3737,23 +3991,38 @@ function tickPortProductionForSector(
 }
 
 function applyRedBlackOwnershipToSector(sector: ClanTerritorySector): void {
-  // По ТЗ: передаём абсолютно всю недвижимость в Порту под контроль игрока с ником RedBlack
-  sector.ownerNick = DEFAULT_PORT_ESTATE_OWNER_NICK;
-  const rbClan = inMemoryClans.find(
-    (c) =>
-      c.leaderNick.trim().toLowerCase() === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase() ||
-      c.members.some((m) => m.nick.trim().toLowerCase() === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase())
-  );
-  if (rbClan && !sector.ownerClanId) {
-    sector.ownerClanId = rbClan.id;
-    sector.ownerClanName = rbClan.name;
-    sector.ownerClanTag = rbClan.tag;
-    sector.ownerClanEmblem = rbClan.emblem;
-  } else if (!sector.ownerClanName) {
-    sector.ownerClanName = 'Империя RedBlack';
-    sector.ownerClanTag = 'RB';
-    sector.ownerClanEmblem = '👑';
+  if (!sector.isCustomCreated) {
+    sector.ownerNick = DEFAULT_PORT_ESTATE_OWNER_NICK;
+  } else if (!sector.ownerNick) {
+    sector.ownerNick = DEFAULT_PORT_ESTATE_OWNER_NICK;
   }
+
+  const effectiveOwner = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
+  const ownerClan = inMemoryClans.find(
+    (c) =>
+      c.leaderNick.trim().toLowerCase() === effectiveOwner ||
+      c.members.some((m) => m.nick.trim().toLowerCase() === effectiveOwner)
+  );
+  if (!sector.ownerDelegatedClan) {
+    if (ownerClan && !sector.ownerClanId) {
+      sector.ownerClanId = ownerClan.id;
+      sector.ownerClanName = ownerClan.name;
+      sector.ownerClanTag = ownerClan.tag;
+      sector.ownerClanEmblem = ownerClan.emblem;
+    } else if (!sector.ownerClanName) {
+      sector.ownerClanName =
+        effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase()
+          ? 'Империя RedBlack'
+          : `Клан ${sector.ownerNick}`;
+      sector.ownerClanTag =
+        effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase()
+          ? 'RB'
+          : (sector.ownerNick || 'CLAN').slice(0, 4).toUpperCase();
+      sector.ownerClanEmblem = '👑';
+    }
+  }
+  // Вместо старых картинок зданий всегда отображается Знак контролирующего клана
+  sector.icon = sector.ownerClanEmblem || '👑';
 }
 
 function ensureTerritoriesLoaded(): ClanTerritorySector[] {
@@ -3773,7 +4042,8 @@ function ensureTerritoriesLoaded(): ClanTerritorySector[] {
   } else {
     const byId = new Map<string, ClanTerritorySector>();
     inMemoryTerritories.forEach((t) => byId.set(t.id, t));
-    inMemoryTerritories = DEFAULT_CLAN_TERRITORIES.map((def) => {
+    const defaultIds = new Set(DEFAULT_CLAN_TERRITORIES.map((d) => d.id));
+    const baseList = DEFAULT_CLAN_TERRITORIES.map((def) => {
       const existing = byId.get(def.id);
       if (!existing) {
         const fresh: ClanTerritorySector = {
@@ -3799,6 +4069,23 @@ function ensureTerritoriesLoaded(): ClanTerritorySector[] {
       merged.production = normalizeSectorProduction(merged, def);
       return merged;
     });
+
+    // Сохраняем все созданные игроками за 3 000 кристаллов объекты недвижимости
+    const customList = inMemoryTerritories
+      .filter((t) => !defaultIds.has(t.id))
+      .map((custom) => {
+        const copy: ClanTerritorySector = {
+          ...custom,
+          isCustomCreated: true,
+          zone: 'port',
+          warScores: custom.warScores || {},
+          production: normalizeSectorProduction(custom)
+        };
+        applyRedBlackOwnershipToSector(copy);
+        return copy;
+      });
+
+    inMemoryTerritories = [...baseList, ...customList];
   }
 
   const now = Date.now();
@@ -4110,13 +4397,14 @@ export function startPortFactoryWorkShift(
 
   const hours: 1 | 2 = durationHours === 1 ? 1 : 2;
   const now = Date.now();
+  const wagePerHour = Math.max(50, Number(prod.workerWageGold || PORT_WORKER_GOLD_PER_HOUR));
   const session: PortFactoryWorkerSession = {
     nick: playerNick,
     avatar,
     startedAt: now,
     endsAt: now + hours * 60 * 60 * 1000,
     durationHours: hours,
-    goldPerHour: PORT_WORKER_GOLD_PER_HOUR,
+    goldPerHour: wagePerHour,
     claimed: false
   };
 
@@ -4127,8 +4415,8 @@ export function startPortFactoryWorkShift(
     ok: true,
     sector,
     message: `🔨 Вы устроились на работу в «${sector.name}» на ${hours} ч.! Награда по окончании смены: +${
-      hours * PORT_WORKER_GOLD_PER_HOUR
-    } 🪙 и +${hours} к навыку «Производство».`
+      hours * wagePerHour
+    } 🪙 (${wagePerHour} 🪙/ч) и +${hours} к навыку «Производство».`
   };
 }
 
@@ -4230,16 +4518,20 @@ export function sellFishToPortMarket(
   fishCount: number
 ): { ok: boolean; goldEarned: number; market: PortFishMarketState; message: string } {
   const qty = Math.max(1, Math.floor(Number(fishCount) || 0));
+  const terminal = loadPortTradingTerminal();
   const market = loadPortFishMarket();
   const goldEarned = qty * market.fishPriceGold;
   market.fishStock += qty;
   market.totalFishTraded += qty;
+  terminal.stocks.raw_fish = Math.max(0, (terminal.stocks.raw_fish || 0) + qty);
+  terminal.totalSold = (terminal.totalSold || 0) + qty;
+  savePortTradingTerminal();
   savePortFishMarket();
   return {
     ok: true,
     goldEarned,
     market,
-    message: `🐟 Вы сдали ${qty} шт. рыбы на Рыбный рынок Порта и получили +${goldEarned.toLocaleString()} 🪙 (по ${market.fishPriceGold} 🪙/шт.)!`
+    message: `🐟 Вы сдали ${qty} шт. рыбы в Торговый терминал Порта и получили +${goldEarned.toLocaleString()} 🪙 (по ${market.fishPriceGold} 🪙/шт.)!`
   };
 }
 
@@ -4274,6 +4566,7 @@ export function loadFishIntoPortFactory(
     };
   }
 
+  const terminal = loadPortTradingTerminal();
   const market = loadPortFishMarket();
   const qty = Math.max(1, Math.min(freeSpace, Math.floor(Number(requestedQty) || 1)));
 
@@ -4293,24 +4586,29 @@ export function loadFishIntoPortFactory(
     };
   }
 
-  // Закупка с общего Рыбного рынка Порта
-  if (market.fishStock < qty) {
+  // Закупка с Торгового терминала / Рыбного рынка Порта по цене закупки сырья объекта
+  const availFish = Math.max(market.fishStock, terminal.stocks.raw_fish || 0);
+  if (availFish < qty) {
     return {
       ok: false,
-      error: `На Рыбном рынке Порта сейчас только ${market.fishStock} шт. рыбы! Рыбаки могут сдать улов на рынок или загрузить рыбу из садка.`
+      error: `В Торговом терминале Порта сейчас только ${availFish} шт. рыбы!`
     };
   }
 
-  const totalCost = qty * market.fishPriceGold;
+  const unitBuyPrice = Math.max(10, Number(prod.rawBuyPriceGold || market.fishPriceGold || PORT_DEFAULT_FISH_MARKET_PRICE));
+  const totalCost = qty * unitBuyPrice;
   if (availableGold < totalCost) {
     return {
       ok: false,
-      error: `Недостаточно золота для закупки ${qty} рыбин с рынка! Требуется ${totalCost.toLocaleString()} 🪙 (${market.fishPriceGold} 🪙/шт.).`
+      error: `Недостаточно золота для закупки ${qty} рыбин! Требуется ${totalCost.toLocaleString()} 🪙 (${unitBuyPrice} 🪙/шт.).`
     };
   }
 
-  market.fishStock -= qty;
+  market.fishStock = Math.max(0, availFish - qty);
+  terminal.stocks.raw_fish = market.fishStock;
+  terminal.totalBought = (terminal.totalBought || 0) + qty;
   prod.fishStock += qty;
+  savePortTradingTerminal();
   savePortFishMarket();
   saveClansToSupabase();
 
@@ -4320,7 +4618,7 @@ export function loadFishIntoPortFactory(
     goldSpent: totalCost,
     sector,
     market,
-    message: `📦 Закуплено и завезено ${qty} рыбин с рынка Порта на склад «${sector.name}» за ${totalCost.toLocaleString()} 🪙 (склад: ${prod.fishStock}/${prod.maxFishStock} шт.)!`
+    message: `📦 Закуплено и завезено ${qty} рыбин с Торгового терминала на склад «${sector.name}» за ${totalCost.toLocaleString()} 🪙 (по ${unitBuyPrice} 🪙/шт., склад: ${prod.fishStock}/${prod.maxFishStock} шт.)!`
   };
 }
 
@@ -4602,14 +4900,14 @@ export function buyRelicsFromPortFactory(
     };
   }
 
-  // Стоимость 1 реликвии автоматически приравнивается к стоимости 4 рыбин на рынке
-  const unitPriceGold = getPortRelicMarketPrice();
+  // Цена продажи готовой продукции устанавливается владельцем объекта (или по рыночному курсу)
+  const unitPriceGold = Math.max(50, Number(prod.productSellPriceGold || getPortRelicMarketPrice()));
   const totalCostGold = qty * unitPriceGold;
 
   if (buyerGold < totalCostGold) {
     return {
       ok: false,
-      error: `Недостаточно золота! Стоимость ${qty} реликвий составляет ${totalCostGold.toLocaleString()} 🪙 (${unitPriceGold} 🪙/шт. = 4 рыбы на рынке).`
+      error: `Недостаточно золота! Стоимость ${qty} реликвий составляет ${totalCostGold.toLocaleString()} 🪙 (${unitPriceGold} 🪙/шт.).`
     };
   }
 
@@ -4642,7 +4940,7 @@ export function buyRelicsFromPortFactory(
     totalCostGold,
     unitPriceGold,
     sector,
-    message: `🏺 Вы приобрели ${qty} шт. Реликвий с производства «${sector.name}» за ${totalCostGold.toLocaleString()} 🪙 (по цене 4 рыбин = ${unitPriceGold} 🪙/шт.)!`
+    message: `🏺 Вы приобрели ${qty} шт. Реликвий с производства «${sector.name}» за ${totalCostGold.toLocaleString()} 🪙 (по цене ${unitPriceGold} 🪙/шт.)!`
   };
 }
 
@@ -4721,6 +5019,408 @@ export function mergeClanPortFactories(
     sector,
     partnerSector: partner,
     message: `🏗️ Производства «${sector.name}» и «${partner.name}» успешно объединены (Ур. 2)! Лимит работников увеличен до ${PORT_MERGED_MAX_WORKERS} чел., склад сырья — до ${PORT_MERGED_MAX_FISH_STOCK} ед., склад реликвий — до ${PORT_MERGED_MAX_RELIC_STOCK} шт.!`
+  };
+}
+
+// ============================================================================
+// СОЗДАНИЕ НЕДВИЖИМОСТИ (3 000 💎), ПАНЕЛЬ ВЛАДЕЛЬЦА И ТОРГОВЫЙ ТЕРМИНАЛ ПОРТА
+// ============================================================================
+
+export function createPortRealEstateObject(
+  ownerNick: string,
+  templateId: string,
+  customName: string,
+  availableCrystals: number
+): {
+  ok: boolean;
+  sector?: ClanTerritorySector;
+  costCrystals?: number;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const cleanOwner = (ownerNick || '').trim();
+  if (!cleanOwner) {
+    return { ok: false, error: 'Не удалось определить никнейм владельца.' };
+  }
+  if (availableCrystals < ESTATE_CREATION_COST_CRYSTALS) {
+    return {
+      ok: false,
+      error: `Недостаточно кристаллов для создания недвижимости! Стоимость: ${ESTATE_CREATION_COST_CRYSTALS.toLocaleString()} 💎 (у вас: ${availableCrystals.toLocaleString()} 💎).`
+    };
+  }
+
+  const tpl = PORT_ESTATE_TEMPLATES.find((t) => t.id === templateId) || PORT_ESTATE_TEMPLATES[0];
+  const finalName = (customName || '').trim() || tpl.name;
+
+  const ownerClan = getPlayerClan(cleanOwner);
+  const clanId = ownerClan ? ownerClan.id : null;
+  const clanName = ownerClan ? ownerClan.name : `Клан ${cleanOwner}`;
+  const clanTag = ownerClan ? ownerClan.tag : cleanOwner.slice(0, 4).toUpperCase();
+  const clanEmblem = ownerClan ? ownerClan.emblem : '👑';
+
+  // Связываем со смежным цехом в Порту
+  const matchingPartner = sectors.find(
+    (s) =>
+      s.production?.intermediateResourceName === tpl.intermediateResourceName &&
+      s.production?.productionStage !== tpl.productionStage
+  );
+
+  const newSector: ClanTerritorySector = {
+    id: `estate_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    name: finalName,
+    icon: clanEmblem,
+    description: tpl.description,
+    zone: 'port',
+    ownerNick: cleanOwner,
+    isCustomCreated: true,
+    createdAt: Date.now(),
+    ownerDelegatedClan: true,
+    pendingClanControl: null,
+    ownerClanId: clanId,
+    ownerClanName: clanName,
+    ownerClanTag: clanTag,
+    ownerClanEmblem: clanEmblem,
+    bonusType: tpl.bonusType,
+    bonusValue: tpl.bonusValue,
+    bonusLabel: tpl.bonusLabel,
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      tpl.factoryType,
+      tpl.categoryLabel,
+      40,
+      10,
+      tpl.productionStage,
+      matchingPartner?.id || null,
+      tpl.intermediateResourceName,
+      20
+    )
+  };
+
+  inMemoryTerritories.push(newSector);
+  saveClansToSupabase();
+
+  return {
+    ok: true,
+    sector: newSector,
+    costCrystals: ESTATE_CREATION_COST_CRYSTALS,
+    message: `🏗️ Объект недвижимости «${finalName}» создан за ${ESTATE_CREATION_COST_CRYSTALS.toLocaleString()} 💎 и автоматически перенесён во вкладку «Недвижимость» вашего профиля!`
+  };
+}
+
+export function updatePortEstateOwnerSettings(
+  sectorId: string,
+  actorNick: string,
+  settings: {
+    rawBuyPriceGold?: number;
+    productSellPriceGold?: number;
+    workerWageGold?: number;
+    customName?: string;
+  }
+): {
+  ok: boolean;
+  sector?: ClanTerritorySector;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector) return { ok: false, error: 'Объект недвижимости не найден.' };
+
+  const ownerClean = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
+  const actorClean = (actorNick || '').trim().toLowerCase();
+  if (actorClean !== ownerClean && actorClean !== 'admin') {
+    return {
+      ok: false,
+      error: `Настраивать цены и зарплаты объекта может только его официальный владелец (${sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK})!`
+    };
+  }
+
+  const prod = normalizeSectorProduction(sector);
+  sector.production = prod;
+
+  if (typeof settings.rawBuyPriceGold === 'number' && !Number.isNaN(settings.rawBuyPriceGold)) {
+    prod.rawBuyPriceGold = Math.max(10, Math.min(5000, Math.floor(settings.rawBuyPriceGold)));
+  }
+  if (typeof settings.productSellPriceGold === 'number' && !Number.isNaN(settings.productSellPriceGold)) {
+    prod.productSellPriceGold = Math.max(50, Math.min(10000, Math.floor(settings.productSellPriceGold)));
+  }
+  if (typeof settings.workerWageGold === 'number' && !Number.isNaN(settings.workerWageGold)) {
+    prod.workerWageGold = Math.max(50, Math.min(5000, Math.floor(settings.workerWageGold)));
+    prod.workers.forEach((w) => {
+      if (!w.claimed) {
+        w.goldPerHour = prod.workerWageGold!;
+      }
+    });
+  }
+  if (typeof settings.customName === 'string' && settings.customName.trim().length >= 3) {
+    sector.name = settings.customName.trim().slice(0, 42);
+  }
+
+  saveClansToSupabase();
+
+  return {
+    ok: true,
+    sector,
+    message: `⚙️ Настройки недвижимости «${sector.name}» сохранены! Закупка сырья: ${prod.rawBuyPriceGold} 🪙, продажа продукции: ${prod.productSellPriceGold} 🪙, зарплата рабочим: ${prod.workerWageGold} 🪙/ч.`
+  };
+}
+
+export function delegatePortEstateClanControl(
+  sectorId: string,
+  actorNick: string,
+  targetClanQuery: string
+): {
+  ok: boolean;
+  isQueuedAfterWar?: boolean;
+  sector?: ClanTerritorySector;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector) return { ok: false, error: 'Объект недвижимости не найден.' };
+
+  const ownerClean = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
+  const actorClean = (actorNick || '').trim().toLowerCase();
+  if (actorClean !== ownerClean && actorClean !== 'admin') {
+    return {
+      ok: false,
+      error: `Делегировать клановый контроль над объектом может только владелец (${sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK})!`
+    };
+  }
+
+  const query = (targetClanQuery || '').trim();
+  if (!query) {
+    return { ok: false, error: 'Укажите название или тег клана для передачи контроля.' };
+  }
+
+  const queryLower = query.toLowerCase();
+  const matchedClan = inMemoryClans.find(
+    (c) =>
+      c.id.toLowerCase() === queryLower ||
+      c.name.trim().toLowerCase() === queryLower ||
+      c.tag.trim().toLowerCase() === queryLower ||
+      `[${c.tag.trim().toLowerCase()}]` === queryLower
+  );
+
+  const nextClanId = matchedClan ? matchedClan.id : null;
+  const nextClanName = matchedClan ? matchedClan.name : query;
+  const nextClanTag = matchedClan
+    ? matchedClan.tag
+    : query.replace(/[^a-zA-Zа-яА-Я0-9]/g, '').slice(0, 5).toUpperCase() || 'CLAN';
+  const nextClanEmblem = matchedClan ? matchedClan.emblem : sector.ownerClanEmblem || '🛡️';
+
+  // Важное правило безопасности по ТЗ:
+  // Новый клановый контроль вступает в силу ТОЛЬКО после завершения текущего активного нападения (если таковое шло),
+  // чтобы избежать махинаций прямо во время боя!
+  if (sector.warStatus === 'war') {
+    sector.pendingClanControl = {
+      clanId: nextClanId,
+      clanName: nextClanName,
+      clanTag: nextClanTag,
+      clanEmblem: nextClanEmblem,
+      requestedAt: Date.now()
+    };
+    saveClansToSupabase();
+    return {
+      ok: true,
+      isQueuedAfterWar: true,
+      sector,
+      message: `🛡️ Правило безопасности: сейчас за объект «${sector.name}» идёт активное сражение! Передача контроля клану [${nextClanTag}] «${nextClanName}» поставлена в очередь и вступит в силу автоматически сразу после завершения текущего боя.`
+    };
+  }
+
+  sector.ownerClanId = nextClanId;
+  sector.ownerClanName = nextClanName;
+  sector.ownerClanTag = nextClanTag;
+  sector.ownerClanEmblem = nextClanEmblem;
+  sector.icon = nextClanEmblem;
+  sector.ownerDelegatedClan = true;
+  sector.pendingClanControl = null;
+
+  saveClansToSupabase();
+
+  return {
+    ok: true,
+    isQueuedAfterWar: false,
+    sector,
+    message: `🚩 Контроль над объектом «${sector.name}» официально передан клану [${nextClanTag}] «${nextClanName}»!`
+  };
+}
+
+export function tradeWithPortTerminal(
+  playerNick: string,
+  mode: 'buy' | 'sell',
+  resourceKey: PortTerminalResourceKey,
+  requestedQty: number,
+  heroGold: number,
+  playerAvailableResourceQty: number
+): {
+  ok: boolean;
+  quantity?: number;
+  unitPriceGold?: number;
+  totalGold?: number;
+  deltaHeroGold?: number;
+  newTerminalStock?: number;
+  terminal?: PortTradingTerminalState;
+  message?: string;
+  error?: string;
+} {
+  const terminal = loadPortTradingTerminal();
+  const meta = PORT_TERMINAL_CATALOG.find((r) => r.key === resourceKey);
+  if (!meta) {
+    return { ok: false, error: 'Ресурс не найден в каталоге Торгового терминала.' };
+  }
+
+  const qty = Math.max(1, Math.floor(Number(requestedQty) || 1));
+  const currentTerminalStock = Math.max(0, Number(terminal.stocks[resourceKey] ?? PORT_TERMINAL_INITIAL_STOCK));
+
+  if (mode === 'buy') {
+    if (currentTerminalStock < qty) {
+      return {
+        ok: false,
+        error: `На балансе Торгового терминала недостаточно ресурса «${meta.name}» (доступно: ${currentTerminalStock.toLocaleString()} ед.)!`
+      };
+    }
+    const unitPrice = meta.buyPriceGold;
+    const totalCost = qty * unitPrice;
+    if (heroGold < totalCost) {
+      return {
+        ok: false,
+        error: `Недостаточно золота для покупки ${qty} ед. «${meta.name}»! Требуется ${totalCost.toLocaleString()} 🪙 (${unitPrice} 🪙/ед.).`
+      };
+    }
+
+    terminal.stocks[resourceKey] = currentTerminalStock - qty;
+    terminal.totalBought = (terminal.totalBought || 0) + qty;
+    if (resourceKey === 'raw_fish') {
+      const m = loadPortFishMarket();
+      m.fishStock = terminal.stocks.raw_fish;
+      savePortFishMarket();
+    }
+    savePortTradingTerminal();
+
+    return {
+      ok: true,
+      quantity: qty,
+      unitPriceGold: unitPrice,
+      totalGold: totalCost,
+      deltaHeroGold: -totalCost,
+      newTerminalStock: terminal.stocks[resourceKey],
+      terminal,
+      message: `🛒 Вы купили ${qty.toLocaleString()} ед. «${meta.name}» в Торговом терминале Порта за ${totalCost.toLocaleString()} 🪙 (остаток в терминале: ${terminal.stocks[resourceKey].toLocaleString()} ед.)!`
+    };
+  } else {
+    if (playerAvailableResourceQty < qty) {
+      return {
+        ok: false,
+        error: `У вас недостаточно ресурса «${meta.name}» для продажи (в наличии: ${playerAvailableResourceQty.toLocaleString()} ед.)!`
+      };
+    }
+    const unitPrice = meta.sellPriceGold;
+    const totalRevenue = qty * unitPrice;
+
+    terminal.stocks[resourceKey] = currentTerminalStock + qty;
+    terminal.totalSold = (terminal.totalSold || 0) + qty;
+    if (resourceKey === 'raw_fish') {
+      const m = loadPortFishMarket();
+      m.fishStock = terminal.stocks.raw_fish;
+      m.totalFishTraded = (m.totalFishTraded || 0) + qty;
+      savePortFishMarket();
+    }
+    savePortTradingTerminal();
+
+    return {
+      ok: true,
+      quantity: qty,
+      unitPriceGold: unitPrice,
+      totalGold: totalRevenue,
+      deltaHeroGold: totalRevenue,
+      newTerminalStock: terminal.stocks[resourceKey],
+      terminal,
+      message: `💰 Вы продали ${qty.toLocaleString()} ед. «${meta.name}» в Торговый терминал Порта и получили +${totalRevenue.toLocaleString()} 🪙 (теперь на балансе терминала: ${terminal.stocks[resourceKey].toLocaleString()} ед.)!`
+    };
+  }
+}
+
+export function transferPlayerResourceToPortFacility(
+  sectorId: string,
+  playerNick: string,
+  resourceKey: PortTerminalResourceKey,
+  requestedQty: number,
+  availablePlayerQty: number
+): {
+  ok: boolean;
+  loadedQty?: number;
+  sector?: ClanTerritorySector;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector) return { ok: false, error: 'Объект недвижимости не найден.' };
+
+  const prod = normalizeSectorProduction(sector);
+  sector.production = prod;
+
+  const qty = Math.max(1, Math.floor(Number(requestedQty) || 1));
+  if (availablePlayerQty < qty) {
+    return { ok: false, error: `На вашем личном складе недостаточно выбранного ресурса (${availablePlayerQty} ед.).` };
+  }
+
+  if (resourceKey === 'raw_fish') {
+    const free = Math.max(0, prod.maxFishStock - prod.fishStock);
+    if (free <= 0) {
+      return { ok: false, error: `Склад сырой рыбы на «${sector.name}» уже полон (${prod.fishStock}/${prod.maxFishStock})!` };
+    }
+    const take = Math.min(free, qty);
+    prod.fishStock += take;
+    saveClansToSupabase();
+    return {
+      ok: true,
+      loadedQty: take,
+      sector,
+      message: `🐟 Вы передали ${take} ед. сырой рыбы со своего склада на объект «${sector.name}» (${prod.fishStock}/${prod.maxFishStock})!`
+    };
+  }
+
+  if (resourceKey === 'port_relics') {
+    const free = Math.max(0, prod.maxRelicStock - prod.relicStock);
+    if (free <= 0) {
+      return { ok: false, error: `Склад готовых реликвий на «${sector.name}» уже полон (${prod.relicStock}/${prod.maxRelicStock})!` };
+    }
+    const take = Math.min(free, qty);
+    prod.relicStock += take;
+    saveClansToSupabase();
+    return {
+      ok: true,
+      loadedQty: take,
+      sector,
+      message: `🏺 Вы разместили ${take} ед. Реликвий Порта на складе «${sector.name}» (${prod.relicStock}/${prod.maxRelicStock})!`
+    };
+  }
+
+  const maxProc = prod.maxProcessedStock || PORT_BASE_MAX_FISH_STOCK;
+  const curProc = prod.processedStock || 0;
+  const free = Math.max(0, maxProc - curProc);
+  if (free <= 0) {
+    return {
+      ok: false,
+      error: `Склад промежуточного сырья на «${sector.name}» уже полон (${curProc}/${maxProc})!`
+    };
+  }
+  const take = Math.min(free, qty);
+  prod.processedStock = curProc + take;
+  saveClansToSupabase();
+
+  const meta = PORT_TERMINAL_CATALOG.find((m) => m.key === resourceKey);
+  return {
+    ok: true,
+    loadedQty: take,
+    sector,
+    message: `📦 Вы загрузили ${take} ед. ресурса «${meta?.name || prod.intermediateResourceName}» на склад объекта «${sector.name}» (${prod.processedStock}/${maxProc})!`
   };
 }
 

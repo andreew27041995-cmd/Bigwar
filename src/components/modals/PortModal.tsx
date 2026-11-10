@@ -4,18 +4,28 @@ import {
   GameItem,
   EquippedGear,
   GameFeatureFlags,
-  PortTravelState
+  PortTravelState,
+  PortTerminalResourceKey
 } from '../../types/game';
 import {
   formatTravelTimeText,
   formatItemBonusesText,
   isTransportItem,
-  isRelicItem
+  isRelicItem,
+  createRelicItem
 } from '../../utils/shopConfig';
 import { ItemIcon } from '../ItemIcon';
 import { GoldCoinIcon, CrystalIcon } from '../CurrencyIcon';
 import { ClanTerritoryWarsView } from './ClanMechanicsSubViews';
-import { getPlayerClan } from '../../utils/clanStorage';
+import {
+  getPlayerClan,
+  getClanTerritories,
+  PORT_TERMINAL_CATALOG,
+  PORT_TERMINAL_INITIAL_STOCK,
+  getPortTradingTerminalState,
+  tradeWithPortTerminal,
+  transferPlayerResourceToPortFacility
+} from '../../utils/clanStorage';
 
 interface PortModalProps {
   currentUser?: string | null;
@@ -33,6 +43,7 @@ interface PortModalProps {
   onOpenAltar: () => void;
   onOpenTransportShop?: () => void;
   onOpenShopTransport?: () => void;
+  onOpenProfileEstate?: () => void;
   onUpdateHero?: (updated: Partial<HeroState>) => void;
   onUpdateInventory?: (updated: GameItem[]) => void;
   showToast?: (msg: string) => void;
@@ -55,6 +66,7 @@ export const PortModal: React.FC<PortModalProps> = ({
   onOpenAltar,
   onOpenTransportShop,
   onOpenShopTransport,
+  onOpenProfileEstate,
   onUpdateHero,
   onUpdateInventory,
   showToast,
@@ -63,8 +75,18 @@ export const PortModal: React.FC<PortModalProps> = ({
   const handleOpenTransportShop = onOpenTransportShop || onOpenShopTransport || (() => {});
   const handleOpenForge = onOpenCreateItem || onOpenForgeWeapon || (() => {});
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [portTab, setPortTab] = useState<'productions' | 'shipyard'>('productions');
+  const [portTab, setPortTab] = useState<'productions' | 'terminal' | 'shipyard'>('productions');
   const [, setRefreshTick] = useState(0);
+  const [tradeQtyByRes, setTradeQtyByRes] = useState<Record<PortTerminalResourceKey, number>>({
+    raw_fish: 10,
+    fish_semifinished: 10,
+    alchemy_reagents: 10,
+    gold_ingots: 10,
+    port_relics: 1
+  });
+  const [targetSectorForSupply, setTargetSectorForSupply] = useState<string>(
+    () => getClanTerritories()[0]?.id || 'sector_ra_temple'
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -163,6 +185,165 @@ export const PortModal: React.FC<PortModalProps> = ({
       Number(hero.level || 1) >= Number(activeTransport.lvl || 1)
   );
 
+  const terminalState = getPortTradingTerminalState();
+  const allPortFacilities = getClanTerritories();
+  const keepnetFishCount = Array.isArray(hero.fishingState?.keepnet)
+    ? hero.fishingState.keepnet.length
+    : 0;
+
+  const getPlayerAvailableResourceQty = (resKey: PortTerminalResourceKey): number => {
+    const storedInPortBag = Math.max(0, Number(hero.portResources?.[resKey] || 0));
+    if (resKey === 'raw_fish') {
+      return storedInPortBag + keepnetFishCount;
+    }
+    if (resKey === 'port_relics') {
+      return storedInPortBag + relicsCount;
+    }
+    return storedInPortBag;
+  };
+
+  const handleTerminalTrade = (mode: 'buy' | 'sell', resKey: PortTerminalResourceKey) => {
+    const qty = Math.max(1, Math.floor(Number(tradeQtyByRes[resKey] || 1)));
+    const playerAvailable = getPlayerAvailableResourceQty(resKey);
+    const activeNick = (currentUser || hero.nick || 'Игрок').trim();
+
+    const res = tradeWithPortTerminal(activeNick, mode, resKey, qty, hero.gold || 0, playerAvailable);
+    if (!res.ok) {
+      if (showToast) showToast(`⚠️ ${res.error}`);
+      return;
+    }
+
+    const currentPortRes = { ...(hero.portResources || {}) };
+    const storedInBag = Math.max(0, Number(currentPortRes[resKey] || 0));
+
+    if (mode === 'buy') {
+      const bought = res.quantity || qty;
+      if (resKey === 'port_relics' && onUpdateInventory) {
+        const addedRelics: GameItem[] = [];
+        for (let i = 0; i < bought; i++) {
+          const item = createRelicItem(1);
+          item.origin = 'Торговый терминал Порта';
+          addedRelics.push(item);
+        }
+        onUpdateInventory([...inventory, ...addedRelics]);
+      } else {
+        currentPortRes[resKey] = storedInBag + bought;
+      }
+      if (onUpdateHero) {
+        onUpdateHero({
+          gold: Math.max(0, (hero.gold || 0) + (res.deltaHeroGold || 0)),
+          portResources: currentPortRes
+        });
+      }
+    } else {
+      // Selling to terminal
+      const sold = res.quantity || qty;
+      if (resKey === 'raw_fish') {
+        const takeFromBag = Math.min(storedInBag, sold);
+        const takeFromKeepnet = Math.max(0, sold - takeFromBag);
+        currentPortRes.raw_fish = Math.max(0, storedInBag - takeFromBag);
+        const nextKeepnet = Array.isArray(hero.fishingState?.keepnet)
+          ? [...hero.fishingState.keepnet]
+          : [];
+        if (takeFromKeepnet > 0) {
+          nextKeepnet.splice(0, takeFromKeepnet);
+        }
+        if (onUpdateHero) {
+          onUpdateHero({
+            gold: Math.max(0, (hero.gold || 0) + (res.deltaHeroGold || 0)),
+            portResources: currentPortRes,
+            fishingState: {
+              ...(hero.fishingState || {}),
+              keepnet: nextKeepnet
+            }
+          });
+        }
+      } else if (resKey === 'port_relics') {
+        const takeFromBag = Math.min(storedInBag, sold);
+        let takeFromInv = Math.max(0, sold - takeFromBag);
+        currentPortRes.port_relics = Math.max(0, storedInBag - takeFromBag);
+        if (takeFromInv > 0 && onUpdateInventory) {
+          const nextInv: GameItem[] = [];
+          for (const it of inventory) {
+            if (takeFromInv > 0 && isRelicItem(it)) {
+              takeFromInv--;
+              continue;
+            }
+            nextInv.push(it);
+          }
+          onUpdateInventory(nextInv);
+        }
+        if (onUpdateHero) {
+          onUpdateHero({
+            gold: Math.max(0, (hero.gold || 0) + (res.deltaHeroGold || 0)),
+            portResources: currentPortRes
+          });
+        }
+      } else {
+        currentPortRes[resKey] = Math.max(0, storedInBag - sold);
+        if (onUpdateHero) {
+          onUpdateHero({
+            gold: Math.max(0, (hero.gold || 0) + (res.deltaHeroGold || 0)),
+            portResources: currentPortRes
+          });
+        }
+      }
+    }
+
+    if (showToast) showToast(res.message || '📊 Сделка в Торговом терминале выполнена!');
+    setRefreshTick((v) => v + 1);
+  };
+
+  const handleSendResourceToFacility = (resKey: PortTerminalResourceKey) => {
+    const qty = Math.max(1, Math.floor(Number(tradeQtyByRes[resKey] || 5)));
+    const available = getPlayerAvailableResourceQty(resKey);
+    const activeNick = (currentUser || hero.nick || 'Игрок').trim();
+    const res = transferPlayerResourceToPortFacility(
+      targetSectorForSupply,
+      activeNick,
+      resKey,
+      qty,
+      available
+    );
+    if (!res.ok) {
+      if (showToast) showToast(`⚠️ ${res.error}`);
+      return;
+    }
+
+    const used = res.loadedQty || qty;
+    const currentPortRes = { ...(hero.portResources || {}) };
+    const storedInBag = Math.max(0, Number(currentPortRes[resKey] || 0));
+
+    if (resKey === 'raw_fish') {
+      const fromBag = Math.min(storedInBag, used);
+      const fromKeepnet = Math.max(0, used - fromBag);
+      currentPortRes.raw_fish = Math.max(0, storedInBag - fromBag);
+      const nextKeepnet = Array.isArray(hero.fishingState?.keepnet)
+        ? [...hero.fishingState.keepnet]
+        : [];
+      if (fromKeepnet > 0) nextKeepnet.splice(0, fromKeepnet);
+      if (onUpdateHero) {
+        onUpdateHero({
+          portResources: currentPortRes,
+          fishingState: {
+            ...(hero.fishingState || {}),
+            keepnet: nextKeepnet
+          }
+        });
+      }
+    } else {
+      currentPortRes[resKey] = Math.max(0, storedInBag - used);
+      if (onUpdateHero) {
+        onUpdateHero({
+          portResources: currentPortRes
+        });
+      }
+    }
+
+    if (showToast) showToast(res.message || '🚛 Сырьё загружено на склад объекта недвижимости!');
+    setRefreshTick((v) => v + 1);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2.5 backdrop-blur-md select-none">
       <div
@@ -180,10 +361,10 @@ export const PortModal: React.FC<PortModalProps> = ({
             </span>
             <div className="min-w-0">
               <h2 className="truncate font-serif text-sm sm:text-base font-black uppercase tracking-wider text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]">
-                Порт Древнего Нила • Территории и Производства
+                Порт Древнего Нила • Недвижимость и Торговый терминал
               </h2>
               <p className="truncate text-[10px] text-cyan-100/75">
-                Клановые территории 7х7 • Работа на производствах • Крафт Реликвий из рыбы • Верфь и Алтарь
+                Брендированная недвижимость кланов • Создание объектов (3 000 💎) • Торговый терминал ресурсов (20 000 ед.)
               </p>
             </div>
           </div>
@@ -209,29 +390,40 @@ export const PortModal: React.FC<PortModalProps> = ({
           </div>
         </div>
 
-        {/* Переключатель разделов Порта */}
-        <div className="grid grid-cols-2 gap-1.5 border-b border-cyan-500/30 bg-slate-950/80 px-3 py-2 shrink-0">
+        {/* Переключатель разделов Порта (3 вкладки: Недвижимость, Торговый терминал, Верфь) */}
+        <div className="grid grid-cols-3 gap-1.5 border-b border-cyan-500/30 bg-slate-950/80 px-3 py-2 shrink-0">
           <button
             type="button"
             onClick={() => setPortTab('productions')}
-            className={`rounded-xl py-2 px-2.5 text-[10.5px] sm:text-xs font-black uppercase tracking-wide transition-all cursor-pointer ${
+            className={`rounded-xl py-2 px-2 text-[10px] sm:text-xs font-black uppercase tracking-wide transition-all cursor-pointer ${
               portTab === 'productions'
                 ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-600 text-slate-950 shadow'
                 : 'border border-slate-700 bg-slate-900 text-slate-300 hover:text-white'
             }`}
           >
-            🏭 Территории, Работа и Реликвии (7х7)
+            🏭 Недвижимость и Бои 7х7
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortTab('terminal')}
+            className={`rounded-xl py-2 px-2 text-[10px] sm:text-xs font-black uppercase tracking-wide transition-all cursor-pointer ${
+              portTab === 'terminal'
+                ? 'bg-gradient-to-r from-emerald-500 via-teal-400 to-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                : 'border border-emerald-500/50 bg-slate-900 text-emerald-300 hover:text-white'
+            }`}
+          >
+            📊 Торговый терминал (20 000 ед.)
           </button>
           <button
             type="button"
             onClick={() => setPortTab('shipyard')}
-            className={`rounded-xl py-2 px-2.5 text-[10.5px] sm:text-xs font-black uppercase tracking-wide transition-all cursor-pointer ${
+            className={`rounded-xl py-2 px-2 text-[10px] sm:text-xs font-black uppercase tracking-wide transition-all cursor-pointer ${
               portTab === 'shipyard'
                 ? 'bg-gradient-to-r from-cyan-500 via-sky-500 to-blue-600 text-white shadow'
                 : 'border border-slate-700 bg-slate-900 text-slate-300 hover:text-white'
             }`}
           >
-            ⚓ Верфь, Транспорт, Кузница и Алтарь
+            ⚓ Верфь, Кузница и Алтарь
           </button>
         </div>
 
@@ -246,10 +438,197 @@ export const PortModal: React.FC<PortModalProps> = ({
               equipped={equipped}
               onUpdateHero={onUpdateHero || (() => {})}
               onUpdateInventory={onUpdateInventory || (() => {})}
+              onOpenProfileEstate={() => {
+                if (onOpenProfileEstate) {
+                  onClose();
+                  onOpenProfileEstate();
+                }
+              }}
               showToast={showToast || (() => {})}
               triggerRefresh={() => setRefreshTick((v) => v + 1)}
               requestConfirm={(_title, _message, onConfirm) => onConfirm()}
             />
+          ) : portTab === 'terminal' ? (
+            <div className="space-y-3">
+              {/* Шапка Торгового терминала Порта */}
+              <div className="rounded-2xl border-2 border-emerald-500/70 bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-950 p-3.5 shadow-lg space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-black uppercase tracking-wide text-emerald-300 flex items-center gap-2 flex-wrap">
+                      <span>📊 Торговый терминал Порта • Свободный рынок ресурсов</span>
+                      <span className="rounded bg-emerald-500/25 border border-emerald-400/60 px-2 py-0.5 text-[9px] font-black text-emerald-100">
+                        Стартовый резерв: {PORT_TERMINAL_INITIAL_STOCK.toLocaleString('ru-RU')} ед. каждого вида
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-slate-300 mt-0.5 leading-relaxed">
+                      Покупайте и продавайте сырьё и продукцию производств в реальном времени! При <strong>продаже</strong> ресурсы поступают на баланс Торгового терминала (становятся доступны для покупки другими игроками), а вы получаете золото. При <strong>покупке</strong> ресурсы списываются с баланса терминала и зачисляются на ваш личный склад.
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-amber-400/50 bg-slate-950/90 px-3 py-1.5 text-right">
+                    <div className="text-[8.5px] font-bold uppercase text-slate-400">Ваше золото</div>
+                    <div className="text-xs font-black text-amber-300">
+                      {hero.gold.toLocaleString('ru-RU')} 🪙
+                    </div>
+                  </div>
+                </div>
+
+                {/* Выбор целевого объекта в Порту для прямой загрузки купленного сырья */}
+                <div className="rounded-xl border border-cyan-500/40 bg-slate-950/90 p-2.5 flex flex-wrap items-center justify-between gap-2 text-[10px]">
+                  <span className="font-black text-cyan-300">
+                    🚛 Прямая поставка со склада игрока на объект недвижимости в Порту:
+                  </span>
+                  <select
+                    value={targetSectorForSupply}
+                    onChange={(e) => setTargetSectorForSupply(e.target.value)}
+                    className="rounded-lg border border-cyan-500/50 bg-slate-900 px-2.5 py-1 text-[10px] font-black text-amber-200"
+                  >
+                    {allPortFacilities.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        [{f.ownerClanTag || 'RB'}] {f.name} (Сырьё: {f.production?.intermediateResourceName || 'Рыба'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Карточки ресурсов Торгового терминала (5 категорий по 20 000 ед.) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {PORT_TERMINAL_CATALOG.map((item) => {
+                  const stockInTerminal = Math.max(
+                    0,
+                    Number(terminalState.stocks[item.key] ?? PORT_TERMINAL_INITIAL_STOCK)
+                  );
+                  const myQty = getPlayerAvailableResourceQty(item.key);
+                  const qty = Math.max(1, Number(tradeQtyByRes[item.key] || 1));
+                  const totalBuyGold = qty * item.buyPriceGold;
+                  const totalSellGold = qty * item.sellPriceGold;
+                  const canSupplyToFactory = item.key !== 'port_relics';
+
+                  return (
+                    <div
+                      key={item.key}
+                      className="rounded-2xl border border-emerald-500/40 bg-slate-900/95 p-3 space-y-2.5 shadow flex flex-col justify-between"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-emerald-400/50 bg-slate-950 text-2xl shadow-inner">
+                              {item.icon}
+                            </div>
+                            <div>
+                              <div className="text-xs font-black text-white">{item.name}</div>
+                              <div className="text-[9.5px] text-slate-400 leading-snug">
+                                {item.description}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="rounded-lg border border-emerald-400/60 bg-emerald-950/80 px-2 py-0.5 text-[9.5px] font-black text-emerald-200">
+                              На терминале: {stockInTerminal.toLocaleString('ru-RU')} ед.
+                            </div>
+                            <div className="text-[9px] font-bold text-amber-300 mt-0.5">
+                              У вас: {myQty.toLocaleString('ru-RU')} ед.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5 rounded-xl border border-slate-800 bg-slate-950/90 p-2 text-[9.5px]">
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Покупка с терминала:</span>
+                            <strong className="text-amber-300">{item.buyPriceGold} 🪙/ед.</strong>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-slate-400">Продажа в терминал:</span>
+                            <strong className="text-emerald-300">{item.sellPriceGold} 🪙/ед.</strong>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Выбор количества и кнопки Купить / Продать / На склад завода */}
+                      <div className="space-y-2 pt-1 border-t border-slate-800">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="text-[9px] font-bold text-slate-400">Количество:</span>
+                          <div className="flex items-center gap-1">
+                            {[1, 10, 50, 100].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() =>
+                                  setTradeQtyByRes((prev) => ({ ...prev, [item.key]: preset }))
+                                }
+                                className={`rounded border px-2 py-0.5 text-[8.5px] font-black cursor-pointer ${
+                                  qty === preset
+                                    ? 'border-emerald-400 bg-emerald-500 text-slate-950'
+                                    : 'border-slate-700 bg-slate-950 text-slate-300 hover:bg-slate-800'
+                                }`}
+                              >
+                                {preset}
+                              </button>
+                            ))}
+                            <input
+                              type="number"
+                              min={1}
+                              max={20000}
+                              value={qty}
+                              onChange={(e) =>
+                                setTradeQtyByRes((prev) => ({
+                                  ...prev,
+                                  [item.key]: Math.max(1, Number(e.target.value || 1))
+                                }))
+                              }
+                              className="w-16 rounded border border-slate-700 bg-slate-950 px-1.5 py-0.5 text-center text-[9.5px] font-black text-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <button
+                            type="button"
+                            disabled={stockInTerminal < qty || hero.gold < totalBuyGold}
+                            onClick={() => handleTerminalTrade('buy', item.key)}
+                            className={`rounded-xl py-1.5 px-2 text-[9.5px] font-black uppercase transition-all cursor-pointer ${
+                              stockInTerminal >= qty && hero.gold >= totalBuyGold
+                                ? 'bg-gradient-to-r from-amber-500 to-yellow-400 text-slate-950 shadow hover:brightness-110'
+                                : 'border border-slate-800 bg-slate-950 text-slate-500 cursor-not-allowed'
+                            }`}
+                          >
+                            🛒 Купить {qty} ед. ({totalBuyGold.toLocaleString('ru-RU')} 🪙)
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={myQty < qty}
+                            onClick={() => handleTerminalTrade('sell', item.key)}
+                            className={`rounded-xl py-1.5 px-2 text-[9.5px] font-black uppercase transition-all cursor-pointer ${
+                              myQty >= qty
+                                ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow hover:brightness-110'
+                                : 'border border-slate-800 bg-slate-950 text-slate-500 cursor-not-allowed'
+                            }`}
+                          >
+                            💰 Продать {qty} ед. (+{totalSellGold.toLocaleString('ru-RU')} 🪙)
+                          </button>
+                        </div>
+
+                        {canSupplyToFactory && (
+                          <button
+                            type="button"
+                            disabled={myQty <= 0}
+                            onClick={() => handleSendResourceToFacility(item.key)}
+                            className={`w-full rounded-lg border py-1 px-2 text-[8.5px] font-black transition-all cursor-pointer ${
+                              myQty > 0
+                                ? 'border-cyan-400/60 bg-cyan-950/60 hover:bg-cyan-900/70 text-cyan-200'
+                                : 'border-slate-800 bg-slate-950 text-slate-600 cursor-not-allowed'
+                            }`}
+                          >
+                            🚛 Загрузить со своего склада на выбранный объект в Порту ({Math.min(myQty, qty)} ед.)
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           ) : (
             <>
           {/* Status Banner */}
