@@ -36,11 +36,14 @@ import {
   sellFishToPortMarket,
   loadFishIntoPortFactory,
   craftRelicsAtPortFactoryNow,
+  supplyIntermediateResourceToLinkedFactory,
+  managePortFacilityBalance,
   buyRelicsFromPortFactory,
   startPortFactoryWorkShift,
   claimPortFactoryWorkShift,
   getPlayerActivePortWorkShift,
   mergeClanPortFactories,
+  DEFAULT_PORT_ESTATE_OWNER_NICK,
   PORT_BASE_MAX_WORKERS,
   PORT_MERGED_MAX_WORKERS,
   PORT_WORKER_GOLD_PER_HOUR,
@@ -159,12 +162,22 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   requestConfirm
 }) => {
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [, setLocalTick] = useState(0);
   const [selectedSectorId, setSelectedSectorId] = useState<string | null>(initialSectorId || null);
+  const [inspectingSectorId, setInspectingSectorId] = useState<string | null>(null);
   const [selectedRole, setSelectedRole] = useState<TerritoryFighterRole>('tank');
   const [selectedTactic, setSelectedTactic] = useState<TerritoryTacticalAction>('frontal');
   const [selectedEnemyNick, setSelectedEnemyNick] = useState<string | null>(null);
   const [viewingReportSectorId, setViewingReportSectorId] = useState<string | null>(null);
   const [shiftDurationBySector, setShiftDurationBySector] = useState<Record<string, 1 | 2>>({});
+
+  const effectiveMyNick = (myNick || hero.nick || 'Игрок').trim();
+
+  const forceRefreshAll = () => {
+    setNowMs(Date.now());
+    setLocalTick((prev) => prev + 1);
+    triggerRefresh();
+  };
 
   useEffect(() => {
     if (initialSectorId) {
@@ -181,12 +194,12 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   }, []);
 
   const territories = getClanTerritories();
-  const myBuffs = getClanTerritoryBuffs(clan?.id);
+  const myBuffs = getClanTerritoryBuffs(clan?.id, effectiveMyNick);
   const fishMarket = getPortFishMarketState();
   const relicUnitPrice = getPortRelicMarketPrice();
   const prodSkill = getProductionSkillInfo(hero.productionHours || 0);
-  const hasClanBadge = doesPlayerHaveClanBadge(myNick, clan?.id, hero.hasClanBadge);
-  const myActiveShift = getPlayerActivePortWorkShift(myNick);
+  const hasClanBadge = doesPlayerHaveClanBadge(effectiveMyNick, clan?.id, hero.hasClanBadge);
+  const myActiveShift = getPlayerActivePortWorkShift(effectiveMyNick);
   const keepnetFishCount = Array.isArray(hero.fishingState?.keepnet)
     ? hero.fishingState.keepnet.length
     : 0;
@@ -199,29 +212,41 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   );
   const effectiveSelectedSector =
     territories.find((s) => s.id === selectedSectorId) || activeClanWarSector || null;
+  const inspectingSector = inspectingSectorId
+    ? territories.find((s) => s.id === inspectingSectorId) || null
+    : null;
 
-  const myMember = clan?.members.find((m) => m.nick.trim().toLowerCase() === myNick.trim().toLowerCase());
+  const myMember = clan?.members.find(
+    (m) => m.nick.trim().toLowerCase() === effectiveMyNick.toLowerCase()
+  );
   const isLeaderOrOfficer = Boolean(
     clan &&
-      (clan.leaderNick.trim().toLowerCase() === myNick.trim().toLowerCase() ||
+      (clan.leaderNick.trim().toLowerCase() === effectiveMyNick.toLowerCase() ||
         myMember?.role === 'leader' ||
         myMember?.role === 'officer')
   );
 
   const handleStartWorkShift = (sectorId: string, durationHours: 1 | 2) => {
-    const res = startPortFactoryWorkShift(sectorId, myNick, hero.avatar || '🧙‍♂️', durationHours);
+    const res = startPortFactoryWorkShift(
+      sectorId,
+      effectiveMyNick,
+      hero.avatar || '🧙‍♂️',
+      durationHours
+    );
     if (!res.ok) {
       showToast(`⚠️ ${res.error}`);
+      forceRefreshAll();
       return;
     }
-    showToast(res.message || '🔨 Вы устроились на работу в Порту!');
-    triggerRefresh();
+    showToast(res.message || '🔨 Вы устроились на работу в Порту! Смена запущена.');
+    forceRefreshAll();
   };
 
   const handleClaimWorkShift = (sectorId: string, allowInstant = false) => {
-    const res = claimPortFactoryWorkShift(sectorId, myNick, allowInstant);
+    const res = claimPortFactoryWorkShift(sectorId, effectiveMyNick, allowInstant);
     if (!res.ok) {
       showToast(`⚠️ ${res.error}`);
+      forceRefreshAll();
       return;
     }
     const addedHours = res.hoursWorked || 1;
@@ -247,7 +272,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
     } else {
       showToast(res.message || `✅ Оплата смены получена: +${addedGold} 🪙 и +${addedHours} ч. Производства!`);
     }
-    triggerRefresh();
+    forceRefreshAll();
   };
 
   const handleSellKeepnetFishToPortMarket = () => {
@@ -255,7 +280,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
       showToast('🐟 Ваш рыболовный садок пуст! Наловите рыбу в мини-игре «Рыбалка».');
       return;
     }
-    const res = sellFishToPortMarket(myNick, keepnetFishCount);
+    const res = sellFishToPortMarket(effectiveMyNick, keepnetFishCount);
     onUpdateHero({
       gold: (hero.gold || 0) + res.goldEarned,
       fishingState: {
@@ -264,13 +289,13 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
       }
     });
     showToast(res.message);
-    triggerRefresh();
+    forceRefreshAll();
   };
 
   const handleLoadFishToFactory = (sectorId: string, source: 'market' | 'keepnet', qty = 10) => {
     const res = loadFishIntoPortFactory(
       sectorId,
-      myNick,
+      effectiveMyNick,
       qty,
       source,
       hero.gold || 0,
@@ -297,21 +322,56 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
       });
     }
     showToast(res.message || '🐟 Сырьё загружено на склад производства!');
-    triggerRefresh();
+    forceRefreshAll();
   };
 
   const handleCraftRelicsNow = (sectorId: string) => {
-    const res = craftRelicsAtPortFactoryNow(sectorId, myNick);
+    const res = craftRelicsAtPortFactoryNow(sectorId, effectiveMyNick);
     if (!res.ok) {
       showToast(`⚠️ ${res.error}`);
       return;
     }
-    showToast(res.message || '🏺 Реликвия создана из 5 рыбин!');
-    triggerRefresh();
+    showToast(res.message || '🏺 Партия продукции создана!');
+    forceRefreshAll();
+  };
+
+  const handleSupplyIntermediate = (sectorId: string) => {
+    const res = supplyIntermediateResourceToLinkedFactory(sectorId, effectiveMyNick, 5);
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return;
+    }
+    showToast(res.message || '🚛 Промежуточное сырьё поставлено в смежный цех!');
+    forceRefreshAll();
+  };
+
+  const handleManageFacilityBalance = (
+    sectorId: string,
+    mode: 'deposit' | 'withdraw',
+    amount = 1000
+  ) => {
+    const res = managePortFacilityBalance(
+      sectorId,
+      effectiveMyNick,
+      mode,
+      amount,
+      hero.gold || 0
+    );
+    if (!res.ok) {
+      showToast(`⚠️ ${res.error}`);
+      return;
+    }
+    if (typeof res.deltaHeroGold === 'number') {
+      onUpdateHero({
+        gold: Math.max(0, (hero.gold || 0) + res.deltaHeroGold)
+      });
+    }
+    showToast(res.message || '🏦 Баланс объекта обновлён!');
+    forceRefreshAll();
   };
 
   const handleBuyRelicFromFactory = (sectorId: string, qty = 1) => {
-    const res = buyRelicsFromPortFactory(sectorId, myNick, qty, hero.gold || 0);
+    const res = buyRelicsFromPortFactory(sectorId, effectiveMyNick, qty, hero.gold || 0);
     if (!res.ok) {
       showToast(`⚠️ ${res.error}`);
       return;
@@ -327,18 +387,17 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
     });
     onUpdateInventory([...inventory, ...newRelicItems]);
     showToast(res.message || '🏺 Реликвия куплена и добавлена в рюкзак!');
-    triggerRefresh();
+    forceRefreshAll();
   };
 
   const handleMergeFactories = (sectorId: string) => {
-    if (!clan) return;
-    const res = mergeClanPortFactories(clan.id, myNick, sectorId);
+    const res = mergeClanPortFactories(clan?.id || '', effectiveMyNick, sectorId);
     if (!res.ok) {
       showToast(`⚠️ ${res.error}`);
       return;
     }
     showToast(res.message || '🏗️ Производства объединены!');
-    triggerRefresh();
+    forceRefreshAll();
   };
 
   const handleStartAssault7x7 = (sectorId: string, sectorName: string) => {
@@ -707,39 +766,52 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
         </div>
 
         {/* Активная рабочая смена игрока (если устроен) */}
-        {myActiveShift && (
-          <div className="rounded-xl border-2 border-emerald-400/70 bg-emerald-950/40 p-2.5 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <div className="text-[10.5px] font-black text-emerald-200">
-                🔨 Вы работаете на объекте: «{myActiveShift.sector.name}» ({myActiveShift.worker.durationHours} ч. смена)
+        {myActiveShift && (() => {
+          const totalShiftMs = Math.max(1000, (myActiveShift.worker.durationHours || 2) * 3600 * 1000);
+          const elapsedShiftMs = Math.max(0, Math.min(totalShiftMs, nowMs - myActiveShift.worker.startedAt));
+          const shiftPct = Math.min(100, Math.max(1, Math.round((elapsedShiftMs / totalShiftMs) * 100)));
+          const isShiftCompleted = nowMs >= myActiveShift.worker.endsAt;
+          return (
+            <div className="rounded-xl border-2 border-emerald-400/70 bg-emerald-950/40 p-2.5 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-[10.5px] font-black text-emerald-200 flex items-center gap-1.5 flex-wrap">
+                    <span>🔨 Смена активна на объекте: «{myActiveShift.sector.name}» ({myActiveShift.worker.durationHours} ч.)</span>
+                    <span className="rounded bg-emerald-500/30 border border-emerald-400/50 px-1.5 py-0.2 text-[8.5px] font-black text-white">
+                      {shiftPct}%
+                    </span>
+                  </div>
+                  <div className="text-[9.5px] text-slate-200 mt-0.5">
+                    {isShiftCompleted
+                      ? `✅ Смена полностью отработана! Заберите +${myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +${myActiveShift.worker.durationHours} ч. Производства.`
+                      : `⏳ Смена активна: ${formatRemainingTimer(myActiveShift.worker.endsAt, nowMs)} • Оплата: +${myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +${myActiveShift.worker.durationHours} Производство`}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {isShiftCompleted ? (
+                    <button
+                      type="button"
+                      onClick={() => handleClaimWorkShift(myActiveShift.sector.id, false)}
+                      className="rounded-xl bg-gradient-to-r from-emerald-400 to-amber-400 px-3 py-1.5 text-[10px] font-black uppercase text-slate-950 shadow animate-pulse cursor-pointer"
+                    >
+                      💰 Забрать оплату (+{myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +{myActiveShift.worker.durationHours} Произв.)
+                    </button>
+                  ) : (
+                    <span className="rounded-xl border border-emerald-400/60 bg-slate-950/90 px-3 py-1.5 text-[9.5px] font-mono font-black text-emerald-300 shadow">
+                      🔒 Смена активна: {formatRemainingTimer(myActiveShift.worker.endsAt, nowMs)}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="text-[9.5px] text-slate-200">
-                {nowMs >= myActiveShift.worker.endsAt
-                  ? `✅ Смена завершена! Заберите +${myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +${myActiveShift.worker.durationHours} ч. Производства.`
-                  : `⏳ До конца смены: ${formatRemainingTimer(myActiveShift.worker.endsAt, nowMs)} • Награда: +${myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +${myActiveShift.worker.durationHours} Производство`}
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-900 border border-emerald-500/40">
+                <div
+                  className="h-full bg-gradient-to-r from-cyan-400 via-emerald-400 to-amber-400 transition-all duration-500"
+                  style={{ width: `${shiftPct}%` }}
+                />
               </div>
             </div>
-            <div className="flex items-center gap-1.5">
-              {nowMs >= myActiveShift.worker.endsAt ? (
-                <button
-                  type="button"
-                  onClick={() => handleClaimWorkShift(myActiveShift.sector.id, false)}
-                  className="rounded-xl bg-gradient-to-r from-emerald-400 to-amber-400 px-3 py-1.5 text-[10px] font-black uppercase text-slate-950 shadow animate-pulse cursor-pointer"
-                >
-                  💰 Забрать оплату (+{myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙)
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleClaimWorkShift(myActiveShift.sector.id, true)}
-                  className="rounded-xl border border-amber-400/70 bg-amber-500/25 hover:bg-amber-500/40 px-3 py-1.5 text-[9.5px] font-black text-amber-200 cursor-pointer"
-                >
-                  ⚡ Завершить смену и забрать +{myActiveShift.worker.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 (+{myActiveShift.worker.durationHours} ч. Производства)
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Пассивные бонусы от захваченных территорий */}
         <div className="rounded-xl border border-emerald-500/35 bg-emerald-950/25 p-2.5">
@@ -1151,10 +1223,320 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
         </div>
       )}
 
+      {/* Детальное информационное окно объекта недвижимости в Порту (по аналогии с gwars.io) */}
+      {inspectingSector && (() => {
+        const s = inspectingSector;
+        const p = s.production || {
+          factoryType: 'solar_relic_foundry',
+          factoryCategoryLabel: 'Производство Реликвий',
+          productionStage: 'relic_foundry' as const,
+          linkedSectorId: null,
+          intermediateResourceName: 'Очищенный Рыбий Эликсир',
+          facilityLevel: 1,
+          facilityBalanceGold: 15000,
+          workerWageGold: PORT_WORKER_GOLD_PER_HOUR,
+          isMerged: false,
+          mergedWithSectorId: null,
+          fishStock: 35,
+          maxFishStock: 100,
+          processedStock: 16,
+          maxProcessedStock: 100,
+          relicStock: 8,
+          maxRelicStock: 70,
+          lastCraftTickAt: nowMs,
+          workers: [],
+          passiveGoldEarned: 2500,
+          totalRelicsCrafted: 8
+        };
+        const maxW = p.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS;
+        const activeW = (p.workers || []).filter((w) => !w.claimed && w.endsAt > nowMs);
+        const allUnclaimedW = (p.workers || []).filter((w) => !w.claimed);
+        const myW = allUnclaimedW.find(
+          (w) => w.nick.trim().toLowerCase() === effectiveMyNick.toLowerCase()
+        );
+        const linkedObj = p.linkedSectorId
+          ? territories.find((t) => t.id === p.linkedSectorId) || null
+          : null;
+        const ownerName = s.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK;
+        const isMyEstate = ownerName.trim().toLowerCase() === effectiveMyNick.toLowerCase();
+        const isStoppedNoWorkers = activeW.length === 0;
+        const chosenHrs: 1 | 2 = shiftDurationBySector[s.id] || 2;
+
+        return (
+          <div className="rounded-2xl border-2 border-amber-400/80 bg-gradient-to-b from-slate-900 via-slate-950 to-slate-950 p-4 shadow-[0_0_30px_rgba(245,158,11,0.3)] space-y-3">
+            <div className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-amber-400/60 bg-slate-900 text-2xl shadow">
+                  {s.icon}
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-sm font-black uppercase text-amber-300">{s.name}</span>
+                    <span className="rounded bg-amber-500/25 border border-amber-400/50 px-1.5 py-0.5 text-[9px] font-black text-amber-200">
+                      Ур. {p.isMerged ? 2 : p.facilityLevel || 1} {p.isMerged ? '(Объединён x2)' : ''}
+                    </span>
+                    <span
+                      className={`rounded px-2 py-0.5 text-[9px] font-black uppercase ${
+                        isStoppedNoWorkers
+                          ? 'bg-rose-600/30 border border-rose-400/60 text-rose-200'
+                          : 'bg-emerald-600/30 border border-emerald-400/60 text-emerald-200'
+                      }`}
+                    >
+                      {isStoppedNoWorkers ? '⏸ Цех остановлен (0 рабочих)' : `⚙️ В работе (${activeW.length}/${maxW} раб.)`}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-300 mt-0.5">
+                    {p.factoryCategoryLabel} • Бафф территории: <strong className="text-emerald-300">{s.bonusLabel}</strong>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectingSectorId(null)}
+                className="rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-700 px-2.5 py-1 text-[10px] font-black text-slate-200 cursor-pointer"
+              >
+                ✕ Закрыть паспорт объекта
+              </button>
+            </div>
+
+            {/* 4 информационных блока по аналогии с gwars.io */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[10px]">
+              {/* 1. Владелец и клан */}
+              <div className="rounded-xl border border-amber-500/40 bg-slate-900/90 p-2.5 space-y-1.5">
+                <div className="text-[9.5px] font-black uppercase text-amber-300 border-b border-slate-800 pb-1">
+                  👑 1. Права владения и контроль
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Официальный владелец:</span>
+                  <span className="font-black text-amber-300 flex items-center gap-1">
+                    👑 {ownerName}
+                    {isMyEstate && (
+                      <span className="rounded bg-emerald-500 px-1 py-0.2 text-[8px] font-black text-slate-950">
+                        ВАШ ОБЪЕКТ
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Контролирующий клан и Знак:</span>
+                  <span className="font-black text-white flex items-center gap-1">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded border border-amber-400 bg-amber-950">
+                      <ItemIcon
+                        icon={s.ownerClanEmblem || '👑'}
+                        name={s.ownerClanName || 'RedBlack'}
+                        className="w-3.5 h-3.5 text-xs"
+                        imgClassName="w-3.5 h-3.5 object-contain"
+                      />
+                    </span>
+                    <span>
+                      [{s.ownerClanTag || 'RB'}] {s.ownerClanName || 'Империя RedBlack'}
+                    </span>
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Звено производственной цепочки:</span>
+                  <span className="font-bold text-cyan-300">
+                    {p.productionStage === 'raw_processing'
+                      ? '1-е звено (Сырьевой цех)'
+                      : '2-е звено (Конечный цех Реликвий)'}
+                  </span>
+                </div>
+              </div>
+
+              {/* 2. Финансы объекта */}
+              <div className="rounded-xl border border-emerald-500/40 bg-slate-900/90 p-2.5 space-y-1.5">
+                <div className="text-[9.5px] font-black uppercase text-emerald-300 border-b border-slate-800 pb-1">
+                  🏦 2. Финансы объекта и оплата труда
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Текущий баланс объекта:</span>
+                  <span className="font-black text-emerald-300">
+                    {(p.facilityBalanceGold ?? 15000).toLocaleString()} 🪙
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Зарплата / бонус рабочим:</span>
+                  <span className="font-black text-amber-300">
+                    {p.workerWageGold || PORT_WORKER_GOLD_PER_HOUR} 🪙/ч + 1 Производство/ч
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">Накопленная прибыль владельца:</span>
+                  <span className="font-black text-yellow-300">
+                    +{(p.passiveGoldEarned || 0).toLocaleString()} 🪙
+                  </span>
+                </div>
+                {isMyEstate && (
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleManageFacilityBalance(s.id, 'deposit', 1000)}
+                      className="flex-1 rounded-lg border border-emerald-500/50 bg-emerald-950/70 hover:bg-emerald-900 py-1 px-2 text-[9px] font-black text-emerald-200 cursor-pointer"
+                    >
+                      ➕ Внести 1 000 🪙
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleManageFacilityBalance(s.id, 'withdraw', 1000)}
+                      className="flex-1 rounded-lg border border-amber-500/50 bg-amber-950/70 hover:bg-amber-900 py-1 px-2 text-[9px] font-black text-amber-200 cursor-pointer"
+                    >
+                      💰 Снять 1 000 🪙
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Персонал и смена */}
+              <div className="rounded-xl border border-cyan-500/40 bg-slate-900/90 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                  <span className="text-[9.5px] font-black uppercase text-cyan-300">
+                    👷 3. Персонал и рабочие места
+                  </span>
+                  <span className="font-black text-cyan-200">
+                    Занято: {activeW.length} / {maxW} чел.
+                  </span>
+                </div>
+                {allUnclaimedW.length === 0 ? (
+                  <div className="rounded-lg border border-rose-500/40 bg-rose-950/30 p-2 text-[9px] text-rose-200 font-bold">
+                    ⏸ Сейчас на объекте никто не работает (0/{maxW}). Производство реликвий и расход сырья остановлены до выхода рабочих на смену!
+                  </div>
+                ) : (
+                  <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {allUnclaimedW.map((w, i) => {
+                      const totalMs = Math.max(1000, (w.durationHours || 2) * 3600 * 1000);
+                      const elMs = Math.max(0, Math.min(totalMs, nowMs - w.startedAt));
+                      const wPct = Math.min(100, Math.max(1, Math.round((elMs / totalMs) * 100)));
+                      const done = nowMs >= w.endsAt;
+                      return (
+                        <div
+                          key={`${w.nick}_${i}`}
+                          className="rounded-lg border border-slate-800 bg-slate-950 p-1.5 space-y-1"
+                        >
+                          <div className="flex items-center justify-between text-[9px]">
+                            <span className="font-black text-white">
+                              {w.avatar || '🔨'} {w.nick} ({w.durationHours} ч.)
+                            </span>
+                            <span className="font-mono font-bold text-amber-300">
+                              {done ? '✅ Смена окончена' : `⏳ ${formatRemainingTimer(w.endsAt, nowMs)} (${wPct}%)`}
+                            </span>
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                            <div
+                              className="h-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all"
+                              style={{ width: `${wPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {myW ? (
+                  nowMs >= myW.endsAt ? (
+                    <button
+                      type="button"
+                      onClick={() => handleClaimWorkShift(s.id, false)}
+                      className="w-full rounded-lg bg-gradient-to-r from-emerald-400 to-amber-400 py-1.5 px-2.5 text-[9.5px] font-black uppercase text-slate-950 shadow cursor-pointer"
+                    >
+                      💰 Забрать оплату смены (+{myW.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +{myW.durationHours} Произв.)
+                    </button>
+                  ) : (
+                    <div className="w-full rounded-lg border border-emerald-400/60 bg-emerald-950/50 py-1.5 px-2.5 text-center text-[9.5px] font-black text-emerald-200">
+                      🔒 Смена активна: {formatRemainingTimer(myW.endsAt, nowMs)}
+                    </div>
+                  )
+                ) : (
+                  <div className="flex items-center justify-between gap-1.5 pt-1">
+                    <div className="flex items-center gap-1">
+                      {([1, 2] as (1 | 2)[]).map((hrs) => (
+                        <button
+                          key={hrs}
+                          type="button"
+                          onClick={() =>
+                            setShiftDurationBySector((prev) => ({ ...prev, [s.id]: hrs }))
+                          }
+                          className={`rounded border px-2 py-1 text-[8.5px] font-black cursor-pointer ${
+                            chosenHrs === hrs
+                              ? 'border-cyan-400 bg-cyan-500/30 text-white'
+                              : 'border-slate-700 bg-slate-900 text-slate-400'
+                          }`}
+                        >
+                          {hrs} ч.
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={activeW.length >= maxW || Boolean(myActiveShift)}
+                      onClick={() => handleStartWorkShift(s.id, chosenHrs)}
+                      className={`rounded-lg px-3 py-1 text-[9.5px] font-black uppercase cursor-pointer ${
+                        activeW.length >= maxW || Boolean(myActiveShift)
+                          ? 'border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow'
+                      }`}
+                    >
+                      {activeW.length >= maxW
+                        ? `Мест нет (${activeW.length}/${maxW})`
+                        : myActiveShift
+                        ? `🔒 Смена активна (${formatRemainingTimer(myActiveShift.worker.endsAt, nowMs)})`
+                        : `🔨 Работать (${chosenHrs} ч.)`}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* 4. Склад и межпроизводственная цепочка */}
+              <div className="rounded-xl border border-purple-500/40 bg-slate-900/90 p-2.5 space-y-1.5">
+                <div className="text-[9.5px] font-black uppercase text-purple-300 border-b border-slate-800 pb-1">
+                  📦 4. Склад сырья, цепочка поставок и продукция
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sky-300">🐟 Сырая рыба на складе:</span>
+                  <span className="font-black text-white">
+                    {p.fishStock} / {p.maxFishStock} шт.
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-purple-300">
+                    🧪 {p.intermediateResourceName || 'Промежуточное сырьё'}:
+                  </span>
+                  <span className="font-black text-white">
+                    {p.processedStock ?? 16} / {p.maxProcessedStock ?? 100} ед.
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-amber-300">🏺 Готовые Реликвии Порта:</span>
+                  <span className="font-black text-white">
+                    {p.relicStock} / {p.maxRelicStock} шт. (Всего выпущено: {p.totalRelicsCrafted || 0})
+                  </span>
+                </div>
+                {linkedObj && (
+                  <div className="rounded-lg border border-purple-500/30 bg-purple-950/30 p-1.5 text-[8.5px] text-purple-200 flex items-center justify-between gap-1.5">
+                    <span>
+                      🔗 Смежный объект: <strong>{linkedObj.name}</strong>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleSupplyIntermediate(s.id)}
+                      className="rounded border border-purple-400/60 bg-purple-600/30 hover:bg-purple-600/50 px-2 py-0.5 font-black text-white cursor-pointer shrink-0"
+                    >
+                      🚛 Поставить 5 ед. сырья
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Сетка объектов производства в Порту (6 территорий) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {territories.map((sector) => {
-          const isOwnedByUs = Boolean(clan && sector.ownerClanId === clan.id);
+          const ownerName = sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK;
+          const isOwnedByMe = ownerName.trim().toLowerCase() === effectiveMyNick.toLowerCase();
+          const isOwnedByUs = Boolean((clan && sector.ownerClanId === clan.id) || isOwnedByMe);
           const isAtWar = sector.warStatus === 'war';
           const isShielded = Boolean(
             sector.ownerClanId && sector.protectionUntil && nowMs < sector.protectionUntil && !isAtWar
@@ -1163,10 +1545,18 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
           const prod = sector.production || {
             factoryType: 'solar_relic_foundry',
             factoryCategoryLabel: 'Производство Реликвий',
+            productionStage: 'relic_foundry' as const,
+            linkedSectorId: null,
+            intermediateResourceName: 'Очищенный Рыбий Эликсир',
+            facilityLevel: 1,
+            facilityBalanceGold: 15000,
+            workerWageGold: PORT_WORKER_GOLD_PER_HOUR,
             isMerged: false,
             mergedWithSectorId: null,
             fishStock: 35,
             maxFishStock: 100,
+            processedStock: 16,
+            maxProcessedStock: 100,
             relicStock: 8,
             maxRelicStock: 70,
             lastCraftTickAt: nowMs,
@@ -1175,22 +1565,30 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
             totalRelicsCrafted: 8
           };
           const maxWorkers = prod.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS;
-          const activeWorkers = (prod.workers || []).filter((w) => !w.claimed);
-          const myWorkerHere = activeWorkers.find(
-            (w) => w.nick.trim().toLowerCase() === myNick.trim().toLowerCase()
+          const activeWorkers = (prod.workers || []).filter((w) => !w.claimed && w.endsAt > nowMs);
+          const unclaimedWorkers = (prod.workers || []).filter((w) => !w.claimed);
+          const myWorkerHere = unclaimedWorkers.find(
+            (w) => w.nick.trim().toLowerCase() === effectiveMyNick.toLowerCase()
           );
           const chosenShiftHours: 1 | 2 = shiftDurationBySector[sector.id] || 2;
+          const isStoppedNoWorkers = activeWorkers.length === 0;
+          const linkedPartner = prod.linkedSectorId
+            ? territories.find((t) => t.id === prod.linkedSectorId) || null
+            : null;
 
           const mySideInSector: 'attacker' | 'defender' =
             clan && sector.attackerClanId === clan.id ? 'attacker' : 'defender';
           const sectorRoster =
             mySideInSector === 'attacker' ? b7x7?.attackers || [] : b7x7?.defenders || [];
           const sectorAlreadyIn = sectorRoster.some(
-            (f) => f.nick.toLowerCase() === myNick.toLowerCase()
+            (f) => f.nick.toLowerCase() === effectiveMyNick.toLowerCase()
           );
           const sectorIsFull = sectorRoster.length >= 7 && !sectorAlreadyIn;
 
           const fishPct = Math.min(100, Math.round((prod.fishStock / Math.max(1, prod.maxFishStock)) * 100));
+          const procStock = prod.processedStock ?? 16;
+          const maxProcStock = prod.maxProcessedStock ?? 100;
+          const procPct = Math.min(100, Math.round((procStock / Math.max(1, maxProcStock)) * 100));
           const relicPct = Math.min(100, Math.round((prod.relicStock / Math.max(1, prod.maxRelicStock)) * 100));
 
           return (
@@ -1206,98 +1604,115 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
             >
               <div className="space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/50 bg-slate-950 text-2xl shadow-inner">
+                  <div
+                    onClick={() =>
+                      setInspectingSectorId(inspectingSectorId === sector.id ? null : sector.id)
+                    }
+                    className="flex items-center gap-2.5 min-w-0 cursor-pointer group"
+                    title="Нажмите, чтобы открыть детальное информационное окно объекта недвижимости"
+                  >
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/50 bg-slate-950 text-2xl shadow-inner group-hover:border-amber-400">
                       {sector.icon}
                     </div>
                     <div className="min-w-0">
-                      <div className="text-xs font-black text-white truncate flex items-center gap-1.5 flex-wrap">
+                      <div className="text-xs font-black text-white group-hover:text-amber-300 truncate flex items-center gap-1.5 flex-wrap">
                         <span>{sector.name}</span>
+                        <span className="rounded bg-amber-500/20 border border-amber-400/40 px-1.5 py-0.2 text-[8px] font-black text-amber-200">
+                          Ур.{prod.isMerged ? 2 : prod.facilityLevel || 1}
+                        </span>
                         {prod.isMerged && (
                           <span className="rounded bg-purple-600/80 px-1.5 py-0.5 text-[8px] font-black uppercase text-white">
                             🏗️ Объединён (x2)
                           </span>
                         )}
                       </div>
-                      <div className="text-[10px] font-extrabold text-amber-300 mt-0.5">
-                        ⚓ Зона: Порт • 🎁 Бафф клана: {sector.bonusLabel}
+                      <div className="text-[10px] font-extrabold text-amber-300 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                        <span>👑 Владелец: <strong className="text-white">{ownerName}</strong></span>
+                        <span>•</span>
+                        <span>🎁 {sector.bonusLabel}</span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="shrink-0 text-right">
+                  <div className="shrink-0 text-right flex flex-col items-end gap-1">
                     {isAtWar ? (
                       <span className="inline-block rounded-lg border border-rose-400/70 bg-rose-600/30 px-2 py-0.5 text-[9px] font-black uppercase text-rose-200 animate-pulse">
                         {b7x7?.phase === 'combat'
                           ? `⚔️ Бой 7х7 (Ход ${b7x7.currentRound})`
                           : '🚨 Тревога: Сбор 7х7'}
                       </span>
-                    ) : sector.ownerClanId ? (
+                    ) : (
                       <span
                         className={`inline-block rounded-lg border px-2 py-0.5 text-[9px] font-black uppercase ${
-                          isOwnedByUs
+                          isOwnedByMe
                             ? 'border-emerald-400/70 bg-emerald-500/20 text-emerald-200'
                             : 'border-amber-400/60 bg-amber-500/20 text-amber-200'
                         }`}
                       >
-                        {isOwnedByUs ? '🛡️ Объект вашего клана' : `👑 Клан [${sector.ownerClanTag}]`}
-                      </span>
-                    ) : (
-                      <span className="inline-block rounded-lg border border-slate-600 bg-slate-800 px-2 py-0.5 text-[9px] font-bold text-slate-300">
-                        🏳️ Свободный Порт
+                        {isOwnedByMe ? '👑 Ваша недвижимость' : `👑 Владелец: ${ownerName}`}
                       </span>
                     )}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setInspectingSectorId(inspectingSectorId === sector.id ? null : sector.id)
+                      }
+                      className="rounded-md border border-amber-400/50 bg-slate-950 hover:bg-amber-500/20 px-2 py-0.5 text-[8.5px] font-black text-amber-200 cursor-pointer"
+                    >
+                      📋 {inspectingSectorId === sector.id ? 'Скрыть инфо' : 'Инфо объекта'}
+                    </button>
                   </div>
                 </div>
 
                 <p className="text-[9.5px] text-slate-400 leading-snug">{sector.description}</p>
 
-                {/* Официальный Знак и название контролирующего клана + пассивная прибыль */}
-                <div className="rounded-xl border border-amber-500/35 bg-slate-950/90 px-2.5 py-2 flex flex-wrap items-center justify-between gap-1.5 text-[10px]">
-                  <span className="text-slate-400 font-semibold">Контролирующий клан и Знак:</span>
-                  {sector.ownerClanId ? (
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg border border-amber-400 bg-amber-950 shadow">
-                        <ItemIcon
-                          icon={sector.ownerClanEmblem || '🛡️'}
-                          name={sector.ownerClanName || ''}
-                          className="w-4 h-4 text-sm"
-                          imgClassName="w-4 h-4 object-contain"
-                        />
-                      </span>
-                      <span className="font-black text-amber-300">
-                        🛡️ Знак [{sector.ownerClanTag}] {sector.ownerClanName}
-                      </span>
-                      {(prod.passiveGoldEarned || 0) > 0 && (
-                        <span className="rounded bg-emerald-500/20 border border-emerald-400/40 px-1.5 py-0.5 text-[8.5px] font-bold text-emerald-300">
-                          Прибыль в казну: +{(prod.passiveGoldEarned || 0).toLocaleString()} 🪙
-                        </span>
-                      )}
-                    </div>
-                  ) : (
-                    <span className="text-slate-300 font-black">🏳️ Нейтральная территория Порта</span>
-                  )}
+                {/* Официальный Знак, Владелец RedBlack, Баланс объекта и Статус работы цеха */}
+                <div className="rounded-xl border border-amber-500/35 bg-slate-950/90 px-2.5 py-2 flex flex-wrap items-center justify-between gap-1.5 text-[9.5px]">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-amber-400 bg-amber-950 shadow">
+                      <ItemIcon
+                        icon={sector.ownerClanEmblem || '👑'}
+                        name={sector.ownerClanName || ownerName}
+                        className="w-3.5 h-3.5 text-xs"
+                        imgClassName="w-3.5 h-3.5 object-contain"
+                      />
+                    </span>
+                    <span className="font-black text-amber-300">
+                      [{sector.ownerClanTag || 'RB'}] {sector.ownerClanName || 'Империя RedBlack'}
+                    </span>
+                    <span className="text-slate-400">•</span>
+                    <span className="font-bold text-emerald-300">
+                      🏦 Баланс: {(prod.facilityBalanceGold ?? 15000).toLocaleString()} 🪙
+                    </span>
+                  </div>
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[8.5px] font-black ${
+                      isStoppedNoWorkers
+                        ? 'bg-rose-500/20 border border-rose-400/50 text-rose-300'
+                        : 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300'
+                    }`}
+                  >
+                    {isStoppedNoWorkers
+                      ? '⏸ Цех остановлен (0 раб.)'
+                      : `⚙️ Цех активен (${activeWorkers.length}/${maxWorkers})`}
+                  </span>
                 </div>
 
                 {/* БЛОК 1: РАБОТА НА ПРОИЗВОДСТВЕ (ДЛЯ ВСЕХ ИГРОКОВ: ДО 3/6 ЧЕЛ, МАКС 2 ЧАСА, +250 ЗОЛОТА/Ч И +1 ПРОИЗВОДСТВО/Ч) */}
                 <div className="rounded-xl border border-cyan-500/35 bg-cyan-950/20 p-2.5 space-y-2">
                   <div className="flex items-center justify-between gap-1.5">
                     <div className="text-[10px] font-black uppercase text-cyan-200 flex items-center gap-1">
-                      <span>🔨 Работа на производстве (Для всех)</span>
+                      <span>🔨 Работа на объекте (Оплата: {prod.workerWageGold || PORT_WORKER_GOLD_PER_HOUR} 🪙/ч)</span>
                     </div>
                     <span className="rounded-md border border-cyan-400/50 bg-slate-950 px-2 py-0.5 text-[9px] font-black text-cyan-300">
                       Работников: {activeWorkers.length} / {maxWorkers} чел.
                     </span>
                   </div>
 
-                  <div className="text-[9px] text-slate-300">
-                    Таймер смены: <strong>макс. 2 часа</strong> • Награда за каждый час: <strong className="text-amber-300">+250 🪙</strong> и <strong className="text-cyan-300">+1 к навыку «Производство»</strong> (+7 статов за уровень).
-                  </div>
-
                   {/* Список активных работников */}
-                  {activeWorkers.length > 0 && (
+                  {unclaimedWorkers.length > 0 ? (
                     <div className="flex flex-wrap gap-1">
-                      {activeWorkers.map((w, idx) => {
+                      {unclaimedWorkers.map((w, idx) => {
                         const isDone = nowMs >= w.endsAt;
                         return (
                           <span
@@ -1308,36 +1723,66 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                             <strong className="text-white">{w.nick}</strong>
                             <span className="text-cyan-300">({w.durationHours}ч)</span>
                             <span className="font-mono text-amber-300">
-                              {isDone ? '✅ Готово' : formatShortMinSec(w.endsAt, nowMs)}
+                              {isDone ? '✅ Окончена' : formatRemainingTimer(w.endsAt, nowMs)}
                             </span>
                           </span>
                         );
                       })}
                     </div>
+                  ) : (
+                    <div className="text-[8.5px] text-rose-300 font-semibold">
+                      ⏸ На объекте нет активных рабочих — производство реликвий приостановлено до начала смены.
+                    </div>
                   )}
 
-                  {myWorkerHere ? (
-                    <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-cyan-500/20">
-                      <span className="text-[9px] font-bold text-emerald-300">
-                        {nowMs >= myWorkerHere.endsAt
-                          ? `✅ Ваша смена (${myWorkerHere.durationHours} ч.) окончена!`
-                          : `⏳ Вы в смене (${myWorkerHere.durationHours} ч.): ${formatRemainingTimer(myWorkerHere.endsAt, nowMs)}`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleClaimWorkShift(sector.id, true)}
-                        className="rounded-lg bg-gradient-to-r from-emerald-400 to-amber-400 px-2.5 py-1 text-[9px] font-black uppercase text-slate-950 shadow cursor-pointer hover:brightness-110"
-                      >
-                        💰 Забрать +{myWorkerHere.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +{myWorkerHere.durationHours} Производство
-                      </button>
-                    </div>
-                  ) : (
+                  {myWorkerHere ? (() => {
+                    const totalMs = Math.max(1000, (myWorkerHere.durationHours || 2) * 3600 * 1000);
+                    const elapsedMs = Math.max(0, Math.min(totalMs, nowMs - myWorkerHere.startedAt));
+                    const progressPct = Math.min(100, Math.max(1, Math.round((elapsedMs / totalMs) * 100)));
+                    const isDone = nowMs >= myWorkerHere.endsAt;
+                    return (
+                      <div className="space-y-1.5 pt-1 border-t border-cyan-500/20">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5">
+                          <span className="text-[9.5px] font-black text-emerald-300">
+                            {isDone
+                              ? `✅ Смена (${myWorkerHere.durationHours} ч.) завершена!`
+                              : `⏳ Смена активна: ${formatRemainingTimer(myWorkerHere.endsAt, nowMs)} (${progressPct}%)`}
+                          </span>
+                          {isDone ? (
+                            <button
+                              type="button"
+                              onClick={() => handleClaimWorkShift(sector.id, false)}
+                              className="rounded-lg bg-gradient-to-r from-emerald-400 to-amber-400 px-2.5 py-1 text-[9px] font-black uppercase text-slate-950 shadow cursor-pointer hover:brightness-110 animate-pulse"
+                            >
+                              💰 Забрать +{myWorkerHere.durationHours * PORT_WORKER_GOLD_PER_HOUR} 🪙 и +{myWorkerHere.durationHours} Произв.
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled
+                              className="rounded-lg border border-emerald-500/50 bg-slate-950/90 px-2.5 py-1 text-[9px] font-mono font-black text-emerald-300 cursor-not-allowed opacity-90"
+                            >
+                              🔒 Смена активна: {formatRemainingTimer(myWorkerHere.endsAt, nowMs)}
+                            </button>
+                          )}
+                        </div>
+                        {/* Шкала прогресса работы */}
+                        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-950 border border-cyan-500/40">
+                          <div
+                            className="h-full bg-gradient-to-r from-cyan-400 via-emerald-400 to-amber-400 transition-all duration-500"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })() : (
                     <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1 border-t border-cyan-500/20">
                       <div className="flex items-center gap-1">
                         {([1, 2] as (1 | 2)[]).map((hrs) => (
                           <button
                             key={hrs}
                             type="button"
+                            disabled={Boolean(myActiveShift)}
                             onClick={() =>
                               setShiftDurationBySector((prev) => ({ ...prev, [sector.id]: hrs }))
                             }
@@ -1345,9 +1790,9 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                               chosenShiftHours === hrs
                                 ? 'border-cyan-400 bg-cyan-500/30 text-white'
                                 : 'border-slate-700 bg-slate-900 text-slate-400'
-                            }`}
+                            } ${myActiveShift ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
-                            ⏱ {hrs} ч. (+{hrs * PORT_WORKER_GOLD_PER_HOUR} 🪙 / +{hrs} Произв.)
+                            ⏱ {hrs} ч. (+{hrs * PORT_WORKER_GOLD_PER_HOUR} 🪙)
                           </button>
                         ))}
                       </div>
@@ -1357,49 +1802,71 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         onClick={() => handleStartWorkShift(sector.id, chosenShiftHours)}
                         className={`rounded-lg px-2.5 py-1 text-[9px] font-black uppercase transition-all cursor-pointer ${
                           activeWorkers.length >= maxWorkers || Boolean(myActiveShift)
-                            ? 'border border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed'
+                            ? 'border border-slate-700 bg-slate-800 text-slate-400 cursor-not-allowed'
                             : 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 shadow hover:brightness-110'
                         }`}
                       >
                         {activeWorkers.length >= maxWorkers
                           ? `Мест нет (${activeWorkers.length}/${maxWorkers})`
                           : myActiveShift
-                          ? 'Вы уже на смене'
+                          ? `🔒 На смене (${formatRemainingTimer(myActiveShift.worker.endsAt, nowMs)})`
                           : `🔨 Работать (${chosenShiftHours} ч.)`}
                       </button>
                     </div>
                   )}
 
-                  {/* Расширение объектов (объединение 2 производств клана -> 6 рабочих мест и двойной склад) */}
+                  {/* Расширение объектов (объединение 2 производств -> 6 рабочих мест и двойной склад) */}
                   {isOwnedByUs && !prod.isMerged && myBuffs.ownedSectors.length >= 2 && (
                     <button
                       type="button"
                       onClick={() => handleMergeFactories(sector.id)}
                       className="w-full rounded-lg border border-purple-400/60 bg-purple-950/50 hover:bg-purple-900/60 py-1 px-2 text-[9px] font-black text-purple-200 cursor-pointer"
                     >
-                      🏗️ Объединить 2 объекта клана (Расширить до 6 работников и x2 склада)
+                      🏗️ Объединить со смежным объектом (Расширить до 6 работников и x2 склада)
                     </button>
                   )}
                 </div>
 
-                {/* БЛОК 2: ЭКОНОМИКА ПРОИЗВОДСТВА (РЫБА -> РЕЛИКВИИ, ЛИМИТ 100 РЫБЫ / 70 РЕЛИКВИЙ, 5 РЫБ = 1 РЕЛИКВИЯ, ЦЕНА = 4 РЫБЫ) */}
+                {/* БЛОК 2: МЕЖПРОИЗВОДСТВЕННАЯ ЦЕПОЧКА И ВЫПУСК РЕЛИКВИЙ (ПО АНАЛОГИИ С GWARS.IO) */}
                 <div className="rounded-xl border border-amber-500/35 bg-amber-950/15 p-2.5 space-y-2">
-                  <div className="flex items-center justify-between gap-1 text-[9.5px]">
+                  <div className="flex items-center justify-between gap-1 text-[9px] flex-wrap">
                     <span className="font-black uppercase text-amber-300">
-                      🏺 Цех Реликвий (5 рыбин/ч = 1 Реликвия)
+                      {prod.productionStage === 'raw_processing'
+                        ? '🧪 Звено 1 (Сырьевой цех): Рыба → Экстракт + Реликвии'
+                        : '🏺 Звено 2 (Конечный цех): Экстракт + Рыба → Реликвии'}
                     </span>
                     <span className="font-bold text-emerald-300">
-                      Цена: 1 Реликвия = 4 рыбы ({relicUnitPrice} 🪙)
+                      Курс: 1 Реликвия = 4 рыбы ({relicUnitPrice} 🪙)
                     </span>
                   </div>
 
-                  {/* Шкалы склада рыбы (макс 100 / 200) и готовых реликвий (макс 70 / 140) */}
-                  <div className="grid grid-cols-2 gap-2 text-[9px]">
+                  {linkedPartner && (
+                    <div className="rounded-lg border border-purple-500/30 bg-slate-950/80 px-2 py-1 flex items-center justify-between gap-1 text-[8.5px]">
+                      <span className="text-purple-200 truncate">
+                        🔗 Цепочка:{' '}
+                        <strong>
+                          {prod.productionStage === 'raw_processing'
+                            ? `Поставляет «${prod.intermediateResourceName}» в «${linkedPartner.name}»`
+                            : `Получает «${prod.intermediateResourceName}» от «${linkedPartner.name}»`}
+                        </strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleSupplyIntermediate(sector.id)}
+                        className="rounded border border-purple-400/60 bg-purple-600/30 hover:bg-purple-600/50 px-1.5 py-0.5 font-black text-purple-100 cursor-pointer shrink-0"
+                      >
+                        🚛 Поставка (5 ед.)
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Шкалы склада: Сырая рыба, Промежуточное сырьё цепочки и Готовые Реликвии */}
+                  <div className="grid grid-cols-3 gap-1.5 text-[8.5px]">
                     <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-1.5 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-sky-300 font-bold">🐟 Склад рыбы:</span>
+                        <span className="text-sky-300 font-bold">🐟 Рыба:</span>
                         <span className="font-black text-white">
-                          {prod.fishStock} / {prod.maxFishStock} шт.
+                          {prod.fishStock}/{prod.maxFishStock}
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
@@ -1412,9 +1879,26 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
 
                     <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-1.5 space-y-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-amber-300 font-bold">🏺 Склад реликвий:</span>
+                        <span className="text-purple-300 font-bold truncate" title={prod.intermediateResourceName}>
+                          🧪 Сырьё:
+                        </span>
                         <span className="font-black text-white">
-                          {prod.relicStock} / {prod.maxRelicStock} шт.
+                          {procStock}/{maxProcStock}
+                        </span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+                        <div
+                          className="h-full bg-purple-500 transition-all"
+                          style={{ width: `${procPct}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/90 p-1.5 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-amber-300 font-bold">🏺 Реликвии:</span>
+                        <span className="font-black text-white">
+                          {prod.relicStock}/{prod.maxRelicStock}
                         </span>
                       </div>
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
@@ -1451,9 +1935,15 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                     <button
                       type="button"
                       onClick={() => handleCraftRelicsNow(sector.id)}
-                      className="rounded-lg border border-amber-500/50 bg-amber-950/60 hover:bg-amber-900/70 py-1 px-2 text-[8.5px] font-black text-amber-200 cursor-pointer"
+                      className={`rounded-lg border py-1 px-2 text-[8.5px] font-black cursor-pointer ${
+                        isStoppedNoWorkers
+                          ? 'border-rose-500/40 bg-rose-950/40 text-rose-300'
+                          : 'border-amber-500/50 bg-amber-950/60 hover:bg-amber-900/70 text-amber-200'
+                      }`}
                     >
-                      ⚙️ Переработать {PORT_FISH_PER_RELIC} рыб → 1 Реликвия
+                      {isStoppedNoWorkers
+                        ? '⏸ Цех стоит (Нужны рабочие)'
+                        : `⚙️ Цикл (${PORT_FISH_PER_RELIC} рыб → Реликвия)`}
                     </button>
                     <button
                       type="button"
@@ -1575,7 +2065,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                   </button>
                 ) : isOwnedByUs ? (
                   <div className="w-full rounded-xl border border-emerald-500/40 bg-emerald-950/50 py-2 text-center text-[10px] font-black text-emerald-300">
-                    ✅ Под контролем вашего клана [{clan?.tag}] ({sector.bonusLabel})
+                    ✅ Под контролем владельца {ownerName} [{sector.ownerClanTag || 'RB'}] ({sector.bonusLabel})
                   </div>
                 ) : isShielded && sector.protectionUntil ? (
                   <div className="w-full rounded-xl border border-sky-500/40 bg-sky-950/40 py-2 text-center text-[10px] font-bold text-sky-300">

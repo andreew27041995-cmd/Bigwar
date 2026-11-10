@@ -18,6 +18,7 @@ import { ClanTerritoryWarsView } from './ClanMechanicsSubViews';
 import { getPlayerClan } from '../../utils/clanStorage';
 
 interface PortModalProps {
+  currentUser?: string | null;
   hero: HeroState;
   inventory: GameItem[];
   equipped?: EquippedGear;
@@ -39,6 +40,7 @@ interface PortModalProps {
 }
 
 export const PortModal: React.FC<PortModalProps> = ({
+  currentUser,
   hero,
   inventory,
   equipped,
@@ -237,8 +239,8 @@ export const PortModal: React.FC<PortModalProps> = ({
         <div className="flex-1 overflow-y-auto p-3 space-y-3">
           {portTab === 'productions' ? (
             <ClanTerritoryWarsView
-              clan={getPlayerClan(hero.nick, hero.clanId)}
-              myNick={hero.nick || 'Игрок'}
+              clan={getPlayerClan((currentUser || hero.nick || 'Игрок').trim(), hero.clanId)}
+              myNick={(currentUser || hero.nick || 'Игрок').trim()}
               hero={hero}
               inventory={inventory}
               equipped={equipped}

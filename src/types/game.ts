@@ -461,10 +461,25 @@ export interface PortFactoryWorkerSession {
 export interface PortProductionState {
   factoryType: string;
   factoryCategoryLabel: string;
+  /** Этап производственной цепочки (по аналогии с gwars.io): 'raw_processing' (Первичная переработка рыбы) или 'relic_foundry' (Выпуск Реликвий из обработанного сырья) */
+  productionStage?: 'raw_processing' | 'relic_foundry';
+  /** ID связанного объекта в межпроизводственной цепочке (поставщик или потребитель) */
+  linkedSectorId?: string | null;
+  /** Название промежуточного ресурса цепочки (например, «Эликсир Рыбьего Жира») */
+  intermediateResourceName?: string;
+  /** Уровень объекта недвижимости (1 — базовый, 2 — объединённый/расширенный) */
+  facilityLevel?: number;
+  /** Текущий баланс объекта недвижимости (в золоте) для выплаты зарплат и содержания */
+  facilityBalanceGold?: number;
+  /** Ставка оплаты за 1 час смены (по умолчанию 250 золота) */
+  workerWageGold?: number;
   isMerged?: boolean;
   mergedWithSectorId?: string | null;
   fishStock: number;
   maxFishStock: number;
+  /** Склад промежуточного ресурса — обработанного сырья (базовый лимит 100, при объединении 200) */
+  processedStock?: number;
+  maxProcessedStock?: number;
   relicStock: number;
   maxRelicStock: number;
   lastCraftTickAt: number;
@@ -479,6 +494,8 @@ export interface ClanTerritorySector {
   icon: string;
   description: string;
   zone?: 'port';
+  /** Официальный владелец недвижимости (никнейм игрока, по ТЗ все объекты переданы RedBlack) */
+  ownerNick?: string | null;
   ownerClanId: string | null;
   ownerClanName: string | null;
   ownerClanTag: string | null;

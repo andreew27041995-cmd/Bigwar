@@ -444,7 +444,7 @@ export default function App() {
   >(null);
   const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
   const [shopInitialCategory, setShopInitialCategory] = useState<'weapon' | 'transport'>('weapon');
-  const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>('profile');
+  const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'estate' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>('profile');
   const [dailyModalInitialTab, setDailyModalInitialTab] = useState<'quests' | 'login'>('quests');
   const [clanModalInitialTab, setClanModalInitialTab] = useState<'myClan' | 'territories' | undefined>(undefined);
   const [clanModalInitialSectorId, setClanModalInitialSectorId] = useState<string | null>(null);
@@ -11643,7 +11643,7 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.81</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.82</strong></span>
           <span>|</span>
           <span>Обновлено: <strong className="text-slate-300">10.11.2026</strong></span>
         </div>
@@ -11680,6 +11680,19 @@ export default function App() {
                 flushPlayerUpdates(currentUserRef.current, {
                   npc_companion: updatedNpc,
                   npcCompanion: updatedNpc
+                });
+              }
+            }}
+            onOpenPort={() => setActiveModal('port')}
+            onUpdateHero={(patch) => {
+              const nextHero: HeroState = { ...heroRef.current, ...patch };
+              heroRef.current = nextHero;
+              setHero(nextHero);
+              saveGameToStorage({ hero: nextHero });
+              if (currentUserRef.current) {
+                flushPlayerUpdates(currentUserRef.current, {
+                  gold: nextHero.gold,
+                  hero: nextHero
                 });
               }
             }}
@@ -12592,6 +12605,7 @@ export default function App() {
         {/* Port Modal (Location «Порт»: Round-Trip Transport Travel, Forge & Modification Altar) */}
         {activeModal === 'port' && (
           <PortModal
+            currentUser={currentUser}
             hero={hero}
             inventory={inventory}
             equipped={equipped}
@@ -12607,7 +12621,18 @@ export default function App() {
             onCompleteTravelStep={handleCompletePortTravelStep}
             onOpenForgeWeapon={() => setActiveModal('createItem')}
             onOpenAltar={() => setActiveModal('altar')}
-            onUpdateHero={(patch) => setHero((prev) => ({ ...prev, ...patch }))}
+            onUpdateHero={(patch) => {
+              const nextHero: HeroState = { ...heroRef.current, ...patch };
+              heroRef.current = nextHero;
+              setHero(nextHero);
+              saveGameToStorage({ hero: nextHero });
+              if (currentUserRef.current) {
+                flushPlayerUpdates(currentUserRef.current, {
+                  gold: nextHero.gold,
+                  hero: nextHero
+                });
+              }
+            }}
             onUpdateInventory={setInventory}
             showToast={showToast}
           />

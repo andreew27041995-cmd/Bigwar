@@ -2029,7 +2029,7 @@ export function recordPlayerToProgressLedger(nick: string, state: any): void {
     });
     const payloadStr = JSON.stringify({
       is_system_ledger: true,
-      version: '1.1.81',
+      version: '1.1.82',
       updatedAt: Date.now(),
       players: playersObj
     });

@@ -38,14 +38,26 @@ import {
   findPlayerInSupabase,
   updatePlayerInDatabase
 } from '../../utils/supabase';
-import { renamePlayerInClans, doesPlayerHaveClanBadge } from '../../utils/clanStorage';
+import {
+  renamePlayerInClans,
+  doesPlayerHaveClanBadge,
+  getClanTerritories,
+  getPlayerOwnedPortEstates,
+  managePortFacilityBalance,
+  supplyIntermediateResourceToLinkedFactory,
+  mergeClanPortFactories,
+  DEFAULT_PORT_ESTATE_OWNER_NICK,
+  PORT_BASE_MAX_WORKERS,
+  PORT_MERGED_MAX_WORKERS,
+  PORT_WORKER_GOLD_PER_HOUR
+} from '../../utils/clanStorage';
 
 interface CharacterModalProps {
   currentUser?: string | null;
   hero: HeroState;
   equipped: EquippedGear;
   tradeCount: number;
-  initialTab?: 'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings';
+  initialTab?: 'profile' | 'estate' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings';
   lootHistory?: LootHistoryEntry[];
   onClearLootHistory?: () => void;
   shopSkins?: CharacterSkinTemplate[];
@@ -69,6 +81,8 @@ interface CharacterModalProps {
   onOpenPremium?: () => void;
   onOpenLeaderboard?: () => void;
   onOpenAchievements?: () => void;
+  onOpenPort?: () => void;
+  onUpdateHero?: (patch: Partial<HeroState>) => void;
   claimableAchievementsCount?: number;
   onClaimAchievement?: (achievement: EvaluatedAchievement) => void;
   onClaimAllAchievements?: (achievements: EvaluatedAchievement[]) => void;
@@ -114,6 +128,8 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   onOpenPremium,
   onOpenLeaderboard,
   onOpenAchievements,
+  onOpenPort,
+  onUpdateHero,
   claimableAchievementsCount = 0,
   onClaimAchievement,
   onClaimAllAchievements,
@@ -130,7 +146,8 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   onSwitchAccount,
   showToast
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'profile' | 'estate' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>(initialTab);
+  const [, setEstateTick] = useState(0);
   const [lootFilter, setLootFilter] = useState<'all' | 'monster' | 'chest'>('all');
   const [achCategoryFilter, setAchCategoryFilter] = useState<'all' | AchievementCategoryKey>('all');
   const [achStatusFilter, setAchStatusFilter] = useState<'all' | 'claimable' | 'in_progress' | 'claimed'>('all');
@@ -631,14 +648,14 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   return (
     <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
       <div className="flex items-center justify-between border-b border-slate-700 pb-2">
-        <span className="text-xs font-bold text-amber-400">👤 Персонаж и Почта</span>
+        <span className="text-xs font-bold text-amber-400">👤 Персонаж, Недвижимость и Почта</span>
         <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
           ✕
         </button>
       </div>
 
-      {/* Top Section Tabs: Экипировка vs Достижения vs Коллекция vs Почта vs Рюкзак NPC vs Loot History vs Персонажи vs Настройки */}
-      <div className="mt-2 grid grid-cols-4 sm:grid-cols-8 gap-1 border-b border-slate-800 pb-2">
+      {/* Top Section Tabs: Экипировка vs Недвижимость vs Достижения vs Коллекция vs Почта vs Рюкзак NPC vs Loot History vs Персонажи vs Настройки */}
+      <div className="mt-2 grid grid-cols-3 sm:grid-cols-9 gap-1 border-b border-slate-800 pb-2">
         <button
           onClick={() => setActiveTab('profile')}
           className={`relative rounded-md py-1.5 px-1 text-[9px] font-extrabold transition-all text-center truncate ${
@@ -653,6 +670,26 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
               +{hero.statPoints}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setActiveTab('estate')}
+          className={`relative rounded-md py-1.5 px-1 text-[9px] font-extrabold transition-all text-center truncate flex items-center justify-center gap-0.5 ${
+            activeTab === 'estate'
+              ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-slate-950 shadow-[0_0_10px_rgba(245,158,11,0.5)]'
+              : 'border border-amber-500/50 bg-slate-900 text-amber-300 hover:bg-slate-800'
+          }`}
+          title="Недвижимость в Порту и управление производственными объектами"
+        >
+          <span className="truncate">🏢 Недвиж.</span>
+          <span
+            className={`ml-0.5 inline-flex h-3.5 min-w-[14px] items-center justify-center rounded-full px-1 text-[7px] font-black ${
+              activeTab === 'estate'
+                ? 'bg-slate-950 text-amber-300'
+                : 'bg-amber-500/25 text-amber-200 border border-amber-400/50'
+            }`}
+          >
+            {getPlayerOwnedPortEstates((currentUser || hero.nick || '').trim()).length}
+          </span>
         </button>
         <button
           onClick={() => setActiveTab('achievements')}
@@ -2328,7 +2365,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
             );
           })()}
         </div>
-      ) : (
+      ) : activeTab === 'profile' ? (
         <div className="flex-1 overflow-y-auto pt-1.5 space-y-2.5">
           {(() => {
             const activeSkin =
@@ -3425,7 +3462,294 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
             </div>
           )}
         </div>
-      )}
+      ) : null}
+
+      {/* ==================== ESTATE TAB (НЕДВИЖИМОСТЬ И ПРОИЗВОДСТВЕННЫЕ ОБЪЕКТЫ В ПОРТУ) ==================== */}
+      {activeTab === 'estate' && (() => {
+        const activePlayerNick = (currentUser || hero.nick || 'Игрок').trim();
+        const allPortSectors = getClanTerritories();
+        const myEstates = getPlayerOwnedPortEstates(activePlayerNick);
+        const displayedEstates = myEstates.length > 0 ? myEstates : allPortSectors;
+        const totalBalanceGold = myEstates.reduce(
+          (acc, s) => acc + Number(s.production?.facilityBalanceGold ?? 15000),
+          0
+        );
+        const totalPassiveProfit = myEstates.reduce(
+          (acc, s) => acc + Number(s.production?.passiveGoldEarned ?? 0),
+          0
+        );
+
+        const formatShiftCountdown = (targetMs: number) => {
+          const diff = Math.max(0, targetMs - nowMs);
+          const totalSec = Math.floor(diff / 1000);
+          const h = Math.floor(totalSec / 3600);
+          const m = Math.floor((totalSec % 3600) / 60);
+          const s = totalSec % 60;
+          return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+        };
+
+        const handleEstateBalanceAction = (
+          sectorId: string,
+          mode: 'deposit' | 'withdraw',
+          amountGold = 1000
+        ) => {
+          const res = managePortFacilityBalance(
+            sectorId,
+            activePlayerNick,
+            mode,
+            amountGold,
+            hero.gold || 0
+          );
+          if (!res.ok) {
+            if (showToast) showToast(`⚠️ ${res.error}`);
+            return;
+          }
+          if (typeof res.deltaHeroGold === 'number' && onUpdateHero) {
+            onUpdateHero({
+              gold: Math.max(0, (hero.gold || 0) + res.deltaHeroGold)
+            });
+          }
+          if (showToast) showToast(res.message || '🏦 Баланс недвижимости обновлён!');
+          setEstateTick((t) => t + 1);
+        };
+
+        const handleEstateSupplyChain = (sectorId: string) => {
+          const res = supplyIntermediateResourceToLinkedFactory(sectorId, activePlayerNick, 5);
+          if (!res.ok) {
+            if (showToast) showToast(`⚠️ ${res.error}`);
+            return;
+          }
+          if (showToast) showToast(res.message || '🚛 Сырьё поставлено в смежный цех!');
+          setEstateTick((t) => t + 1);
+        };
+
+        const handleEstateMerge = (sectorId: string) => {
+          const res = mergeClanPortFactories(hero.clanId || '', activePlayerNick, sectorId);
+          if (!res.ok) {
+            if (showToast) showToast(`⚠️ ${res.error}`);
+            return;
+          }
+          if (showToast) showToast(res.message || '🏗️ Объекты недвижимости объединены!');
+          setEstateTick((t) => t + 1);
+        };
+
+        return (
+          <div className="mt-2 flex-1 overflow-y-auto space-y-3 pr-1 text-xs">
+            {/* Сводка по владению недвижимостью в Порту */}
+            <div className="rounded-2xl border border-amber-500/60 bg-gradient-to-br from-amber-950/50 via-slate-900 to-slate-950 p-3.5 space-y-2.5 shadow-lg">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="text-2xl">🏢</span>
+                  <div>
+                    <div className="text-xs font-black uppercase tracking-wide text-amber-300">
+                      Недвижимость и Производства в Порту
+                    </div>
+                    <div className="text-[10px] text-slate-300">
+                      Персонаж: <strong className="text-white">{activePlayerNick}</strong> • Вся недвижимость Порта закреплена за официальным владельцем <strong className="text-amber-300">{DEFAULT_PORT_ESTATE_OWNER_NICK}</strong>
+                    </div>
+                  </div>
+                </div>
+                {onOpenPort && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      onOpenPort();
+                    }}
+                    className="rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-3 py-1.5 text-[10px] font-black uppercase text-slate-950 shadow hover:brightness-110 cursor-pointer"
+                  >
+                    ⚓ Перейти в Порт
+                  </button>
+                )}
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl border border-amber-500/40 bg-slate-950/90 p-2">
+                  <div className="text-[8.5px] font-bold uppercase text-slate-400">Объектов во владении</div>
+                  <div className="text-sm font-black text-amber-300">
+                    {myEstates.length} / {allPortSectors.length}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-emerald-500/40 bg-slate-950/90 p-2">
+                  <div className="text-[8.5px] font-bold uppercase text-slate-400">Баланс касс объектов</div>
+                  <div className="text-sm font-black text-emerald-300">
+                    {totalBalanceGold.toLocaleString()} 🪙
+                  </div>
+                </div>
+                <div className="rounded-xl border border-yellow-500/40 bg-slate-950/90 p-2">
+                  <div className="text-[8.5px] font-bold uppercase text-slate-400">Накопленная прибыль</div>
+                  <div className="text-sm font-black text-yellow-300">
+                    +{totalPassiveProfit.toLocaleString()} 🪙
+                  </div>
+                </div>
+              </div>
+
+              {myEstates.length === 0 && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-950/30 p-2.5 text-[10px] text-amber-200">
+                  👑 Сейчас все {allPortSectors.length} производственных объектов в Порту находятся под контролем владельца <strong>{DEFAULT_PORT_ESTATE_OWNER_NICK}</strong>. Ниже представлен реестр объектов Порта.
+                </div>
+              )}
+            </div>
+
+            {/* Список объектов недвижимости */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {displayedEstates.map((sector) => {
+                const prod = sector.production;
+                const ownerNick = sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK;
+                const isMyObject = ownerNick.trim().toLowerCase() === activePlayerNick.toLowerCase();
+                const level = prod?.isMerged ? 2 : prod?.facilityLevel || 1;
+                const maxW = prod?.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS;
+                const activeW = (prod?.workers || []).filter((w) => !w.claimed && w.endsAt > nowMs);
+                const unclaimedW = (prod?.workers || []).filter((w) => !w.claimed);
+                const isStopped = activeW.length === 0;
+                const linkedPartner = prod?.linkedSectorId
+                  ? allPortSectors.find((s) => s.id === prod.linkedSectorId) || null
+                  : null;
+
+                return (
+                  <div
+                    key={sector.id}
+                    className={`rounded-2xl border p-3 space-y-2.5 ${
+                      isMyObject
+                        ? 'border-emerald-500/60 bg-gradient-to-b from-emerald-950/25 via-slate-900 to-slate-950'
+                        : 'border-slate-800 bg-slate-900/90'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-amber-500/50 bg-slate-950 text-xl">
+                          {sector.icon}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-black text-white truncate flex items-center gap-1.5 flex-wrap">
+                            <span>{sector.name}</span>
+                            <span className="rounded bg-amber-500/25 border border-amber-400/50 px-1.5 py-0.2 text-[8.5px] font-black text-amber-200">
+                              Ур. {level}
+                            </span>
+                          </div>
+                          <div className="text-[9.5px] font-bold text-amber-300 flex items-center gap-1 flex-wrap">
+                            <span>👑 Владелец: <strong className="text-white">{ownerNick}</strong></span>
+                            <span>•</span>
+                            <span>[{sector.ownerClanTag || 'RB'}]</span>
+                          </div>
+                        </div>
+                      </div>
+                      <span
+                        className={`rounded-lg px-2 py-0.5 text-[8.5px] font-black uppercase shrink-0 ${
+                          isStopped
+                            ? 'bg-rose-500/20 border border-rose-400/50 text-rose-300'
+                            : 'bg-emerald-500/20 border border-emerald-400/50 text-emerald-300'
+                        }`}
+                      >
+                        {isStopped ? '⏸ Цех стоит (0 раб.)' : `⚙️ Активен (${activeW.length}/${maxW})`}
+                      </span>
+                    </div>
+
+                    {/* Финансы и цепочка */}
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/90 p-2 space-y-1 text-[9.5px]">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Текущий баланс объекта:</span>
+                        <span className="font-black text-emerald-300">
+                          {(prod?.facilityBalanceGold ?? 15000).toLocaleString()} 🪙
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Оплата смены рабочим:</span>
+                        <span className="font-bold text-amber-300">
+                          {prod?.workerWageGold || PORT_WORKER_GOLD_PER_HOUR} 🪙/ч + 1 Произв./ч
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Накопленная прибыль:</span>
+                        <span className="font-black text-yellow-300">
+                          +{(prod?.passiveGoldEarned || 0).toLocaleString()} 🪙
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Склад (Рыба / Сырьё / Реликвии):</span>
+                        <span className="font-black text-white">
+                          🐟 {prod?.fishStock ?? 0} • 🧪 {prod?.processedStock ?? 16} • 🏺 {prod?.relicStock ?? 0}
+                        </span>
+                      </div>
+                      {linkedPartner && (
+                        <div className="text-[8.5px] text-purple-300 pt-0.5 border-t border-slate-800">
+                          🔗 Смежный цех цепочки: <strong>{linkedPartner.name}</strong> ({prod?.intermediateResourceName})
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Список активных рабочих */}
+                    <div className="rounded-xl border border-cyan-500/30 bg-cyan-950/15 p-2 space-y-1">
+                      <div className="flex items-center justify-between text-[9px] font-black text-cyan-300">
+                        <span>👷 Активные рабочие на смене:</span>
+                        <span>{activeW.length} / {maxW} чел.</span>
+                      </div>
+                      {unclaimedW.length === 0 ? (
+                        <div className="text-[8.5px] text-rose-300">
+                          На объекте сейчас никто не работает (производство реликвий остановлено).
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {unclaimedW.map((w, idx) => (
+                            <span
+                              key={`${w.nick}_${idx}`}
+                              className="inline-flex items-center gap-1 rounded border border-cyan-500/40 bg-slate-950 px-1.5 py-0.5 text-[8.5px] text-white"
+                            >
+                              <span>{w.avatar || '🔨'}</span>
+                              <strong>{w.nick}</strong>
+                              <span className="font-mono text-amber-300">
+                                {nowMs >= w.endsAt ? '✅ Окончена' : formatShiftCountdown(w.endsAt)}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Кнопки управления и сбора прибыли (для владельца RedBlack) */}
+                    {isMyObject && (
+                      <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleEstateBalanceAction(sector.id, 'withdraw', 1000)}
+                          className="rounded-lg bg-gradient-to-r from-amber-500 to-yellow-400 py-1.5 px-2 text-[9px] font-black uppercase text-slate-950 shadow hover:brightness-110 cursor-pointer"
+                        >
+                          💰 Снять прибыль (+1 000 🪙)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleEstateBalanceAction(sector.id, 'deposit', 1000)}
+                          className="rounded-lg border border-emerald-500/60 bg-emerald-950/70 hover:bg-emerald-900 py-1.5 px-2 text-[9px] font-black text-emerald-200 cursor-pointer"
+                        >
+                          🏦 Внести в кассу (1 000 🪙)
+                        </button>
+                        {linkedPartner && (
+                          <button
+                            type="button"
+                            onClick={() => handleEstateSupplyChain(sector.id)}
+                            className="rounded-lg border border-purple-400/60 bg-purple-950/60 hover:bg-purple-900 py-1 px-2 text-[8.5px] font-black text-purple-200 cursor-pointer"
+                          >
+                            🚛 Поставить 5 ед. сырья в смежный цех
+                          </button>
+                        )}
+                        {!prod?.isMerged && (
+                          <button
+                            type="button"
+                            onClick={() => handleEstateMerge(sector.id)}
+                            className="rounded-lg border border-cyan-400/60 bg-cyan-950/60 hover:bg-cyan-900 py-1 px-2 text-[8.5px] font-black text-cyan-200 cursor-pointer"
+                          >
+                            🏗️ Объединить объект (Ур. 2)
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ==================== CHARACTERS TAB (MULTI-ACCOUNT SWITCHING UP TO 3 CHARACTERS) ==================== */}
       {activeTab === 'characters' && (
