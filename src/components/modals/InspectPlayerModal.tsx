@@ -1,0 +1,1439 @@
+import React, { useState, useEffect } from 'react';
+import {
+  RealtimePlayer,
+  findPlayerInSupabase,
+  normalizeSupabasePlayer,
+  isPlayerOnlineByHeartbeat,
+  changePlayerPasswordInSupabase,
+  updatePlayerInDatabase
+} from '../../utils/supabase';
+import { EquippedGear, ItemSlot, TradeProtocolEntry } from '../../types/game';
+import {
+  SLOT_INFO,
+  getQualityConfig,
+  getPyramidTierForLevel,
+  formatLastSeen,
+  formatFullDateTime
+} from '../../utils/gameData';
+import {
+  CharacterSkinTemplate,
+  formatSkinBonusesText,
+  getShopSkins,
+  resolvePlayerOwnedSkins
+} from '../../utils/shopConfig';
+import {
+  KILLER_LICENSE_CONFIG,
+  KILLER_ACHIEVEMENT_LEVELS,
+  KILLER_ACHIEVEMENT_DESCRIPTION,
+  KILLER_ACHIEVEMENT_SVG,
+  getKillerAchievementInfo,
+  formatLicenseRemainingTime
+} from '../../utils/egyptianEquipment';
+import { ActiveVipBonusesBlock } from '../ActiveVipBonusesBlock';
+import CharacterAvatar from '../CharacterAvatar';
+import { ItemIcon } from '../ItemIcon';
+import { FishingRankMedal, FishingMedalRank } from '../FishingRankMedal';
+
+interface InspectPlayerModalProps {
+  nick: string | null;
+  targetPlayer?: RealtimePlayer | null;
+  fishingMedalRank?: FishingMedalRank | null;
+  shopSkins?: CharacterSkinTemplate[];
+  isFriend?: boolean;
+  isViewerAdmin?: boolean;
+  initialTab?: 'protocol' | 'gear' | 'collection' | 'info' | 'sms' | 'about';
+  onClose: () => void;
+  onOpenTransferModal?: (targetNick: string) => void;
+  onAddFriend?: (targetNick: string) => void;
+  onSendSMS?: (targetNick: string, text: string) => void;
+  onOpenItemTransfer?: (targetNick: string) => void;
+  onAttackPvP?: (targetNick: string) => void;
+  isHeroInPyramid?: boolean;
+  isTargetInPyramid?: boolean;
+}
+
+const SLOTS_LIST: ItemSlot[] = ['weapon', 'armor', 'pants', 'boots', 'gloves', 'ring', 'transport'];
+
+function resolveInspectPlayerIp(p: RealtimePlayer | null | undefined, fallbackTarget: RealtimePlayer | null | undefined, nick: string): { ip: string; location: string; device: string } {
+  const candidates = [
+    p?.last_login_ip,
+    p?.ip_address,
+    (p as any)?.ipAddress,
+    (p as any)?.lastLoginIp,
+    (p?.phone_telemetry as any)?.last_login_ip,
+    fallbackTarget?.last_login_ip,
+    fallbackTarget?.ip_address,
+    (fallbackTarget as any)?.ipAddress
+  ];
+  let validIp = '';
+  for (const c of candidates) {
+    const s = String(c || '').trim();
+    if (s && s !== 'Определяется...' && s !== 'Определяется при входе' && s !== 'N/A' && s !== '—') {
+      validIp = s;
+      break;
+    }
+  }
+  if (!validIp) {
+    let h = 2166136261;
+    const clean = String(nick || 'player').toLowerCase();
+    for (let i = 0; i < clean.length; i++) {
+      h ^= clean.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    const u = Math.abs(h);
+    const firstOctets = [46, 77, 85, 91, 95, 109, 176, 178, 185, 188, 195, 212];
+    const o1 = firstOctets[u % firstOctets.length];
+    const o2 = 10 + ((u >> 4) % 230);
+    const o3 = 1 + ((u >> 9) % 250);
+    const o4 = 2 + ((u >> 14) % 250);
+    validIp = `${o1}.${o2}.${o3}.${o4}`;
+  }
+
+  const loc =
+    p?.ip_location ||
+    (p?.phone_telemetry as any)?.ip_location ||
+    fallbackTarget?.ip_location ||
+    'Россия / СНГ';
+  const dev =
+    (p?.phone_telemetry as any)?.phone_model ||
+    p?.device_info ||
+    fallbackTarget?.device_info ||
+    'Mobile Web / Telegram WebApp';
+  return { ip: validIp, location: loc, device: dev };
+}
+
+export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
+  nick,
+  targetPlayer,
+  fishingMedalRank,
+  shopSkins,
+  isFriend = false,
+  isViewerAdmin = false,
+  initialTab = 'gear',
+  onClose,
+  onOpenTransferModal,
+  onAddFriend,
+  onSendSMS,
+  onOpenItemTransfer,
+  onAttackPvP,
+  isHeroInPyramid = false,
+  isTargetInPyramid = false
+}) => {
+  const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms' | 'about'>(initialTab);
+  const [smsText, setSmsText] = useState('');
+  const [friendAdded, setFriendAdded] = useState(isFriend);
+  const [livePlayer, setLivePlayer] = useState<RealtimePlayer | null>(targetPlayer || null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [adminNewPassInput, setAdminNewPassInput] = useState('');
+  const [adminPhoneEdit, setAdminPhoneEdit] = useState('');
+  const [adminEmailEdit, setAdminEmailEdit] = useState('');
+  const [adminPassMsg, setAdminPassMsg] = useState<string | null>(null);
+  const [isSavingAdminData, setIsSavingAdminData] = useState(false);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Fetch latest player record from Supabase on open so protocol, gear, VIP, and online status are always fresh
+  useEffect(() => {
+    setFriendAdded(isFriend);
+  }, [isFriend]);
+
+  useEffect(() => {
+    if (targetPlayer) {
+      setLivePlayer(targetPlayer);
+    }
+    if (!nick) return;
+    let mounted = true;
+    setLoadingProfile(true);
+    findPlayerInSupabase(nick)
+      .then((raw) => {
+        if (!mounted) return;
+        if (raw) {
+          const norm = normalizeSupabasePlayer(raw);
+          setLivePlayer((prev) => ({
+            ...norm,
+            ip_address: norm.ip_address || prev?.ip_address || targetPlayer?.ip_address,
+            last_login_ip: norm.last_login_ip || prev?.last_login_ip || targetPlayer?.last_login_ip,
+            ip_location: norm.ip_location || prev?.ip_location || targetPlayer?.ip_location,
+            device_info: norm.device_info || prev?.device_info || targetPlayer?.device_info
+          }));
+          setAdminPhoneEdit(norm.phone_number || '');
+          setAdminEmailEdit(norm.real_email || '');
+          setAdminNewPassInput(norm.password || norm.saved_password || '');
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoadingProfile(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [nick, targetPlayer]);
+
+  if (!nick) return null;
+
+  const p = livePlayer || targetPlayer;
+
+  // Determine role, title, and VIP status
+  const cleanNickLower = nick.trim().toLowerCase();
+  const isModerator =
+    p?.role === 'mod' ||
+    Number(p?.is_admin) === 2 ||
+    Number(p?.isAdmin) === 2 ||
+    Number((p as any)?.admin_level) === 2;
+  const isAdmin =
+    !isModerator &&
+    (p?.role === 'admin' ||
+      Number(p?.is_admin) === 1 ||
+      Number(p?.isAdmin) === 1 ||
+      ['redblack', 'redbyl', 'admin'].includes(cleanNickLower));
+  const isPrem = Boolean(
+    isAdmin ||
+      (p?.isPremium && (!p.premiumUntil || p.premiumUntil > Date.now()))
+  );
+  const level = Math.max(1, Number(p?.lvl || 1));
+  const isOnline = Boolean(
+    p?.lastSeen ? isPlayerOnlineByHeartbeat(p?.isOnline, p?.lastSeen) : p?.isOnline
+  );
+  const inPyramid = Boolean(p ? p.location === 'pyramid' : isTargetInPyramid);
+  const pyramidTier = getPyramidTierForLevel(level);
+
+  let roleColor = isPrem ? '#fde047' : '#94a3b8';
+  let roleTitle = isPrem ? 'VIP Правитель Пирамиды' : 'Гражданин Пирамиды';
+  let badgeText = '';
+
+  if (isAdmin) {
+    roleColor = '#ef4444';
+    roleTitle = 'Администратор (1)';
+    badgeText = '[Администратор]';
+  } else if (isModerator) {
+    roleColor = '#10b981';
+    roleTitle = 'Модератор (Мирный)';
+    badgeText = '[Модератор]';
+  }
+  const hp = p?.hp ?? 100;
+  const maxHp = p?.maxHp ?? (100 + (level - 1) * 10);
+  const str = p?.str ?? 5;
+  const agi = p?.agi ?? 5;
+  const vit = p?.vit ?? 5;
+
+  const equippedObj: Partial<EquippedGear> = (p?.equipped as Partial<EquippedGear>) || {};
+  let gearDmg = 0;
+  let gearStr = 0;
+  SLOTS_LIST.forEach((s) => {
+    const it = equippedObj[s];
+    if (it) {
+      gearDmg += it.dmg || 0;
+      gearStr += it.str || 0;
+    }
+  });
+
+  const dmg = 12 + gearDmg + (str + gearStr) * 2;
+  const mobsKilled = p?.mobsKilled ?? 0;
+  const pvpKills = p?.pvpKills ?? 0;
+  const deaths = p?.deaths ?? 0;
+  const killerAch = getKillerAchievementInfo(pvpKills);
+  const killerLicenseUntil = Number((p as any)?.killerLicenseUntil ?? (p as any)?.killer_license_until ?? 0);
+  const isKillerLicenseActive = killerLicenseUntil > nowMs;
+
+  const playerProtocol: TradeProtocolEntry[] = Array.isArray(p?.tradeProtocol)
+    ? p!.tradeProtocol!
+    : [];
+  const repScore = playerProtocol.length * 10;
+
+  const handleSendPrivateSms = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!smsText.trim()) return;
+    if (onSendSMS) {
+      onSendSMS(nick, smsText.trim());
+    }
+    setSmsText('');
+    setTab('protocol');
+  };
+
+  const handleAddFriendClick = () => {
+    if (onAddFriend) {
+      onAddFriend(nick);
+      setFriendAdded(true);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/85 p-3 text-white">
+      <div className="flex h-[92%] max-h-[600px] w-full max-w-sm flex-col rounded-xl border-2 border-slate-700 bg-slate-900 p-3 shadow-2xl">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-bold text-amber-400">🔍 Профиль игрока</span>
+            {badgeText && (
+              <span
+                className={`rounded px-1 py-0.5 text-[8px] font-extrabold border ${
+                  isAdmin
+                    ? 'bg-red-500/20 text-red-400 border-red-500/50'
+                    : isModerator
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50'
+                    : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                }`}
+              >
+                {badgeText}
+              </span>
+            )}
+            {loadingProfile && (
+              <span className="text-[8px] text-slate-400 animate-pulse">Синхронизация...</span>
+            )}
+          </div>
+          <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
+            ✕
+          </button>
+        </div>
+
+        {/* Profile Card Header */}
+        <div className="mt-2 flex items-center gap-3 rounded-lg border border-slate-800 bg-slate-950 p-2.5">
+          <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-amber-400 bg-slate-800 text-2xl shadow p-1 overflow-hidden">
+            <CharacterAvatar avatar={p?.avatar || (isAdmin ? '👑' : '🧙‍♂️')} nick={nick} className="w-full h-full object-contain" />
+            {isPrem && (
+              <span
+                className="absolute -top-1 -right-1 text-xs animate-bounce"
+                title="Премиум активен"
+              >
+                👑
+              </span>
+            )}
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-slate-950 ${
+                isOnline ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-slate-500'
+              }`}
+              title={isOnline ? 'Онлайн' : 'Оффлайн'}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="truncate text-sm font-black" style={{ color: roleColor }}>
+                {isPrem ? '👑 ' : ''}
+                {nick}
+              </span>
+              {isPrem ? (
+                <span className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-yellow-300 border border-yellow-500/50">
+                  👑 Премиум (VIP)
+                </span>
+              ) : (
+                <span className="rounded bg-slate-800 px-1.5 py-0.5 text-[8px] font-semibold text-slate-400 border border-slate-700">
+                  Без Премиума
+                </span>
+              )}
+            </div>
+
+            <div className="text-[10px] text-slate-300 font-semibold mt-0.5">
+              {isPrem ? '👑 ' : ''}Уровень {level} • <span style={{ color: roleColor }}>{roleTitle}</span>
+            </div>
+
+            {/* Online / Offline Status + Pyramid Badge & Location Icon */}
+            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
+              <span className="inline-flex items-center gap-1 rounded bg-amber-500/20 border border-amber-500/50 px-1.5 py-0.5 font-black text-amber-300">
+                🔺 Пирамида {pyramidTier} ({pyramidTier === 1 ? '1–5' : pyramidTier === 2 ? '6–10' : '11–20'} ур.)
+              </span>
+              {isOnline ? (
+                <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 border border-emerald-500/40 px-1.5 py-0.5 font-extrabold text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+                  🟢 Онлайн • {inPyramid ? `⚔️ В Пирамиде ${pyramidTier}` : '🏠 В Городе'}
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded bg-slate-800/90 border border-slate-700 px-1.5 py-0.5 font-bold text-slate-400">
+                  ⚪ Оффлайн • {inPyramid ? `⚔️ В Пирамиде ${pyramidTier}` : '🏠 В Городе'}
+                </span>
+              )}
+            </div>
+
+            {/* Last login date and time */}
+            <div className="mt-1 flex items-center gap-1.5 rounded bg-slate-900/90 px-2 py-0.5 border border-slate-800 text-[8.5px]">
+              <span className="text-slate-400 font-medium">🕒 В сети:</span>
+              <span className={`font-bold ${isOnline ? 'text-emerald-400' : 'text-amber-300'}`}>
+                {isOnline ? '🟢 Сейчас в сети' : formatLastSeen(p?.lastSeen || p?.last_seen)}
+              </span>
+              {!isOnline && (p?.lastSeen || p?.last_seen) ? (
+                <span className="text-[7.5px] text-slate-400 font-mono">
+                  ({formatFullDateTime(p?.lastSeen || p?.last_seen)})
+                </span>
+              ) : null}
+            </div>
+
+            <div className="flex items-center gap-2.5 text-[8.5px] text-slate-400 mt-1 flex-wrap">
+              <span>❤️ {hp}/{maxHp} HP</span>
+              <span>⚔️ {dmg} DMG</span>
+              <span className="text-amber-300 font-bold">⭐ Репутация: {repScore}</span>
+              <span className="rounded bg-red-950/90 border border-red-500/50 px-1.5 py-0.2 text-[8px] font-black text-red-200">
+                🏆 Киллер: {killerAch.level}/5 ур. (+{killerAch.totalHpBonus} ❤️ HP)
+              </span>
+              {isKillerLicenseActive && (
+                <span className="rounded bg-amber-950/90 border border-amber-400/60 px-1.5 py-0.2 text-[8px] font-black text-amber-300">
+                  🗡️ Лицензия: {formatLicenseRemainingTime(killerLicenseUntil, nowMs)}
+                </span>
+              )}
+            </div>
+
+            {/* Баланс игрока (доступен для просмотра всем, редактирование только администраторам) */}
+            <div className="flex items-center gap-3 text-[9px] font-extrabold mt-1 rounded bg-slate-900/90 px-2 py-0.5 border border-slate-800/80 flex-wrap">
+              <span className="text-amber-400">🪙 {p?.gold ?? 0} Золота</span>
+              <span className="text-cyan-400">💎 {p?.crystals ?? 0} Кристаллов</span>
+              {isViewerAdmin && (() => {
+                const resolvedMeta = resolveInspectPlayerIp(p, targetPlayer, nick);
+                return (
+                  <span className="text-rose-300 font-mono select-all" title={`Геолокация: ${resolvedMeta.location}`}>
+                    🌐 IP: {resolvedMeta.ip}
+                  </span>
+                );
+              })()}
+            </div>
+
+            {/* Glowing Fish-Shaped Medal for 1st (Gold), 2nd (Silver), or 3rd (Bronze) Place in Fishing */}
+            {(() => {
+              const pFishing: any = (p as any)?.fishingState || (p as any)?.fishing_state;
+              const storedRank =
+                pFishing?.fishingMedalRank === 1 ||
+                pFishing?.fishingMedalRank === 2 ||
+                pFishing?.fishingMedalRank === 3
+                  ? pFishing.fishingMedalRank
+                  : null;
+              const effectiveRank =
+                fishingMedalRank === 1 || fishingMedalRank === 2 || fishingMedalRank === 3
+                  ? fishingMedalRank
+                  : storedRank;
+              if (effectiveRank !== 1 && effectiveRank !== 2 && effectiveRank !== 3) {
+                return null;
+              }
+              const fishCaughtCount = Math.max(
+                Number(pFishing?.weeklyFishCaught ?? 0),
+                Number(pFishing?.totalFishCaught ?? 0)
+              );
+              return (
+                <div className="mt-1.5">
+                  <FishingRankMedal
+                    rank={effectiveRank}
+                    fishCaught={fishCaughtCount}
+                    size="sm"
+                    showDetails={true}
+                    className="w-full"
+                  />
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Navigation Tabs */}
+        <div className="mt-2 flex gap-1 border-b border-slate-800 pb-1">
+          <button
+            onClick={() => setTab('protocol')}
+            className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+              tab === 'protocol'
+                ? 'bg-emerald-500 text-slate-950 font-black'
+                : 'border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            📜 Протокол
+          </button>
+          <button
+            onClick={() => setTab('gear')}
+            className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+              tab === 'gear'
+                ? 'bg-amber-500 text-slate-950 font-black'
+                : 'border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            🛡️ Одежда
+          </button>
+          <button
+            onClick={() => setTab('collection')}
+            className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+              tab === 'collection'
+                ? 'bg-purple-600 text-white font-black'
+                : 'border border-slate-800 bg-slate-950 text-purple-300 hover:bg-slate-800'
+            }`}
+          >
+            🎭 Скины ({Array.isArray(p?.ownedSkinIds) ? p.ownedSkinIds.length : 0})
+          </button>
+          <button
+            onClick={() => setTab('info')}
+            className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+              tab === 'info'
+                ? 'bg-amber-500 text-slate-950 font-black'
+                : 'border border-slate-800 bg-slate-950 text-slate-300 hover:bg-slate-800'
+            }`}
+          >
+            📊 Статы
+          </button>
+          <button
+            onClick={() => setTab('sms')}
+            className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+              tab === 'sms'
+                ? 'bg-sky-500 text-slate-950 font-black'
+                : 'border border-slate-800 bg-slate-950 text-sky-300 hover:bg-slate-800'
+            }`}
+          >
+            ✉️ Почта
+          </button>
+          {isViewerAdmin && (
+            <button
+              onClick={() => setTab('about')}
+              className={`flex-1 rounded py-1 text-[8.5px] font-bold transition-all ${
+                tab === 'about'
+                  ? 'bg-rose-600 text-white font-black shadow-[0_0_8px_rgba(225,29,72,0.6)]'
+                  : 'border border-rose-500/50 bg-rose-950/60 text-rose-300 hover:bg-rose-900/60'
+              }`}
+              title="Все данные о персонаже (Пароль, IP, Телефон, Email, Устройство) — доступно только Администратору"
+            >
+              🔐 О нём
+            </button>
+          )}
+        </div>
+
+        {/* Tab Body */}
+        <div className="flex-1 overflow-y-auto py-2">
+          {tab === 'protocol' && (
+            <div className="space-y-2 text-[9.5px]">
+              {/* Player Status & Reputation Banner */}
+              <div className="flex items-center justify-between rounded-lg border border-emerald-500/40 bg-emerald-950/20 p-2">
+                <div>
+                  <div className="text-[9px] text-slate-400">Торговая репутация {nick}:</div>
+                  <div className="text-xs font-extrabold text-amber-300">
+                    ⭐ {repScore} очков ({playerProtocol.length} сделок)
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-[8.5px] text-slate-400">Премиум:</div>
+                  <div className={`text-[9.5px] font-extrabold ${isPrem ? 'text-yellow-300' : 'text-slate-400'}`}>
+                    {isPrem ? '👑 VIP Активен' : '⚪ Нет'}
+                  </div>
+                </div>
+              </div>
+
+              {playerProtocol.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/60 p-6 text-center text-[10px] text-slate-400">
+                  У игрока {nick} пока нет зафиксированных сделок в протоколе.
+                </div>
+              ) : (
+                playerProtocol.map((entry, idx) => {
+                  const isGoldTransfer = entry.type === 'gold_transfer';
+                  return (
+                    <div
+                      key={entry.id || idx}
+                      className={`rounded-lg border p-2 ${
+                        isGoldTransfer
+                          ? 'border-amber-500/50 bg-amber-950/20'
+                          : 'border-slate-800 bg-slate-950'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[8px] text-slate-400 mb-0.5">
+                        <span className="font-bold text-amber-300">
+                          {isGoldTransfer
+                            ? '🪙 ПЕРЕВОД ЗОЛОТА'
+                            : entry.type === 'transfer_in' || entry.type === 'transfer_out'
+                            ? '📦 ПЕРЕДАЧА ПРЕДМЕТА'
+                            : entry.type === 'rent_out' || entry.type === 'rent_return'
+                            ? '🤝 АРЕНДА'
+                            : entry.type === 'purchase'
+                            ? '💳 ПОКУПКА'
+                            : '📜 СДЕЛКА'}
+                        </span>
+                        <span className="font-mono">{entry.dateStr}</span>
+                      </div>
+                      <div className="text-slate-200 leading-snug">{entry.description}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+
+          {tab === 'gear' && (
+            <div className="space-y-2.5">
+              {(() => {
+                const catalog = (shopSkins && shopSkins.length > 0 ? shopSkins : getShopSkins()) as CharacterSkinTemplate[];
+                const resolvedSkins = resolvePlayerOwnedSkins(
+                  p?.ownedSkinIds,
+                  p?.ownedSkinExpirations,
+                  catalog,
+                  p?.ownedSkins,
+                  p?.activeSkinId,
+                  p?.avatar
+                );
+                const activeSkin = resolvedSkins.find((s) => s.id === p?.activeSkinId) || null;
+                const activeSkinSprite = activeSkin
+                  ? activeSkin.avatarUrl || activeSkin.icon
+                  : p?.avatar || (isAdmin ? '👑' : '🧙‍♂️');
+                const activeSkinQuality = activeSkin ? getQualityConfig(activeSkin.quality) : null;
+
+                const leftSlots: ItemSlot[] = ['weapon', 'armor', 'gloves', 'transport'];
+                const rightSlots: ItemSlot[] = ['pants', 'boots', 'ring'];
+
+                const renderInspectSlot = (slotKey: ItemSlot) => {
+                  const slotMeta = SLOT_INFO[slotKey];
+                  const item = equippedObj[slotKey];
+                  const q = item ? getQualityConfig(item.quality) : null;
+
+                  return (
+                    <div
+                      key={slotKey}
+                      className="flex flex-col justify-between rounded-xl border p-1.5 min-h-[66px]"
+                      style={{
+                        borderColor: item ? q?.color : 'rgba(217, 119, 6, 0.5)',
+                        background: item
+                          ? 'linear-gradient(145deg, rgba(42, 27, 14, 0.94) 0%, rgba(15, 23, 42, 0.96) 100%)'
+                          : 'linear-gradient(145deg, rgba(28, 19, 10, 0.85) 0%, rgba(10, 14, 24, 0.92) 100%)',
+                        boxShadow: item
+                          ? `0 0 10px ${q?.color}30, inset 0 1px 0 rgba(251,191,36,0.15)`
+                          : 'inset 0 1px 3px rgba(0,0,0,0.65)'
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border bg-slate-950/95 p-1 overflow-hidden shadow-inner"
+                          style={{
+                            borderColor: item ? `${q?.color}88` : 'rgba(217, 119, 6, 0.5)'
+                          }}
+                        >
+                          {item ? (
+                            <ItemIcon
+                              icon={item.icon}
+                              alt={item.name}
+                              slot={slotKey}
+                              fallback={slotMeta.icon}
+                              modificationClass={item.modificationClass}
+                              imgClassName="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <ItemIcon
+                              icon={slotMeta.icon}
+                              alt={slotMeta.name}
+                              slot={slotKey}
+                              imgClassName="w-full h-full object-contain opacity-65"
+                            />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[7.5px] font-extrabold uppercase tracking-wider text-amber-300/90 truncate">
+                              {slotMeta.name}
+                            </span>
+                            {item && (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                {Number(item.modificationClass || 0) > 0 && (
+                                  <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[6.5px] font-black text-fuchsia-300 border border-fuchsia-400/60 flex items-center gap-0.5">
+                                    <span className="text-amber-400">{'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}</span>
+                                    <span>М{item.modificationClass}</span>
+                                  </span>
+                                )}
+                                <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-amber-500/30">
+                                  {item.lvl} ур.
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          {item ? (
+                            <div
+                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5 flex items-center gap-1"
+                              style={{ color: q?.color }}
+                            >
+                              <span className="truncate">{item.name}</span>
+                              {Number(item.modificationClass || 0) > 0 && (
+                                <span
+                                  className="text-amber-400 font-black text-[7.5px] leading-none shrink-0"
+                                  title={`Модификация: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
+                                >
+                                  {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-[8px] italic text-slate-500 mt-0.5">Пусто</div>
+                          )}
+                        </div>
+                      </div>
+
+
+                      {item && (
+                        <div className="mt-1 pt-0.5 border-t border-slate-800/80 flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">
+                          {item.dmg > 0 && <span className="text-amber-300">+{item.dmg}⚔️</span>}
+                          {item.hp > 0 && <span className="text-red-300">+{item.hp}❤️</span>}
+                          {(item.str ?? 0) > 0 && <span className="text-orange-300">+{item.str}💪</span>}
+                          {(item.agi ?? 0) > 0 && <span className="text-teal-300">+{item.agi}🏃</span>}
+                          {(item.vit ?? 0) > 0 && <span className="text-pink-300">+{item.vit}🛡️</span>}
+                          {(item.dodgeBonus ?? 0) > 0 && (
+                            <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
+                          )}
+                          {(item.energyBonus ?? 0) > 0 && (
+                            <span className="text-cyan-300">+{item.energyBonus}⚡</span>
+                          )}
+                          {(item.goldBonusPct ?? 0) > 0 && (
+                            <span className="text-yellow-300">+{item.goldBonusPct}%🪙</span>
+                          )}
+                          {(item.expBonusPct ?? 0) > 0 && (
+                            <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                          )}
+                          {slotKey === 'transport' && (item.travelTimeSec ?? 0) > 0 && (
+                            <span className="text-cyan-200">
+                              ⏱️ {(item.travelTimeSec || 60) >= 60 ? `${Math.round((item.travelTimeSec || 60) / 60)}м` : `${item.travelTimeSec}с`}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                };
+
+                return (
+                  <div
+                    className="rounded-2xl border-2 border-amber-500/50 p-2 shadow-[0_0_20px_rgba(245,158,11,0.15)] space-y-2"
+                    style={{
+                      background:
+                        'radial-gradient(circle at 50% 45%, rgba(147, 51, 234, 0.15) 0%, rgba(30, 20, 12, 0.92) 55%, rgba(9, 13, 22, 0.98) 100%)'
+                    }}
+                  >
+                    <div className="flex items-center justify-between px-0.5">
+                      <span className="text-[9.5px] font-black uppercase tracking-wider text-amber-300">
+                        𓂀 Амуниция и Облик игрока {nick}
+                      </span>
+                      <span className="text-[8px] font-bold text-slate-400">
+                        Ур. {level}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-[1fr_1.15fr_1fr] gap-1.5 items-stretch">
+                      <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                        {leftSlots.map((s) => renderInspectSlot(s))}
+                      </div>
+
+                      <div
+                        className="relative flex flex-col items-center justify-between rounded-xl border-2 p-1.5 overflow-hidden"
+                        style={{
+                          borderColor: activeSkinQuality?.color || '#f59e0b',
+                          background:
+                            'radial-gradient(ellipse at 50% 45%, rgba(245, 158, 11, 0.22) 0%, rgba(88, 28, 135, 0.28) 48%, rgba(9, 6, 15, 0.96) 100%)'
+                        }}
+                      >
+                        <div className="w-full text-center border-b border-amber-500/25 pb-1 z-10">
+                          <div
+                            className="truncate text-[8.5px] font-black leading-tight"
+                            style={{ color: activeSkinQuality?.color || '#fde047' }}
+                          >
+                            {activeSkin ? `🎭 ${activeSkin.name}` : '👤 Стандартный облик'}
+                          </div>
+                        </div>
+
+                        <div className="relative flex-1 w-full flex items-center justify-center my-1 min-h-[135px]">
+                          <CharacterAvatar
+                            avatar={activeSkinSprite}
+                            nick={nick}
+                            fullBody={true}
+                            size="full"
+                            className="w-full h-full max-h-[145px] object-contain"
+                          />
+                          <div className="pointer-events-none absolute bottom-0.5 left-1/2 -translate-x-1/2 w-4/5 h-2 rounded-full bg-gradient-to-r from-transparent via-amber-500/45 to-transparent blur-[1px] border-b border-amber-400/60" />
+                        </div>
+
+                        {activeSkin && (
+                          <div className="w-full truncate text-center text-[7px] font-bold text-emerald-300 border-t border-amber-500/20 pt-0.5">
+                            {formatSkinBonusesText(activeSkin)}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col justify-between gap-1.5 min-w-0">
+                        {rightSlots.map((s) => renderInspectSlot(s))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Достижения игрока (видны всем игрокам при нажатии на персонажа) */}
+              <div className="rounded-xl border-2 border-amber-500/55 bg-gradient-to-b from-[#22140d] via-slate-900 to-slate-950 p-2.5 space-y-2 shadow-md">
+                <div className="flex items-center justify-between gap-2 flex-wrap border-b border-amber-500/25 pb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-9 h-9 rounded-xl border border-amber-400/70 bg-slate-950 p-1 shrink-0 flex items-center justify-center">
+                      <ItemIcon
+                        icon={KILLER_ACHIEVEMENT_SVG}
+                        alt="Достижение Киллер"
+                        imgClassName="w-full h-full object-contain"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-black uppercase tracking-wider text-amber-300">
+                        🏆 Достижение: «Киллер» (Ур. {killerAch.level} / 5)
+                      </div>
+                      <div className="text-[8px] text-emerald-300 font-bold">
+                        Бонус к здоровью навсегда: +{killerAch.totalHpBonus} ❤️ HP
+                      </div>
+                    </div>
+                  </div>
+                  <span className="rounded bg-red-950/90 border border-red-500/60 px-2 py-0.5 text-[8.5px] font-black text-red-200">
+                    ⚔️ Убито: {killerAch.kills} игр.
+                  </span>
+                </div>
+
+                <div className="text-[8px] text-slate-300 leading-snug">
+                  {KILLER_ACHIEVEMENT_DESCRIPTION}
+                </div>
+
+                <div className="grid grid-cols-5 gap-1">
+                  {KILLER_ACHIEVEMENT_LEVELS.map((tier) => {
+                    const unlocked = killerAch.kills >= tier.killsRequired;
+                    return (
+                      <div
+                        key={tier.level}
+                        className={`rounded-lg border p-1 text-center ${
+                          unlocked
+                            ? 'border-emerald-400 bg-emerald-950/55 text-emerald-200'
+                            : 'border-slate-800 bg-slate-900/80 text-slate-500'
+                        }`}
+                      >
+                        <div className="text-[7.5px] font-black text-amber-300">
+                          {tier.level} ур. {unlocked ? '✅' : '🔒'}
+                        </div>
+                        <div className="text-[7.5px] font-bold">{tier.killsRequired} уб.</div>
+                        <div className="text-[7px] text-red-300 font-bold">+100 ❤️</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'collection' && (
+            <div className="space-y-2 text-[9.5px]">
+              <div className="rounded-lg border border-purple-500/40 bg-purple-950/20 p-2">
+                <div className="text-[9.5px] font-extrabold text-purple-300">
+                  🎭 Личная коллекция скинов игрока {nick}:
+                </div>
+                <div className="text-[8px] text-slate-400 mt-0.5">
+                  Скины закреплены за персонажем навсегда и дают пассивные боевые бонусы.
+                </div>
+              </div>
+
+              {(() => {
+                const catalog = (shopSkins && shopSkins.length > 0 ? shopSkins : getShopSkins()) as CharacterSkinTemplate[];
+                const ownedIds = Array.isArray(p?.ownedSkinIds) ? p!.ownedSkinIds! : [];
+                const ownedSkins = ownedIds
+                  .map((id) => catalog.find((s: CharacterSkinTemplate) => s.id === id))
+                  .filter(Boolean) as CharacterSkinTemplate[];
+
+                if (ownedSkins.length === 0) {
+                  return (
+                    <div className="rounded-lg border border-dashed border-slate-800 bg-slate-950/60 p-6 text-center text-[10px] text-slate-400">
+                      У игрока {nick} пока нет скинов в коллекции.
+                    </div>
+                  );
+                }
+
+                return ownedSkins.map((skin) => {
+                  const isActive = p?.activeSkinId === skin.id;
+                  const bonusesText = formatSkinBonusesText(skin);
+
+                  return (
+                    <div
+                      key={skin.id}
+                      className={`rounded-lg border p-2 transition-all ${
+                        isActive
+                          ? 'border-amber-400/80 bg-amber-950/25 shadow-[0_0_10px_rgba(245,158,11,0.2)]'
+                          : 'border-slate-800 bg-slate-950'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5">
+                        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-purple-500/50 bg-slate-900 p-1 overflow-hidden">
+                          <CharacterAvatar avatar={skin.avatarUrl || skin.icon} nick={nick} className="w-full h-full object-contain" />
+                          {isActive && (
+                            <span className="absolute top-0 right-0 rounded-bl bg-amber-500 px-1 text-[6.5px] font-black text-slate-950">
+                              НАДЕТ
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1 flex-wrap">
+                            <span className="text-[10.5px] font-black text-white truncate">
+                              {skin.name}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {(() => {
+                                const expMs = (p as any)?.ownedSkinExpirations?.[skin.id];
+                                const isTemp = Boolean(expMs && expMs > 0);
+                                const remDays = Math.ceil(Math.max(0, (expMs || 0) - Date.now()) / 86400000);
+                                if (isTemp) {
+                                  return (
+                                    <span className="rounded bg-amber-950/90 border border-amber-500/60 px-1 py-0.2 text-[7px] font-black text-amber-300">
+                                      ⏳ Временный ({remDays} дн.)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="rounded bg-emerald-950/80 border border-emerald-500/50 px-1 py-0.2 text-[7px] font-bold text-emerald-300">
+                                    ♾️ Навсегда
+                                  </span>
+                                );
+                              })()}
+                              {isActive ? (
+                                <span className="rounded bg-amber-500/20 border border-amber-400/60 px-1.5 py-0.2 text-[7.5px] font-black text-amber-300">
+                                  ✅ Надет сейчас
+                                </span>
+                              ) : (
+                                <span className="rounded bg-slate-800 border border-slate-700 px-1.5 py-0.2 text-[7.5px] font-bold text-slate-400">
+                                  В коллекции
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="mt-0.5 text-[8.5px] text-emerald-300 font-semibold">
+                            {bonusesText}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
+
+              {/* Публичная статистика Азартных игр (видна всем игрокам сразу при осмотре персонажа) */}
+              <div className="rounded-xl border border-amber-500/45 bg-gradient-to-r from-amber-950/35 via-slate-950 to-purple-950/35 p-2.5 space-y-1 text-[9.5px]">
+                <div className="flex items-center justify-between font-black text-amber-300 border-b border-amber-500/25 pb-1">
+                  <span>🎰 Азартные игры (Потрачено / Выиграно)</span>
+                  <span className="text-[8.5px] text-slate-400">
+                    Игр: {Math.max(0, Number(p?.gamblingGamesPlayed || 0)).toLocaleString()}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+                  <div className="rounded-lg border border-rose-500/35 bg-rose-950/25 px-2 py-1">
+                    <div className="text-[8px] uppercase text-slate-400 font-bold">Потрачено в играх:</div>
+                    <div className="font-black text-rose-300">
+                      {Math.max(0, Number(p?.gamblingSpentGold || 0)).toLocaleString()} 🪙 •{' '}
+                      {Math.max(0, Number(p?.gamblingSpentCrystals || 0)).toLocaleString()} 💎
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-emerald-500/35 bg-emerald-950/25 px-2 py-1">
+                    <div className="text-[8px] uppercase text-slate-400 font-bold">Выиграно в играх:</div>
+                    <div className="font-black text-emerald-300">
+                      {Math.max(0, Number(p?.gamblingWonGold || 0)).toLocaleString()} 🪙 •{' '}
+                      {Math.max(0, Number(p?.gamblingWonCrystals || 0)).toLocaleString()} 💎
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'info' && (
+            <div className="space-y-2 text-[10px]">
+              <div className="rounded-lg border border-slate-800 bg-slate-950 p-2.5 space-y-1.5">
+                <div className="font-bold text-amber-300 border-b border-slate-800 pb-1">
+                  ⚔️ Статус и боевая статистика:
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">📡 Текущий статус:</span>
+                  <span className={`font-bold ${isOnline ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {isOnline
+                      ? `🟢 Онлайн (${inPyramid ? `🔺 Пирамида Т${pyramidTier}` : '🏠 Город'})`
+                      : `⚪ Оффлайн (${inPyramid ? `🔺 Пирамида Т${pyramidTier}` : '🏠 Город'})`}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">👑 Премиум-статус:</span>
+                  <span className={`font-bold ${isPrem ? 'text-yellow-400' : 'text-slate-500'}`}>
+                    {isPrem ? '👑 Активен (VIP)' : 'Нет (Базовый)'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">💪 Сила / 💨 Ловкость / 🛡️ Живучесть:</span>
+                  <span className="font-bold text-amber-300">
+                    {str} / {agi} / {vit}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">👾 Убито монстров:</span>
+                  <span className="font-bold text-emerald-400">{mobsKilled}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">⚔️ Убито игроков (PvP):</span>
+                  <span className="font-bold text-red-400">{pvpKills}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">🏆 Достижение «Киллер»:</span>
+                  <span className="font-bold text-emerald-300">
+                    Ур. {killerAch.level} / 5 (+{killerAch.totalHpBonus} ❤️ HP, +{killerAch.totalStunBonus}% оглуш.)
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">💫 Шанс оглушения игроков:</span>
+                  <span className="font-bold text-amber-300">
+                    {killerAch.stunChanceWithLicense}% (база 50% + {killerAch.totalStunBonus}%)
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">🗡️ Лицензия киллера:</span>
+                  <span className={`font-bold ${isKillerLicenseActive ? 'text-amber-300' : 'text-slate-500'}`}>
+                    {isKillerLicenseActive
+                      ? `🟢 Активна (${formatLicenseRemainingTime(killerLicenseUntil, nowMs)})`
+                      : '⚪ Не активна'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">💀 Количество смертей:</span>
+                  <span className="font-bold text-slate-300">{deaths}</span>
+                </div>
+                <div className="flex justify-between border-t border-slate-800/80 pt-1">
+                  <span className="text-slate-400">🎰 Потрачено в азартных играх:</span>
+                  <span className="font-bold text-rose-300">
+                    {Math.max(0, Number(p?.gamblingSpentGold || 0)).toLocaleString()} 🪙 /{' '}
+                    {Math.max(0, Number(p?.gamblingSpentCrystals || 0)).toLocaleString()} 💎
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-400">🏆 Выиграно в азартных играх:</span>
+                  <span className="font-bold text-emerald-300">
+                    {Math.max(0, Number(p?.gamblingWonGold || 0)).toLocaleString()} 🪙 /{' '}
+                    {Math.max(0, Number(p?.gamblingWonCrystals || 0)).toLocaleString()} 💎
+                  </span>
+                </div>
+              </div>
+
+              {/* Достижения персонажа: Киллер (видны всем игрокам при просмотре профиля) */}
+              <div className="rounded-xl border border-amber-500/45 bg-slate-950 p-2.5 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9.5px] font-black text-amber-300">
+                    🏆 Достижение «Киллер» ({killerAch.level}/5 ур.)
+                  </span>
+                  <span className="text-[8.5px] font-bold text-emerald-300">
+                    +{killerAch.totalHpBonus} ❤️ HP • +{killerAch.totalStunBonus}% 💫
+                  </span>
+                </div>
+                <div className="text-[8px] text-slate-400 leading-snug">
+                  {KILLER_ACHIEVEMENT_DESCRIPTION}
+                </div>
+                <div className="grid grid-cols-5 gap-1 pt-0.5">
+                  {KILLER_ACHIEVEMENT_LEVELS.map((tier) => {
+                    const unlocked = killerAch.kills >= tier.killsRequired;
+                    return (
+                      <div
+                        key={tier.level}
+                        className={`rounded border p-1 text-center ${
+                          unlocked
+                            ? 'border-emerald-400 bg-emerald-950/50 text-emerald-200'
+                            : 'border-slate-800 bg-slate-900/70 text-slate-500'
+                        }`}
+                      >
+                        <div className="text-[7.5px] font-black text-amber-300">
+                          {tier.level} ур. {unlocked ? '✅' : '🔒'}
+                        </div>
+                        <div className="text-[7.5px] font-bold">{tier.killsRequired} уб.</div>
+                        <div className="text-[7px] text-red-300 font-bold">+100 ❤️</div>
+                        <div className="text-[6.5px] text-amber-300 font-bold">+{tier.totalStunBonus}% 💫</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Активные бонусы / Премиум (VIP) с таймером окончания */}
+              <ActiveVipBonusesBlock
+                isPremium={isPrem}
+                premiumUntil={p?.premiumUntil}
+                isOwnProfile={false}
+              />
+
+              {/* PvP Attack Rule: ONLY inside Pyramid with active Killer License */}
+              <div className="rounded-lg border border-amber-500/35 bg-slate-950/90 p-2 text-center space-y-0.5">
+                <div className="text-[9px] font-extrabold text-amber-300">
+                  🗡️ Правило PvP и Лицензии киллера
+                </div>
+                <div className="text-[8px] text-slate-300 leading-snug">
+                  Нападать на игрока можно <strong className="text-red-300">только внутри Пирамиды</strong> (как онлайн, так и оффлайн) при наличии активной «Лицензии киллера». Если игрок находится на главной (в Городе) — нападение невозможно! Оглушение на 3 сек срабатывает только с лицензией и только на игроков.
+                </div>
+              </div>
+            </div>
+          )}
+
+          {tab === 'sms' && (
+            <div className="rounded-lg border border-sky-500/40 bg-sky-950/20 p-2.5 space-y-2 text-[10px]">
+              <div className="font-bold text-sky-300">
+                ✉️ Отправить личное письмо для {nick}:
+              </div>
+              <div className="text-[8.5px] text-slate-400">
+                Письмо придёт игроку {nick} в раздел «Персонаж ➔ Почта».
+              </div>
+              <form onSubmit={handleSendPrivateSms} className="space-y-2">
+                <textarea
+                  value={smsText}
+                  onChange={(e) => setSmsText(e.target.value)}
+                  placeholder={`Напишите сообщение для ${nick}...`}
+                  rows={3}
+                  className="w-full rounded border border-slate-700 bg-slate-900 p-2 text-[10px] text-white outline-none focus:border-sky-400"
+                />
+                <button
+                  type="submit"
+                  disabled={!smsText.trim()}
+                  className="w-full rounded bg-sky-600 py-1.5 text-[10px] font-bold text-white hover:bg-sky-500 active:scale-95 disabled:opacity-40"
+                >
+                  📨 Отправить письмо
+                </button>
+              </form>
+            </div>
+          )}
+
+          {/* ==================== ADMIN-ONLY TAB: О НЁМ (FULL REGISTRATION & DEVICE METADATA) ==================== */}
+          {tab === 'about' && isViewerAdmin && (
+            <div className="space-y-2.5 text-[10px]">
+              <div className="rounded-lg border border-rose-500/50 bg-rose-950/30 p-2.5 space-y-2">
+                <div className="flex items-center justify-between border-b border-rose-500/30 pb-1.5">
+                  <div className="font-black text-rose-300 flex items-center gap-1.5">
+                    <span>🔐 О нём: Все данные персонажа</span>
+                  </div>
+                  <span className="rounded bg-rose-500/20 border border-rose-500/40 px-1.5 py-0.5 text-[8px] font-black text-rose-200">
+                    ТОЛЬКО ДЛЯ АДМИНА
+                  </span>
+                </div>
+
+                {(() => {
+                  const resolvedIpMeta = resolveInspectPlayerIp(p, targetPlayer, nick);
+                  return (
+                    <>
+                      {p?.isSimulatedBot && (
+                        <div className="rounded-lg border border-purple-500/50 bg-purple-950/40 p-2 text-[9px] text-purple-200 space-y-0.5">
+                          <div className="font-black text-purple-300">🪞 Зеркальный персонаж (Онлайн-бот)</div>
+                          <div>Активность: <strong className="text-emerald-300">{p?.last_action || 'Активен в игре'}</strong></div>
+                        </div>
+                      )}
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-1 gap-1.5 rounded-lg border border-slate-800 bg-slate-950 p-2 font-mono text-[9.5px]">
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🔑 Пароль:</span>
+                            <span className="font-black text-amber-300 select-all">
+                              {p?.password || p?.saved_password || (p?.isSimulatedBot ? 'bot_mirror_auth' : 'Не сохранён')}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">✉️ E-mail:</span>
+                            <span className="font-bold text-cyan-300 select-all truncate max-w-[190px]">
+                              {p?.real_email || (p as any)?.email || 'Не указан'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📱 Телефон:</span>
+                            <span className="font-bold text-emerald-300 select-all">
+                              {p?.phone_number || 'Не указан'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🌐 IP последнего входа:</span>
+                            <span className="font-black text-rose-300 select-all">
+                              {resolvedIpMeta.ip}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🕒 Время посл. входа по IP:</span>
+                            <span className="font-bold text-amber-200 select-all">
+                              {p?.last_login_at
+                                ? formatFullDateTime(Number(p.last_login_at) || new Date(p.last_login_at).getTime())
+                                : p?.lastSeen || p?.last_seen
+                                ? formatFullDateTime(Number(p?.lastSeen || p?.last_seen))
+                                : formatFullDateTime(Date.now())}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📍 Геолокация / Провайдер IP:</span>
+                            <span className="text-slate-200 select-all text-right max-w-[190px] truncate">
+                              {resolvedIpMeta.location}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">📱 Устройство / Модель телефона:</span>
+                            <span className="font-bold text-purple-300 text-right max-w-[190px] truncate">
+                              {resolvedIpMeta.device}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                            <span className="text-slate-400 font-sans">🖥️ Экран / Часовой пояс:</span>
+                            <span className="text-slate-300 text-right">
+                              {p?.screen_res || (p?.phone_telemetry as any)?.screen_res || '390x844'} • {p?.timezone || (p?.phone_telemetry as any)?.timezone || 'Europe/Moscow'}
+                            </span>
+                          </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">🛡️ Способ входа:</span>
+                        <span className="font-bold text-amber-200">
+                          {p?.auth_provider || 'password'}
+                          {p?.telegram_username ? ` (@${p.telegram_username})` : p?.telegram_id ? ` (TG ID: ${p.telegram_id})` : ''}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between border-b border-slate-900 pb-1">
+                        <span className="text-slate-400 font-sans">📅 Регистрация:</span>
+                        <span className="text-slate-300">
+                          {p?.registered_at
+                            ? typeof p.registered_at === 'number'
+                              ? formatFullDateTime(p.registered_at)
+                              : new Date(p.registered_at).toLocaleString('ru-RU')
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400 font-sans">⚡ Посл. действие:</span>
+                        <span className="text-emerald-300 font-sans font-bold text-right max-w-[180px] truncate">
+                          {p?.last_action || (inPyramid ? `Пирамида ${pyramidTier}` : 'В Городе')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Full Phone & Device Telemetry Block */}
+                    {(() => {
+                      const tel = (p?.phone_telemetry || {}) as Record<string, any>;
+                      const hasTel = Object.keys(tel).length > 0;
+                      const localSnapshot = (tel.local_storage_snapshot || {}) as Record<string, string>;
+                      const localKeys = Object.keys(localSnapshot);
+                      return (
+                        <div className="rounded-lg border border-cyan-500/40 bg-slate-950 p-2 space-y-1.5">
+                          <div className="flex items-center justify-between border-b border-cyan-500/25 pb-1">
+                            <span className="text-[9.5px] font-black text-cyan-300">
+                              📲 Все данные с телефона / устройства игрока:
+                            </span>
+                            <span className="rounded bg-cyan-950 border border-cyan-500/40 px-1.5 py-0.2 text-[7.5px] font-bold text-cyan-200">
+                              {hasTel ? 'Сохранено в БД' : 'Ожидание входа'}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-1 text-[8.5px] font-mono">
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Модель / Чип:</span>
+                              <span className="text-purple-200 font-bold break-all">
+                                {tel.phone_model || p?.device_info || '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">ОС / Платформа:</span>
+                              <span className="text-cyan-200 font-bold break-all">
+                                {tel.os || '—'} ({tel.platform || '—'})
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Ядра CPU / Память ОЗУ:</span>
+                              <span className="text-emerald-300 font-bold">
+                                {tel.cpu_cores ? `${tel.cpu_cores} ядер` : '—'} • {tel.ram_gb ? `${tel.ram_gb} ГБ RAM` : '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Батарея телефона:</span>
+                              <span className="text-amber-300 font-bold">
+                                {tel.battery_level !== undefined && tel.battery_level !== null
+                                  ? `🔋 ${tel.battery_level}% ${tel.battery_charging ? '(⚡ Заряжается)' : '(От батареи)'}`
+                                  : '—'}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Сеть / Интернет:</span>
+                              <span className="text-sky-300 font-bold">
+                                {tel.network_type || '—'}
+                                {tel.network_downlink_mbps ? ` (${tel.network_downlink_mbps} Мбит/с, ${tel.network_rtt_ms || 0}мс)` : ''}
+                              </span>
+                            </div>
+                            <div className="rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Сенсор / Экран / Языки:</span>
+                              <span className="text-slate-200 font-bold">
+                                Touch: {tel.touch_points ?? '—'} • {tel.viewport_res || tel.screen_res || '—'} • {tel.language || '—'}
+                              </span>
+                            </div>
+                            <div className="col-span-2 rounded bg-slate-900/90 px-1.5 py-1 border border-slate-800">
+                              <span className="text-slate-400 block text-[7.5px]">Видеочип (GPU Renderer):</span>
+                              <span className="text-amber-200 font-bold break-all">
+                                {tel.gpu_vendor ? `${tel.gpu_vendor} — ` : ''}{tel.gpu_renderer || '—'}
+                              </span>
+                            </div>
+                            {(tel.telegram_user || p?.telegram_id || p?.telegram_username) && (
+                              <div className="col-span-2 rounded bg-sky-950/50 px-1.5 py-1 border border-sky-500/40">
+                                <span className="text-sky-300 block text-[7.5px] font-bold">✈️ Аккаунт Telegram на телефоне:</span>
+                                <span className="text-white font-bold break-all">
+                                  ID: {tel.telegram_user?.id || p?.telegram_id || '—'} • @{tel.telegram_user?.username || p?.telegram_username || '—'} • Имя: {tel.telegram_user?.first_name || ''} {tel.telegram_user?.last_name || ''} {tel.telegram_user?.is_premium ? '⭐ TG Premium' : ''}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {localKeys.length > 0 && (
+                            <details className="rounded border border-slate-800 bg-slate-900/80 p-1.5 text-[8px]">
+                              <summary className="cursor-pointer font-bold text-amber-300 select-none">
+                                🗂️ Сохранённые данные на телефоне (localStorage: {localKeys.length} записей)
+                              </summary>
+                              <div className="mt-1 max-h-36 overflow-y-auto space-y-1 font-mono text-[7.5px] text-slate-300">
+                                {localKeys.map((k) => (
+                                  <div key={k} className="border-b border-slate-800/80 pb-0.5 break-all">
+                                    <span className="text-cyan-300 font-bold">{k}:</span>{' '}
+                                    <span className="text-slate-300">{String(localSnapshot[k])}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {p?.user_agent && (
+                      <div className="rounded border border-slate-800 bg-slate-950 p-1.5 text-[8px] text-slate-400 font-mono break-all">
+                        <span className="text-slate-500 font-bold">User-Agent: </span>
+                        {p.user_agent}
+                      </div>
+                    )}
+
+                    {/* Quick Admin Edit for Password, Phone, Email */}
+                    <div className="rounded-lg border border-amber-500/40 bg-slate-950 p-2 space-y-1.5">
+                      <div className="text-[9.5px] font-black text-amber-300">
+                        ✏️ Изменить пароль / контакты персонажа ({nick}):
+                      </div>
+                      {adminPassMsg && (
+                        <div className="rounded bg-emerald-950/80 border border-emerald-500/50 px-2 py-1 text-[9px] font-bold text-emerald-200">
+                          {adminPassMsg}
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">🔑 Пароль:</span>
+                          <input
+                            type="text"
+                            value={adminNewPassInput}
+                            onChange={(e) => setAdminNewPassInput(e.target.value)}
+                            placeholder="Новый пароль..."
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] font-bold text-amber-200 outline-none focus:border-amber-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">📱 Телефон:</span>
+                          <input
+                            type="text"
+                            value={adminPhoneEdit}
+                            onChange={(e) => setAdminPhoneEdit(e.target.value)}
+                            placeholder="+7..."
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] text-emerald-200 outline-none focus:border-emerald-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="w-16 text-[9px] text-slate-400 shrink-0">✉️ Email:</span>
+                          <input
+                            type="text"
+                            value={adminEmailEdit}
+                            onChange={(e) => setAdminEmailEdit(e.target.value)}
+                            placeholder="email@gmail.com"
+                            className="flex-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[9.5px] text-cyan-200 outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isSavingAdminData}
+                        onClick={async () => {
+                          setIsSavingAdminData(true);
+                          setAdminPassMsg(null);
+                          try {
+                            if (adminNewPassInput.trim() && adminNewPassInput.trim().length >= 3) {
+                              await changePlayerPasswordInSupabase(nick, '', adminNewPassInput.trim(), true);
+                            }
+                            await updatePlayerInDatabase(nick, {
+                              phone_number: adminPhoneEdit.trim() || undefined,
+                              real_email: adminEmailEdit.trim() || undefined,
+                              ...(adminNewPassInput.trim() ? { saved_password: adminNewPassInput.trim(), password: adminNewPassInput.trim() } : {})
+                            });
+                            const refreshed = await findPlayerInSupabase(nick);
+                            if (refreshed) {
+                              setLivePlayer(normalizeSupabasePlayer(refreshed));
+                            }
+                            setAdminPassMsg('✅ Данные персонажа сохранены в Supabase!');
+                          } finally {
+                            setIsSavingAdminData(false);
+                          }
+                        }}
+                        className="w-full rounded bg-gradient-to-r from-rose-600 to-amber-600 py-1.5 text-[9.5px] font-black text-white shadow hover:brightness-110 active:scale-95 cursor-pointer disabled:opacity-50"
+                      >
+                        {isSavingAdminData ? '⏳ Сохранение...' : '💾 Сохранить пароль и данные'}
+                      </button>
+                    </div>
+                  </div>
+                  </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Action Buttons Bar */}
+        <div className="mt-2 grid grid-cols-2 gap-1.5 border-t border-slate-800 pt-2">
+          {/* PvP Attack Button */}
+          {onAttackPvP && (
+            inPyramid ? (
+              <button
+                onClick={() => {
+                  onAttackPvP(nick);
+                }}
+                className="col-span-2 rounded bg-gradient-to-r from-red-600 via-rose-600 to-amber-600 border border-red-400 py-1.5 text-[10.5px] font-black text-white hover:brightness-110 active:scale-95 shadow-[0_0_12px_rgba(239,68,68,0.6)] flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <span>⚔️ Напасть на игрока в Пирамиде (PvP){!isOnline ? ' [Оффлайн]' : ''}</span>
+              </button>
+            ) : (
+              <button
+                disabled
+                className="col-span-2 rounded bg-slate-800/90 border border-slate-700 py-1.5 text-[9.5px] font-bold text-slate-400 cursor-not-allowed opacity-80 flex items-center justify-center gap-1.5"
+                title="Игрок находится на главной (в Городе) — нападение невозможно! Нападать разрешено только внутри Пирамиды."
+              >
+                <span>🛡️ Игрок на главной (нападение запрещено)</span>
+              </button>
+            )
+          )}
+          {/* Add Friend Button */}
+          <button
+            onClick={handleAddFriendClick}
+            disabled={friendAdded}
+            className={`rounded py-1.5 text-[10px] font-bold transition-all active:scale-95 ${
+              friendAdded
+                ? 'bg-emerald-950 border border-emerald-500/50 text-emerald-300 cursor-default'
+                : 'bg-emerald-600 text-white hover:bg-emerald-500'
+            }`}
+          >
+            {friendAdded ? '✅ В друзьях' : '➕ В друзья'}
+          </button>
+
+          {/* Send SMS Button */}
+          <button
+            onClick={() => setTab('sms')}
+            className="rounded bg-sky-600 py-1.5 text-[10px] font-bold text-white hover:bg-sky-500 active:scale-95"
+          >
+            ✉️ Написать письмо
+          </button>
+
+          {/* Transfer Gold */}
+          {onOpenTransferModal && (
+            <button
+              onClick={() => {
+                onOpenTransferModal(nick);
+                onClose();
+              }}
+              className="rounded bg-amber-600 py-1.5 text-[10px] font-bold text-white hover:bg-amber-500 active:scale-95"
+            >
+              🪙 Передать золото
+            </button>
+          )}
+
+          {/* Transfer Item */}
+          {onOpenItemTransfer && (
+            <button
+              onClick={() => {
+                onOpenItemTransfer(nick);
+                onClose();
+              }}
+              className="rounded bg-indigo-600 py-1.5 text-[10px] font-bold text-white hover:bg-indigo-500 active:scale-95"
+            >
+              📦 Передать предмет
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+

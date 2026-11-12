@@ -1,0 +1,1442 @@
+export type ItemSlot = 'weapon' | 'armor' | 'pants' | 'boots' | 'gloves' | 'ring' | 'transport';
+
+export type ItemQualityKey = 'common' | 'rare' | 'epic' | 'legendary' | 'custom';
+
+export interface ItemQuality {
+  key: ItemQualityKey;
+  name: string;
+  color: string;
+  mult: number;
+  chance: number;
+}
+
+export interface ItemRentInfo {
+  to: string;
+  hours: number;
+  price: number;
+  startTime: number;
+  until: number;
+  expiredNotified?: boolean;
+}
+
+export interface ShopItemTemplate {
+  id: string;
+  name: string;
+  slot: ItemSlot;
+  type?: string;
+  icon: string;
+  quality: ItemQualityKey;
+  lvl: number;
+  price: number;
+  maxDurability: number;
+  hp: number;
+  dmg: number;
+  dodgeBonus: number;
+  energyBonus: number;
+  goldBonusPct: number;
+  expBonusPct: number;
+  isCustom?: boolean;
+  enabled: boolean;
+}
+
+export interface CharacterSkinTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  avatarUrl?: string;
+  quality: ItemQualityKey;
+  lvl: number;
+  priceGold: number;
+  priceCrystals: number;
+  currency: 'gold' | 'crystals';
+  hpBonus: number;
+  dmgBonus: number;
+  strBonus: number;
+  agiBonus: number;
+  vitBonus: number;
+  dodgeBonus: number;
+  energyBonus: number;
+  goldBonusPct: number;
+  expBonusPct: number;
+  bagBonus: number;
+  isExclusive?: boolean;
+  isPersonal?: boolean;
+  isTemporary?: boolean;
+  durationDays?: number;
+  enabled: boolean;
+}
+
+export interface PlayerBanInfo {
+  isBanned: boolean;
+  isPermanent: boolean;
+  bannedUntil?: number;
+  until?: number;
+  reason?: string;
+  bannedBy?: string;
+  bannedAt?: number;
+  blockFullAccess?: boolean;
+  blockPyramid?: boolean;
+  blockClanPyramid?: boolean;
+  blockChat?: boolean;
+  blockTradeAndAuction?: boolean;
+  blockClans?: boolean;
+  blockRoulette?: boolean;
+  expPenaltyPct?: number;
+  goldPenaltyPct?: number;
+}
+
+export interface BankPackageConfig {
+  id: string;
+  crystals: number;
+  priceUsd: number;
+  bonusCrystals?: number;
+  label?: string;
+  enabled: boolean;
+}
+
+export interface TransportTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  lvl: number;
+  travelTimeSec: number; // e.g., 600 (10m), 360 (6m), 240 (4m), 180 (3m)
+  priceGold: number;
+  priceCrystals?: number;
+  price?: number;
+  currency?: 'gold' | 'crystals' | 'both';
+  maxDurability: number;
+  quality: ItemQualityKey;
+  description?: string;
+  isNamed?: boolean;
+  timeReductionPct?: number;
+  dmg?: number;
+  hp?: number;
+  str?: number;
+  agi?: number;
+  vit?: number;
+  dodgeBonus?: number;
+  energyBonus?: number;
+  goldBonusPct?: number;
+  expBonusPct?: number;
+  isTemporary?: boolean;
+  durationDays?: number;
+  /** Скорость перемещения по карте 10x10 (секунд на 1 клетку, например 22, 16, 12, 8) */
+  stepSeconds?: number;
+  /** Грузоподъемность транспорта (сколько единиц веса ресурсов добавляет к базовым 30 ед.) */
+  cargoCapacity?: number;
+  enabled: boolean;
+}
+
+export interface PortTravelState {
+  status: 'idle' | 'to_port' | 'in_port' | 'from_port';
+  departureTime?: number;
+  startTime?: number;
+  arrivalTime?: number;
+  travelDurationSec?: number;
+  transportId?: string | null;
+  transportName?: string;
+  transportIcon?: string;
+}
+
+export interface GameFeatureFlags {
+  rouletteEnabled: boolean;
+  rouletteSpinCostCrystals?: number;
+  exchangeEnabled: boolean;
+  premiumEnabled: boolean;
+  durabilityEnabled: boolean;
+  shopEnabled?: boolean;
+  bankPurchaseEnabled?: boolean;
+  bankPaymentUrl?: string;
+  bankPaymentInstructions?: string;
+  bankPackages?: BankPackageConfig[];
+  crystalToGoldRate?: number;
+  goldToCrystalRate?: number;
+  dailyCrystalToGoldLimit?: number;
+  dailyGoldToCrystalLimit?: number;
+  crystalToGoldEnabled?: boolean;
+  goldToCrystalEnabled?: boolean;
+  crystalSpawnIntervalSec?: number;
+  crystalSpawnAmount?: number;
+  bossSpawnFrequency?: number;
+  bossRespawnIntervalSec?: number;
+  customCreationEnabled?: boolean;
+  customCreationCurrency?: 'crystals' | 'gold' | 'both';
+  customBaseCostCrystals?: number;
+  customBaseCostGold?: number;
+  customCostPerStatCrystals?: number;
+  customCostPerStatGold?: number;
+  customMaxDmg?: number;
+  customMaxHp?: number;
+  customMaxDodge?: number;
+  customMaxEnergy?: number;
+  customMaxGoldPct?: number;
+  customMaxExpPct?: number;
+  customDefaultDurability?: number;
+  npcMinLevel?: number;
+  npcCompanionsEnabled?: boolean;
+  // Premium (VIP) Configurable Settings & All Game Bonuses
+  premiumPriceCrystals?: number;
+  premiumPriceGold?: number;
+  premiumCurrency?: 'crystals' | 'gold' | 'both';
+  premiumDurationHours?: number;
+  premiumHpBonus?: number;
+  premiumDmgBonus?: number;
+  premiumStrBonus?: number;
+  premiumAgiBonus?: number;
+  premiumVitBonus?: number;
+  premiumDodgeBonus?: number;
+  premiumEnergyBonus?: number;
+  premiumGoldBonusPct?: number;
+  premiumExpBonusPct?: number;
+  premiumBagBonus?: number;
+  premiumRegenMultiplier?: number;
+  premiumWheelMultiplier?: number;
+  premiumLootBonusPct?: number;
+  premiumGoldWheelEnabled?: boolean;
+  premiumCrownEnabled?: boolean;
+  // Roulette (Колесо Фортуны) Settings
+  rouletteTitle?: string;
+  rouletteSpinCurrency?: 'crystals' | 'gold' | 'both';
+  rouletteSpinCostGold?: number;
+  rouletteVipSpinCostGold?: number;
+  rouletteVipSpinCostCrystals?: number;
+  rouletteGoldVipOnly?: boolean;
+  rouletteFreeSpinsPerDay?: number;
+  rouletteDailyGoldSpinsLimit?: number;
+  rouletteDailyCrystalSpinsLimit?: number;
+  rouletteVipUnlimitedSpins?: boolean;
+  // Relics, Modification Altar (50 slots), Port & Transport System Settings
+  relicDropChancePct?: number; // Base 3% drop chance in Pyramids
+  altarMaxSacrificeItems?: number; // Default 50 items/relics
+  altarBonusPerClassPct?: number; // Default +5% per class (10 classes = +50%)
+  altarClassChancePerRelic?: number[]; // 10 values for Class 1..10 chance per 1 relic
+  transportsCatalog?: TransportTemplate[];
+  transportsPriceMigratedV2?: boolean;
+  transportsCargoMigratedV1?: boolean;
+  namedTransportEnabled?: boolean;
+  namedTransportDefaultDurability?: number; // Default 500/500
+  namedTransportTimeReductionPct?: number; // Default 35% time reduction
+  namedTransportBaseTimeSec?: number; // Base fastest travel time before reduction (e.g. 150s)
+  namedTransportCostCrystals?: number; // Default 35 crystals
+  namedTransportCostGold?: number; // Default 15000 gold
+  // Fishing & Pyramid Halls (200-500+ players scaling)
+  fishingConfig?: any;
+  battlePassConfig?: any;
+  maxPlayersPerPyramidHall?: number; // Default 25 players per Pyramid Hall
+}
+
+export interface GameItem {
+  id: string;
+  shopTemplateId?: string;
+  name: string;
+  slot: ItemSlot;
+  icon: string;
+  quality: ItemQualityKey;
+  lvl: number;
+  dmg: number;
+  hp: number;
+  dodgeBonus?: number;
+  energyBonus?: number;
+  goldBonusPct?: number;
+  expBonusPct?: number;
+  price?: number;
+  durability?: number;
+  maxDurability?: number;
+  initialMaxDurability?: number;
+  str?: number;
+  agi?: number;
+  vit?: number;
+  dmgBonus?: number;
+  hpBonus?: number;
+  strBonus?: number;
+  agiBonus?: number;
+  vitBonus?: number;
+  forgeGoldCost?: number;
+  forgeCrystalCost?: number;
+  forgeCurrency?: 'crystals' | 'gold';
+  transferable?: boolean;
+  rent?: ItemRentInfo | null;
+  origin?: string;
+  isCustomCreated?: boolean;
+  creatorNick?: string;
+  ownerNick?: string;
+  // Clan Storage, Rental & Clan Forge Fields
+  clanStorageId?: string;
+  isClanRented?: boolean;
+  isClanCreated?: boolean;
+  clanOwnerId?: string;
+  clanOwnerName?: string;
+  clanOwnerTag?: string;
+  rentedByNick?: string;
+  originalOwnerNick?: string;
+  clanRentDepositedAt?: number;
+  // Auction Elixir Lot Fields
+  isElixirLot?: boolean;
+  elixirType?: 'hp' | 'en' | 'exp';
+  elixirQty?: number;
+  // Modification Altar Fields (Classes 1..10, +5% per class up to +50%)
+  modificationClass?: number;
+  baseStatsBeforeMod?: {
+    dmg: number;
+    hp: number;
+    dodgeBonus?: number;
+    energyBonus?: number;
+    goldBonusPct?: number;
+    expBonusPct?: number;
+    str?: number;
+    agi?: number;
+    vit?: number;
+  };
+  // Relic Fields (dropped in Pyramids, used as sacrifice materials in Altar)
+  isRelic?: boolean;
+  relicTier?: number;
+  relicPower?: number;
+  // Transport Fields (used to travel to Port and back)
+  isTransport?: boolean;
+  transportTemplateId?: string;
+  travelTimeSec?: number;
+  stepSeconds?: number;
+  cargoCapacity?: number;
+  isNamedTransport?: boolean;
+  timeReductionPct?: number;
+  // Temporary / Permanent Duration Fields
+  isTemporary?: boolean;
+  durationDays?: number;
+  expiresAt?: number;
+}
+
+export type ClanRole = 'leader' | 'officer' | 'warrior' | 'recruit' | 'member';
+
+export interface ClanMemberPermissions {
+  /** [Прием/Исключение] */
+  canManageMembers?: boolean;
+  canRecruitKick?: boolean;
+  /** [Объявление штурмов 7х7] */
+  canDeclareWars?: boolean;
+  canDeclareWar?: boolean;
+  /** [Выдача опыта PTS и премий из казны] */
+  canDistributePtsAndTreasury: boolean;
+  /** [Управление Базой и Дипломатией] */
+  canManageBaseAndDiplomacy: boolean;
+}
+
+export interface ClanSyndicateRankConfig {
+  level: number; // 1..15
+  title: string;
+  name?: string;
+  shortTitle?: string;
+  category?: 'soldier' | 'sergeant' | 'warrant' | 'junior_officer' | 'senior_officer' | 'general';
+  requiredPts: number;
+  reqPts?: number;
+  priceGold: number;
+  costGold?: number;
+  vitBonus: number;
+  strBonus: number;
+  hpBonusPct: number;
+  dmgBonusPct: number;
+  armorBonusPct: number;
+  accuracyBonusPct: number;
+  cargoWeightBonus: number;
+  durabilitySavePct?: number;
+  factorySpeedBonusPct?: number;
+  ptsBonusPct?: number;
+  bonusSummary?: string;
+  perkName?: string;
+  perkDescription?: string;
+  perkText?: string;
+}
+
+export interface ClanBaseBuildingsState {
+  /** Лазарет (Ур. 1..4): ускоряет лечение на +15/+30/+45/+60%, на 4 ур. бесплатное лечение раз в час */
+  infirmaryLevel: 1 | 2 | 3 | 4;
+  /** Командный пункт (Ур. 1..4): увеличивает макс. состав (15/25/35/50 чел.) и радар перемещений врагов */
+  commandPostLevel: 1 | 2 | 3 | 4;
+  /** Форпост (Ур. 1..4): +5/+10/+15/+20% к броне защитников в 7х7 и снижение поломки зданий после штурма */
+  outpostLevel: 1 | 2 | 3 | 4;
+  /** Зарядная станция (Ур. 1..4): питает Базу клана энергией (Мощность кВт или Алхимический реагент) */
+  powerStationLevel: 1 | 2 | 3 | 4;
+  /** Текущий заряд энергии Базы клана (кВт). Без заряда (>0) бонусы построек временно отключаются */
+  powerChargeUnits: number;
+  maxPowerChargeUnits: number;
+  lastPowerTickAt?: number;
+  powerChargeKw?: number;
+  maxPowerChargeKw?: number;
+  lastChargeTickAt?: number;
+}
+
+export interface ClanDiplomacyEntry {
+  targetClanId: string;
+  targetClanNumber?: number;
+  targetClanName: string;
+  targetClanTag: string;
+  targetClanEmblem: string;
+  status: 'alliance' | 'war' | 'pending_incoming' | 'pending_outgoing';
+  updatedAt: number;
+  initiatedByNick?: string;
+}
+
+export interface ClanMember {
+  nick: string;
+  role: ClanRole;
+  lvl: number;
+  avatar?: string;
+  joinedAt: number;
+  contributionExp?: number;
+  contributionInfluence?: number;
+  /** Личный Клановый Опыт (PTS) бойца */
+  clanPts?: number;
+  /** Воинское звание (Погон 1..15, от Рядового до Генерала/Маршала) */
+  rankLevel?: number;
+  /** Галочки прав управления в синдикате */
+  permissions?: ClanMemberPermissions;
+  /** Персональная должность в клане */
+  customTitle?: string;
+  isOnline?: boolean;
+  lastSeen?: number;
+  hasClanBadge?: boolean;
+  badgeIssuedAt?: number;
+}
+
+export interface ClanStorageItem {
+  id: string;
+  itemType?: 'equipment' | 'elixir';
+  elixirType?: 'hp' | 'en' | 'exp';
+  elixirQty?: number;
+  item: GameItem;
+  originalOwnerNick: string;
+  depositedAt: number;
+  isRented: boolean;
+  rentedByNick?: string;
+  rentedAt?: number;
+}
+
+export type ClanLogType =
+  | 'create'
+  | 'join'
+  | 'leave'
+  | 'kick'
+  | 'transfer_leader'
+  | 'achievement_unlocked'
+  | 'deposit_gold'
+  | 'deposit_crystals'
+  | 'deposit_item'
+  | 'deposit_elixir'
+  | 'forge_clan_item'
+  | 'rent_item'
+  | 'return_item'
+  | 'recall_item'
+  | 'take_elixir'
+  | 'pyramid_income'
+  | 'declare_war'
+  | 'capture_territory'
+  | 'raid_boss_kill'
+  | 'clan_quest_claim'
+  | 'arena_victory'
+  | 'rename_nick'
+  | 'issue_clan_badge'
+  | 'port_production'
+  | 'promote'
+  | 'upgrade'
+  | 'interclan_transfer'
+  | 'diplomacy'
+  | 'agenda_update';
+
+export interface ClanLogEntry {
+  id: string;
+  timestamp: number;
+  timeStr: string;
+  actorNick: string;
+  type: ClanLogType;
+  text: string;
+  icon?: string;
+}
+
+export interface ClanAchievementsProgress {
+  monstersKilled: number;
+  goldContributed: number;
+  crystalsContributed: number;
+  itemsForgedOrDeposited: number;
+  influenceEarned: number;
+  totalExpEarned: number;
+  unlockedAchievementIds?: string[];
+}
+
+export type ClanTerritoryBonusType =
+  | 'slots_luck'
+  | 'fishing_gold'
+  | 'pyramid_gold'
+  | 'combat_dmg'
+  | 'pyramid_exp'
+  | 'max_hp';
+
+export type TerritoryFighterRole = 'tank' | 'dps' | 'support';
+
+export type TerritoryTacticalAction = 'defense' | 'frontal' | 'focus';
+
+export interface ClanTerritory7x7Fighter {
+  nick: string;
+  avatar: string;
+  lvl: number;
+  clanId: string;
+  clanName: string;
+  clanTag: string;
+  clanEmblem: string;
+  side: 'attacker' | 'defender';
+  slotIndex?: number;
+  role: TerritoryFighterRole;
+  tactic: TerritoryTacticalAction;
+  hp: number;
+  maxHp: number;
+  dmg: number;
+  dodgePct: number;
+  powerScore: number;
+  hasClanGear: boolean;
+  hasClanTransport: boolean;
+  rankLevel?: number;
+  clanPts?: number;
+  alive: boolean;
+  actedInRound?: number;
+  shieldActiveInRound?: number;
+  isBot?: boolean;
+  joinedAt: number;
+}
+
+export interface ClanTerritory7x7RoundLog {
+  roundNumber: number;
+  timestamp: number;
+  events: string[];
+  attackersAlive: number;
+  defendersAlive: number;
+}
+
+export interface ClanTerritory7x7BattleState {
+  phase: 'gathering' | 'combat' | 'finished';
+  gatheringStartedAt: number;
+  gatheringEndsAt: number;
+  currentRound: number;
+  maxRounds: number;
+  roundStartedAt: number;
+  roundEndsAt: number;
+  attackers: ClanTerritory7x7Fighter[];
+  defenders: ClanTerritory7x7Fighter[];
+  waitingQueueAttackers?: string[];
+  waitingQueueDefenders?: string[];
+  roundLogs: ClanTerritory7x7RoundLog[];
+  winnerSide?: 'attacker' | 'defender';
+  winnerClanId?: string | null;
+  winnerClanName?: string | null;
+  winnerClanTag?: string | null;
+  winnerClanEmblem?: string | null;
+  summaryText?: string;
+}
+
+export interface ClanTerritoryWarScoreEntry {
+  clanId: string;
+  clanName: string;
+  clanTag: string;
+  clanEmblem: string;
+  points: number;
+}
+
+export interface PortFactoryWorkerSession {
+  nick: string;
+  avatar?: string;
+  startedAt: number;
+  endsAt: number;
+  durationHours: 1 | 2;
+  goldPerHour: number;
+  claimed?: boolean;
+}
+
+export type PortTerminalResourceKey =
+  | 'raw_fish'
+  | 'iron_ore'
+  | 'gold_nugget'
+  | 'quartz_sand'
+  | 'crude_oil'
+  | 'fish_semifinished'
+  | 'alchemy_reagents'
+  | 'gold_ingots'
+  | 'hardened_steel'
+  | 'combat_ration'
+  | 'combat_modules'
+  | 'port_relics'
+  | 'power_kw'
+  | 'tavern_meal';
+
+export interface PortWorkProtocolEntry {
+  id: string;
+  timestamp: number;
+  timeStr?: string;
+  nick?: string;
+  playerNick?: string;
+  hoursWorked: number;
+  goldPaid: number;
+}
+
+export interface PortDealProtocolEntry {
+  id: string;
+  timestamp: number;
+  timeStr?: string;
+  actorNick: string;
+  actionType:
+    | 'sell_input'
+    | 'buy_output'
+    | 'clan_tax'
+    | 'cash_deposit'
+    | 'cash_withdraw'
+    | 'repair'
+    | 'tavern_meal'
+    | 'wage_payout'
+    | 'owner_deposit'
+    | 'owner_withdraw'
+    | 'buy_product'
+    | 'sell_resource';
+  text?: string;
+  goldDelta?: number;
+  resourceName?: string;
+  quantity?: number;
+  goldAmount?: number;
+  clanTaxGold?: number;
+  note?: string;
+}
+
+export interface PortPendingClanControl {
+  clanId: string | null;
+  clanName: string;
+  clanTag: string;
+  clanEmblem: string;
+  requestedAt: number;
+}
+
+export interface PortProductionState {
+  factoryType: string;
+  factoryCategoryLabel: string;
+  /** Уровень производства (1 — Добыча сырья, 2 — Первичные заводы, 3 — Высокотехнологичные мануфактуры) */
+  productionTier?: 1 | 2 | 3;
+  /** Этап производственной цепочки: 'extraction' (Этап 1), 'raw_processing' (Этап 2), 'relic_foundry' или 'dual_advanced' (Этап 3) */
+  productionStage?: 'extraction' | 'raw_processing' | 'relic_foundry' | 'dual_advanced';
+  /** Признак завода, требующего 2 или 3 входящих компонента */
+  requiresDualInput?: boolean;
+  /** Входящий компонент №1 */
+  input1ResourceKey?: PortTerminalResourceKey;
+  input1ResourceName?: string;
+  input1ResourceIcon?: string;
+  input1Stock?: number;
+  maxInput1Stock?: number;
+  input1RequiredPerCycle?: number;
+  /** Входящий компонент №2 */
+  input2ResourceKey?: PortTerminalResourceKey;
+  input2ResourceName?: string;
+  input2ResourceIcon?: string;
+  input2Stock?: number;
+  maxInput2Stock?: number;
+  input2RequiredPerCycle?: number;
+  /** Цена закупки второго входящего ресурса */
+  input2BuyPriceGold?: number;
+  /** Входящий компонент №3 (например, для Мастерской Реликвий) */
+  input3ResourceKey?: PortTerminalResourceKey;
+  input3ResourceName?: string;
+  input3ResourceIcon?: string;
+  input3Stock?: number;
+  maxInput3Stock?: number;
+  input3RequiredPerCycle?: number;
+  /** Цена закупки третьего входящего ресурса */
+  input3BuyPriceGold?: number;
+  /** Ключ, название, иконка и норма выпуска (шт/ч) готовой продукции на выходе */
+  outputResourceKey?: PortTerminalResourceKey;
+  outputProductName?: string;
+  outputProductIcon?: string;
+  outputRatePerHour?: number;
+  /** ID связанного объекта в межпроизводственной цепочке (поставщик или потребитель) */
+  linkedSectorId?: string | null;
+  /** Название промежуточного ресурса цепочки (например, «Рыбный паштет») */
+  intermediateResourceName?: string;
+  /** Уровень объекта недвижимости (1 — базовый, 2 — объединённый/расширенный) */
+  facilityLevel?: number;
+  /** Текущий баланс объекта недвижимости (в золоте) для выплаты зарплат и содержания */
+  facilityBalanceGold?: number;
+  /** Ставка оплаты за 1 час смены (регулируется владельцем, по умолчанию 250 золота) */
+  workerWageGold?: number;
+  /** Цена закупки единицы сырья объектом (регулируется владельцем, по умолчанию 50 золота) */
+  rawBuyPriceGold?: number;
+  /** Цена продажи готовой продукции объектом (регулируется владельцем, по умолчанию 200 золота) */
+  productSellPriceGold?: number;
+  isMerged?: boolean;
+  mergedWithSectorId?: string | null;
+  fishStock: number;
+  maxFishStock: number;
+  /** Склад промежуточного ресурса — обработанного сырья (базовый лимит 100, при объединении 200) */
+  processedStock?: number;
+  maxProcessedStock?: number;
+  relicStock: number;
+  maxRelicStock: number;
+  lastCraftTickAt: number;
+  workers: PortFactoryWorkerSession[];
+  passiveGoldEarned?: number;
+  totalRelicsCrafted?: number;
+  /** Запас Мощности (кВт) на энергосети завода (вес = 0) */
+  powerStock?: number;
+  maxPowerStock?: number;
+  /** Требуемый расход Мощности (кВт) в час: 1 для заводов 2-го этапа, 2 для мануфактур 3-го этапа */
+  powerRequiredPerCycle?: number;
+  /** Цена закупки 1 ед. Мощности (кВт) заводом (по умолчанию 75 🪙) */
+  powerBuyPriceGold?: number;
+  /** Прочность здания (0..100, по умолчанию 100) */
+  buildingDurability?: number;
+  maxBuildingDurability?: number;
+  lastDurabilityDecayAt?: number;
+  /** Склад материалов для ремонта сломанного здания (нужно 5 железной руды + 2 закаленной стали) */
+  repairIronStock?: number;
+  repairSteelStock?: number;
+  repairOrderActive?: boolean;
+  /** Протокол последних 20 рабочих смен */
+  workLogs?: PortWorkProtocolEntry[];
+  /** Протокол последних сделок, налогов и операций кассы */
+  dealLogs?: PortDealProtocolEntry[];
+}
+
+export interface ClanTerritorySector {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  zone?: 'port';
+  /** Координаты сектора на карте острова Порта 10х10 (1..10) */
+  mapX?: number;
+  mapY?: number;
+  /** Название географического сектора острова Порта */
+  sectorBiomeName?: string;
+  /** Категория производственного объекта в секторе */
+  buildingCategory?:
+    | 'extraction'
+    | 'raw_processing'
+    | 'dual_manufactory'
+    | 'relic_foundry'
+    | 'warehouse_terminal'
+    | 'power_plant'
+    | 'tavern';
+  /** Официальный владелец недвижимости (никнейм игрока) */
+  ownerNick?: string | null;
+  /** Признак созданного игроком объекта недвижимости за 3 000 кристаллов */
+  isCustomCreated?: boolean;
+  createdAt?: number;
+  /** Признак того, что владелец вручную делегировал контроль клану */
+  ownerDelegatedClan?: boolean;
+  /** Отложенная передача контроля клану, если объект находился под активным нападением */
+  pendingClanControl?: PortPendingClanControl | null;
+  ownerClanId: string | null;
+  ownerClanName: string | null;
+  ownerClanTag: string | null;
+  ownerClanEmblem: string | null;
+  ownerClanColor?: string | null;
+  capturedAt?: number;
+  protectionUntil?: number;
+  bonusType: ClanTerritoryBonusType;
+  bonusValue: number;
+  bonusLabel: string;
+  warStatus: 'peace' | 'war';
+  warStartedAt?: number;
+  warEndsAt?: number;
+  attackerClanId?: string | null;
+  attackerClanName?: string | null;
+  attackerClanTag?: string | null;
+  attackerClanEmblem?: string | null;
+  warScores?: Record<string, ClanTerritoryWarScoreEntry>;
+  battle7x7?: ClanTerritory7x7BattleState | null;
+  lastBattleReport?: ClanTerritory7x7BattleState | null;
+  production?: PortProductionState;
+}
+
+export interface ClanRaidBossParticipant {
+  nick: string;
+  avatar?: string;
+  damageDealt: number;
+  attacksCount: number;
+  rewardClaimed: boolean;
+}
+
+export interface ClanRaidBossState {
+  clanId: string;
+  bossId: string;
+  bossName: string;
+  bossIcon: string;
+  bossDescription: string;
+  bossLevel: number;
+  currentHp: number;
+  maxHp: number;
+  resetDate: string;
+  isDefeated: boolean;
+  defeatedAt?: number;
+  rewardGold: number;
+  rewardCrystals: number;
+  rewardChestName: string;
+  participants: Record<string, ClanRaidBossParticipant>;
+}
+
+export type ClanQuestActionType = 'fish' | 'spin' | 'donate_gold' | 'kill_mob';
+
+export interface ClanDailyQuestEntry {
+  questId: string;
+  title: string;
+  description: string;
+  icon: string;
+  actionType: ClanQuestActionType;
+  currentProgress: number;
+  targetValue: number;
+  unitLabel: string;
+  status: 'in_progress' | 'completed' | 'claimed';
+  rewardTreasuryGold: number;
+  rewardTreasuryCrystals: number;
+  rewardPlayerGold: number;
+  rewardPlayerCrystals: number;
+  chestName: string;
+  treasuryRewardClaimed?: boolean;
+  claimedByNicks?: string[];
+  contributions?: Record<string, number>;
+}
+
+export interface ClanQuestsState {
+  resetDate: string;
+  quests: ClanDailyQuestEntry[];
+}
+
+export interface ClanArenaFighter {
+  nick: string;
+  avatar: string;
+  lvl: number;
+  clanId: string;
+  clanName: string;
+  clanTag: string;
+  clanEmblem: string;
+  powerScore: number;
+  dmg: number;
+  maxHp: number;
+  dodgePct: number;
+  hasClanGear: boolean;
+  hasClanTransport: boolean;
+  arenaPoints: number;
+  wins: number;
+  losses: number;
+  championTitle?: string | null;
+  registeredAt: number;
+}
+
+export interface ClanArenaMatchLog {
+  id: string;
+  timestamp: number;
+  timeStr: string;
+  roundLabel: string;
+  fighter1Nick: string;
+  fighter1ClanTag: string;
+  fighter2Nick: string;
+  fighter2ClanTag: string;
+  winnerNick: string;
+  winnerClanId: string;
+  winnerClanTag: string;
+  winProbabilityPct: number;
+  pointsAwarded: number;
+  prestigeAwarded: number;
+  titleAwarded?: string;
+  combatRounds: string[];
+}
+
+export interface ClanArenaPlayoffMatch {
+  id: string;
+  stage: 'quarter' | 'semi' | 'final';
+  stageLabel: string;
+  matchIndex: number;
+  fighter1: ClanArenaFighter | null;
+  fighter2: ClanArenaFighter | null;
+  winnerNick?: string | null;
+  winnerClanTag?: string | null;
+  status: 'pending' | 'ready' | 'completed';
+  matchLog?: ClanArenaMatchLog | null;
+}
+
+export interface ClanArenaTournamentState {
+  seasonId: string;
+  nextTournamentAt: number;
+  fighters: ClanArenaFighter[];
+  matchHistory: ClanArenaMatchLog[];
+  clanPrestigeScores: Record<string, number>;
+  playoffBracket?: ClanArenaPlayoffMatch[];
+  tournamentChampionNick?: string | null;
+  tournamentChampionClanTag?: string | null;
+}
+
+export interface Clan {
+  id: string;
+  /** Уникальный числовой #ID клана в стиле Gwars (например: #1, #105, #8348) */
+  clanNumber?: number;
+  name: string;
+  tag: string;
+  emblem: string;
+  description: string;
+  /** Повестка дня (Приказ Главы) — отображается всем бойцам при входе в клан */
+  agendaText?: string;
+  agendaUpdatedAt?: number;
+  leaderNick: string;
+  level: number;
+  exp?: number;
+  maxStorageOverride?: number;
+  elixirs?: {
+    hp: number;
+    en: number;
+    exp: number;
+  };
+  influencePoints: number;
+  prestigePoints?: number;
+  treasuryGold: number;
+  treasuryCrystals: number;
+  pyramidTaxGoldPct?: number;
+  pyramidTaxCrystalPct?: number;
+  achievementsProgress?: ClanAchievementsProgress;
+  raidBoss?: ClanRaidBossState;
+  clanQuests?: ClanQuestsState;
+  createdAt: number;
+  members: ClanMember[];
+  storage: ClanStorageItem[];
+  logs?: ClanLogEntry[];
+  isOpen: boolean;
+  joinMinLvl: number;
+  /** Строения Клановой Базы (Уровни 1–4) и заряд станции */
+  baseBuildings?: ClanBaseBuildingsState;
+  /** Дипломатия синдиката: Союзы (до 2 кланов), заявки и Войны */
+  diplomacy?: ClanDiplomacyEntry[];
+  /** Общий нераспределенный пул PTS клана от удержания недвижимости (+10 PTS/ч за объект) */
+  unassignedPtsPool?: number;
+  lastEstatePtsTickAt?: number;
+  isNpcSyndicate?: boolean;
+}
+
+export interface ClanPyramidMonsterTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  lvl: number;
+  hp: number;
+  maxHp?: number;
+  dmg: number;
+  isBoss?: boolean;
+  goldReward: number;
+  crystalReward: number;
+  expReward: number;
+  clanExpReward: number;
+  influenceReward: number;
+  spawnCount: number;
+}
+
+export interface ClanPyramidConfig {
+  title: string;
+  subtitle: string;
+  minClanLevel: number;
+  energyPerMove: number;
+  respawnIntervalSec: number;
+  buffGoldPct: number;
+  buffExpPct: number;
+  buffDmgPct: number;
+  buffHpPct: number;
+  goldBonusPct: number;
+  expBonusPct: number;
+  dmgBonusPct: number;
+  hpBonusPct: number;
+  monsters: ClanPyramidMonsterTemplate[];
+}
+
+export interface ClanPyramidState {
+  controlledByClanId?: string | null;
+  controlledByClanName?: string | null;
+  controlledByClanTag?: string | null;
+  controlledByClanEmblem?: string | null;
+  seasonEndTimestamp?: number;
+  treasuryGold: number;
+  treasuryCrystals: number;
+  floorScores: Record<string, number>;
+  currentCycle: number;
+  lastBattleAt?: number;
+  lastRespawnAt?: number;
+  lastGridRespawnAt?: number;
+  gridSeed?: number;
+  config?: ClanPyramidConfig;
+  gridCells?: PyramidCell[][];
+  topClansLeaderboard: {
+    clanId: string;
+    clanName: string;
+    clanTag: string;
+    clanEmblem: string;
+    influence: number;
+  }[];
+}
+
+export interface HeroState {
+  nick?: string;
+  clanId?: string;
+  clanTag?: string;
+  clanName?: string;
+  clanEmblem?: string;
+  clanRole?: ClanRole;
+  level: number;
+  lvl?: number;
+  exp: number;
+  gold: number;
+  crystals: number;
+  hp: number;
+  maxHp: number;
+  baseMaxHp: number;
+  energy: number;
+  maxEnergy: number;
+  bonusDmg: number;
+  bonusHp: number;
+  gearDmg: number;
+  gearHp: number;
+  gearDodge?: number;
+  gearEnergy?: number;
+  gearGoldPct?: number;
+  gearExpPct?: number;
+  gearStr?: number;
+  gearAgi?: number;
+  gearVit?: number;
+  gearV2Migrated?: boolean;
+  statPoints: number;
+  str: number;
+  agi: number;
+  vit: number;
+  hpPotions: number;
+  enPotions: number;
+  expPotions?: number;
+  expElixirUntil?: number;
+  goldInCurrentRun: number;
+  bagCapacity: number;
+  sellExperience: number;
+  mobsKilled: number;
+  mobKills?: number;
+  pvpKills: number;
+  pvpWins?: number;
+  pvpLosses?: number;
+  deaths: number;
+  itemsSold: number;
+  role: 'admin' | 'mod' | 'winner' | 'regular';
+  is_admin?: number;
+  statusTitle: string;
+  isPremium: boolean;
+  premiumUntil?: number;
+  vipUntil?: number;
+  pyramidTier: number;
+  homePyramidTier?: number;
+  pyramidCard1?: number;
+  pyramidCard2?: number;
+  pyramidCard3?: number;
+  avatar: string;
+  dailyQuests: DailyQuest[];
+  lastQuestUpdate: number;
+  dailyQuestsDate?: string;
+  dailyCrystalChestClaimedDate?: string;
+  referralCode: string;
+  referredBy?: string;
+  referralPlayerNick?: string;
+  referralPlayerLvl?: number;
+  referralClaimed?: boolean;
+  lastWheelSpinTime?: number;
+  lastGoldWheelSpinTime?: number;
+  dailyFreeWheelSpins?: number;
+  dailyGoldWheelSpins?: number;
+  dailyCrystalWheelSpins?: number;
+  dailyWheelSpinsDate?: string;
+  dailyCrystalToGoldCount?: number;
+  dailyCrystalToGoldDate?: string;
+  dailyGoldToCrystalCount?: number;
+  dailyGoldToCrystalDate?: number | string;
+  totalGoldCollected?: number;
+  claimedMailGiftIds?: string[];
+  dailyLoginDay?: number;
+  dailyLoginLastDate?: string;
+  lastSeen?: number;
+  last_seen?: number;
+  lastLoginDate?: string;
+  ownedSkinIds?: string[];
+  ownedSkinExpirations?: Record<string, number>;
+  ownedSkins?: CharacterSkinTemplate[];
+  activeSkinId?: string | null;
+  banInfo?: PlayerBanInfo | null;
+  killerLicenseUntil?: number;
+  killerLicenses?: number;
+  stunUntil?: number;
+  npcCompanion?: NpcCompanionState;
+  gamblingSpentGold?: number;
+  gamblingWonGold?: number;
+  gamblingSpentCrystals?: number;
+  gamblingWonCrystals?: number;
+  gamblingGamesPlayed?: number;
+  bossesKilled?: number;
+  claimedAchievementIds?: string[];
+  portTravel?: PortTravelState;
+  activeTransportId?: string | null;
+  fishingState?: any;
+  fishingExpBuffUntil?: number;
+  fishingExpBuffPct?: number;
+  pyramidHall?: number;
+  battlePass?: any;
+  seasonTitleId?: 'sand_explorer' | 'season_pharaoh' | null;
+  seasonTitleName?: string | null;
+  seasonTitleUntil?: number;
+  seasonTitleBonusPct?: number;
+  lastNameChangeDate?: number;
+  arenaChampionTitle?: string | null;
+  arenaPoints?: number;
+  productionHours?: number;
+  productionLevel?: number;
+  hasClanBadge?: boolean;
+  /** Надет ли предмет «Знак клана» (активирует боевые бонусы Погона и доступ к боям 7х7) */
+  clanBadgeEquipped?: boolean;
+  /** Личный Клановый Опыт (PTS) персонажа */
+  clanPts?: number;
+  /** Текущее воинское звание (Погон 1..15) персонажа */
+  clanRankLevel?: number;
+  /** Время последнего бесплатного восстановления HP в Лазарете 4 уровня */
+  lastClanInfirmaryHealAt?: number;
+  portResources?: Partial<Record<PortTerminalResourceKey, number>>;
+  /** Бодрость персонажа в Порту (от 0% до 100%, по умолчанию 100%) */
+  portStamina?: number;
+  /** Текущие координаты игрока на карте Порта 10х10 (по умолчанию [7/6]) */
+  portIslandPos?: { x: number; y: number };
+  /** Активное перемещение между секторами карты Порта 10х10 */
+  portSectorMove?: {
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    startedAt: number;
+    endsAt: number;
+    durationSec: number;
+    stepsCount: number;
+    transportName?: string | null;
+    transportIcon?: string | null;
+  } | null;
+}
+
+export interface NpcLogEntry {
+  id: string;
+  time: string;
+  text: string;
+  type: 'kill' | 'step' | 'death' | 'energy' | 'loot';
+}
+
+export interface NpcNotificationEntry {
+  id: string;
+  timestamp: number;
+  time: string;
+  reason: 'low_energy' | 'expired' | 'bag_full' | 'recharged' | 'system';
+  title: string;
+  message: string;
+  read?: boolean;
+}
+
+export interface NpcTemplate {
+  id: string;
+  name: string;
+  icon: string;
+  minLevel?: number;
+  priceCrystals: number;
+  baseEnergy: number;
+  baseHp: number;
+  baseDmg: number;
+  rewardMultiplier: number;
+  bagCapacity: number;
+  energyPerAttack: number;
+  regenIntervalSec: number;
+  description: string;
+  enabled: boolean;
+}
+
+export interface NpcCompanionState {
+  unlocked: boolean;
+  isActive: boolean;
+  isPurchased?: boolean;
+  isActiveInPyramid?: boolean;
+  name?: string;
+  icon?: string;
+  templateId?: string;
+  energy: number;
+  maxEnergy: number;
+  hp: number;
+  maxHp: number;
+  damage: number;
+  tier: number;
+  row: number;
+  col: number;
+  lastActionTime: number;
+  lastRegenTime: number;
+  bagGold: number;
+  bagExp: number;
+  mobsKilled: number;
+  mobsInBag?: number;
+  bagCapacity?: number;
+  ownerNick?: string;
+  lastBagWarningTime?: number;
+  lastToggledAt?: number;
+  expiresAt?: number;
+  forcedDisableReason?: 'low_energy' | 'expired' | 'global_disabled' | null;
+  forcedDisabledAt?: number;
+  pushNotificationsEnabled?: boolean;
+  notifications?: NpcNotificationEntry[];
+  logs?: NpcLogEntry[];
+}
+
+export interface WheelWinnerEntry {
+  id: string;
+  nick: string;
+  isPremium?: boolean;
+  prizeName: string;
+  prizeIcon: string;
+  quality: ItemQualityKey;
+  prizeQuality?: ItemQualityKey;
+  timestamp: number;
+  timeStr: string;
+}
+
+export interface MailGiftAttachment {
+  gold?: number;
+  crystals?: number;
+  exp?: number;
+  statPoints?: number;
+  hpPotions?: number;
+  enPotions?: number;
+  expPotions?: number;
+  energy?: number;
+  premiumDays?: number;
+  wheelSpins?: number;
+  vipHours?: number;
+  item?: GameItem;
+  items?: GameItem[];
+  relicsCount?: number;
+  relicClass?: number;
+  claimed?: boolean;
+}
+
+export interface PrivateMessage {
+  id?: string;
+  from: string;
+  to: string;
+  text: string;
+  time: number | string;
+  timestamp?: number;
+  timeStr?: string;
+  read?: boolean;
+  noReply?: boolean;
+  gift?: MailGiftAttachment;
+  giftClaimed?: boolean;
+  giftClaimedAt?: number;
+}
+
+export interface CrystalOrder {
+  id: string;
+  playerNick: string;
+  playerLevel: number;
+  playerClan?: string;
+  playerAvatar?: string;
+  telegramContact: string;
+  crystals: number;
+  bonusCrystals?: number;
+  priceUsd: number;
+  status: 'pending' | 'completed' | 'rejected';
+  createdAt: number;
+  completedAt?: number;
+  adminNote?: string;
+  completedBy?: string;
+}
+
+export interface CombatLogEntry {
+  id: string;
+  time: string;
+  text: string;
+  type: 'hit' | 'kill' | 'potion' | 'loot' | 'pvp' | 'damage_taken' | 'crit' | 'miss';
+  damageType?: 'normal' | 'crit' | 'miss';
+}
+
+export interface LootHistoryEntry {
+  id: string;
+  timestamp: number;
+  timeStr: string;
+  category: 'monster' | 'chest';
+  title: string;
+  icon: string;
+  lvl?: number;
+  isBoss?: boolean;
+  location?: string;
+  gold?: number;
+  crystals?: number;
+  exp?: number;
+  potionDrop?: 'hp' | 'en' | 'exp' | null;
+  itemName?: string;
+}
+
+export type DailyQuestType =
+  | 'kill_mobs'
+  | 'collect_gold'
+  | 'pyramid_steps'
+  | 'boss_or_scarab'
+  | 'catch_fish';
+
+export interface DailyQuest {
+  id: string;
+  type: DailyQuestType;
+  title?: string;
+  description?: string;
+  icon?: string;
+  target: number;
+  progress: number;
+  reward: number; // crystals in chest
+  rewardGold?: number; // bonus gold in chest
+  rewardExpPotions?: number;
+  chestName?: string;
+  targetFishId?: string;
+  targetFishName?: string;
+  isCompleted: boolean;
+  isClaimed: boolean;
+}
+
+export type EquippedGear = Record<ItemSlot, GameItem | null>;
+
+export interface MarketLot {
+  id: string;
+  item: GameItem;
+  seller: string;
+  start: number;
+  buyout: number;
+  currentBid: number;
+  highestBidder?: string;
+  createdAt: number;
+}
+
+export interface TradeProtocolEntry {
+  id: string;
+  timestamp: number;
+  dateStr: string;
+  type: 'transfer_out' | 'transfer_in' | 'rent_out' | 'rent_return' | 'auction_list' | 'auction_sell' | 'auction_buy' | 'gold_transfer' | 'purchase' | 'referral_bonus' | 'forge' | 'altar_modify' | 'clan_deposit' | 'clan_rent' | 'clan_return' | 'clan_recall';
+  description: string;
+  itemId?: string;
+  reclaimed?: boolean;
+  itemSnapshot?: {
+    name: string;
+    icon: string;
+    quality: ItemQualityKey;
+  };
+  targetNick?: string;
+  amount?: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  time: string;
+  timestamp?: number;
+  author: string;
+  authorRole?: 'admin' | 'mod' | 'winner' | 'regular';
+  text: string;
+  isSystem?: boolean;
+  isRareLoot?: boolean;
+  channel: 'world' | 'general';
+}
+
+export interface FriendEntry {
+  nick: string;
+  lvl: number;
+  isOnline: boolean;
+  avatar: string;
+  lastSeen?: number;
+}
+
+export interface RareBossTimerState {
+  id: 'crystal';
+  name: string;
+  intervalMs: number;
+  remainingMs: number;
+  targetSpawnAt?: number;
+  isFrozenWaitingForCell: boolean;
+  isAliveOnMap: boolean;
+  lastTickAt: number;
+}
+
+export interface PyramidCell {
+  type: 'empty' | 'mob' | 'exit' | 'portal' | 'nextTier' | 'sack' | 'player';
+  mobName?: string;
+  mobLvl?: number;
+  mobHp?: number;
+  mobMaxHp?: number;
+  mobDmg?: number;
+  isBoss?: boolean;
+  rareBossId?: 'crystal';
+  icon?: string;
+  sackGold?: number;
+  sackCrystals?: number;
+  playerNick?: string;
+  playerLvl?: number;
+  playerHp?: number;
+  playerMaxHp?: number;
+  playerAvatar?: string;
+  playerIsOnline?: boolean;
+  goldReward?: number;
+  crystalReward?: number;
+  expReward?: number;
+  clanExpReward?: number;
+  influenceReward?: number;
+  mobGoldReward?: number;
+  mobCrystalReward?: number;
+  mobExpReward?: number;
+  mobClanExpReward?: number;
+  mobInfluenceReward?: number;
+}
+
+export interface LeaderboardEntry {
+  id?: string;
+  nick: string;
+  lvl: number;
+  avatar: string;
+  isPremium?: boolean;
+  role?: 'admin' | 'mod' | 'winner' | 'regular';
+  is_admin?: number;
+  mobsKilled: number;
+  totalGoldCollected: number;
+  fishCaught?: number;
+  weeklyFishCaught?: number;
+  weeklyFishWeightKg?: number;
+  weeklyMaxFishWeightKg?: number;
+  totalFishWeightKg?: number;
+  pvpKills?: number;
+  location?: string;
+  isOnline?: boolean;
+}
+
+export interface PlayerPosition {
+  row: number;
+  col: number;
+}
+
+export interface DamagePopup {
+  id: string;
+  row: number;
+  col: number;
+  amount: number;
+  type: 'player' | 'mob';
+  timestamp: number;
+}
+
+export interface GameSaveData {
+  version: number;
+  hero: HeroState;
+  equipped: EquippedGear;
+  inventory: GameItem[];
+  market: MarketLot[];
+  tradeProtocol: TradeProtocolEntry[];
+  friends: FriendEntry[];
+  pyramidMap: PyramidCell[][];
+  playerPos: PlayerPosition;
+  savedMapTier: number | null;
+  // Ranking/Social persistence
+  weeklyStats: {
+    mobsKilled: number;
+    pvpKills: number;
+    itemsSold: number;
+  };
+  privateMessages: PrivateMessage[];
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Пирамида: Войны",
+  "description": "Мобильная ролевая онлайн-игра: исследование пирамиды фараонов, сражения с монстрами и боссами, торговля, аренда и аукцион предметов.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

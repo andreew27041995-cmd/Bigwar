@@ -1,0 +1,7013 @@
+import { createClient, SupabaseClient, RealtimeChannel } from '@supabase/supabase-js';
+import {
+  PyramidCell,
+  PrivateMessage,
+  MailGiftAttachment,
+  ChatMessage,
+  RareBossTimerState,
+  WheelWinnerEntry,
+  EquippedGear,
+  TradeProtocolEntry,
+  GameItem,
+  PlayerBanInfo,
+  CharacterSkinTemplate,
+  CrystalOrder
+} from '../types/game';
+import { registerPlayerOwnedSkinsInMemory, getActiveSkinBonuses, getPremiumConfig } from './shopConfig';
+import { getKillerAchievementInfo } from './egyptianEquipment';
+import { mergeFishingStatesMonotonically } from './fishingConfig';
+import {
+  generateDeterministicPyramidCells,
+  respawnDeterministicPyramidCells,
+  sanitizePyramidCellsForStorage,
+  getFreeEmptyPyramidCells,
+  createRareBossMobCell,
+  PYRAMID_EXIT_POS,
+  PYRAMID_SPAWN_POS,
+  EXP_TABLE,
+  LEVEL_UP_REWARDS,
+  MAX_LEVEL,
+  getPyramidTierForLevel,
+  recalculateLevelAndExpFromTotal,
+  getTotalAccumulatedExp,
+  normalizeStatsForLevel,
+  getHeroDamageFromStr,
+  getHeroMaxHpFromVit
+} from './gameData';
+
+export interface PyramidTierState {
+  tier: number;
+  seed: number;
+  cells: PyramidCell[][];
+  lastRespawn: number;
+  rareBossTimers?: RareBossTimerState[];
+  updatedAt: number;
+  updatedBy?: string;
+}
+
+export interface GlobalMailAndChatState {
+  messages: PrivateMessage[];
+  chatMessages: ChatMessage[];
+  wheelWinners?: WheelWinnerEntry[];
+  crystalOrders?: CrystalOrder[];
+  updatedAt: number;
+}
+
+export interface RealtimePlayer {
+  id?: string | number;
+  nick: string;
+  lvl: number;
+  hp: number;
+  maxHp: number;
+  avatar: string;
+  location: 'city' | 'pyramid';
+  pyramidTier: number;
+  row: number;
+  col: number;
+  status?: string;
+  isOnline: boolean;
+  isPremium?: boolean;
+  premiumUntil?: number;
+  vipUntil?: number;
+  role?: 'admin' | 'mod' | 'winner' | 'regular';
+  lastSeen?: number;
+  last_seen?: number;
+  stunUntil?: number;
+  wasKilledInPvp?: boolean;
+  killedBy?: string;
+  gold?: number;
+  crystals?: number;
+  mobsKilled?: number;
+  mobKills?: number;
+  pvpKills?: number;
+  pvpWins?: number;
+  pvpLosses?: number;
+  deaths?: number;
+  totalGoldCollected?: number;
+  dailyGoldToCrystalCount?: number;
+  dailyGoldToCrystalDate?: string;
+  dailyCrystalToGoldCount?: number;
+  dailyCrystalToGoldDate?: string;
+  str?: number;
+  agi?: number;
+  vit?: number;
+  exp?: number;
+  statPoints?: number;
+  energy?: number;
+  maxEnergy?: number;
+  hpPotions?: number;
+  enPotions?: number;
+  expPotions?: number;
+  expElixirUntil?: number;
+  bagCapacity?: number;
+  sellExperience?: number;
+  is_admin?: number;
+  isAdmin?: number | boolean;
+  equipped?: EquippedGear;
+  tradeProtocol?: TradeProtocolEntry[];
+  inventory?: GameItem[];
+  externalSyncTs?: number;
+  clanId?: string;
+  clanTag?: string;
+  clanName?: string;
+  clanEmblem?: string;
+  clanRole?: 'leader' | 'officer' | 'warrior' | 'recruit' | 'member';
+  ownedSkinIds?: string[];
+  ownedSkinExpirations?: Record<string, number>;
+  ownedSkins?: CharacterSkinTemplate[];
+  activeSkinId?: string | null;
+  banInfo?: PlayerBanInfo | null;
+  killerLicenseUntil?: number;
+  killerLicenses?: number;
+  npc_companion?: any;
+  npcCompanion?: any;
+  homePyramidTier?: number;
+  pyramidCard1?: number;
+  pyramidCard2?: number;
+  pyramidCard3?: number;
+  gamblingSpentGold?: number;
+  gamblingWonGold?: number;
+  gamblingSpentCrystals?: number;
+  gamblingWonCrystals?: number;
+  gamblingGamesPlayed?: number;
+  bossesKilled?: number;
+  itemsSold?: number;
+  claimedAchievementIds?: string[];
+  battlePass?: any;
+  seasonTitleId?: 'sand_explorer' | 'season_pharaoh' | null;
+  seasonTitleName?: string | null;
+  seasonTitleUntil?: number;
+  seasonTitleBonusPct?: number;
+  // Account & Registration Metadata (for Admin "О нём" view & Online Statistics)
+  password?: string;
+  saved_password?: string;
+  real_email?: string;
+  realEmail?: string;
+  phone_number?: string;
+  phoneNumber?: string;
+  ip_address?: string;
+  ipAddress?: string;
+  ip_location?: string;
+  ipLocation?: string;
+  device_info?: string;
+  deviceInfo?: string;
+  user_agent?: string;
+  userAgent?: string;
+  screen_res?: string;
+  timezone?: string;
+  registered_at?: string | number;
+  registeredAt?: string | number;
+  last_action?: string;
+  lastAction?: string;
+  auth_provider?: string;
+  telegram_id?: string;
+  telegram_username?: string;
+  google_id?: string;
+  facebook_id?: string;
+  last_login_ip?: string;
+  lastLoginIp?: string;
+  last_login_at?: string | number;
+  lastLoginAt?: string | number;
+  phone_telemetry?: Record<string, any>;
+  phoneTelemetry?: Record<string, any>;
+  port_travel?: any;
+  portTravel?: any;
+  active_transport_id?: string | null;
+  activeTransportId?: string | null;
+  pyramid_hall?: number;
+  pyramidHall?: number;
+  fishing_state?: any;
+  fishingState?: any;
+  fishing_exp_buff_until?: number;
+  fishingExpBuffUntil?: number;
+  fishing_exp_buff_pct?: number;
+  fishingExpBuffPct?: number;
+  isSimulatedBot?: boolean;
+}
+
+export const ADMIN_PLAYER_METADATA_SQL_SCRIPT = `-- SQL миграция для таблицы public.players (Supabase SQL Editor)
+-- Добавляет отдельные колонки для IP последнего входа, полных данных телефона/устройства, номера телефона, email и последнего действия:
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS real_email TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS phone_number TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_address TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_login_ip TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMPTZ;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS ip_location TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS device_info TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS phone_telemetry JSONB;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS auth_provider TEXT DEFAULT 'local';
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS telegram_username TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS google_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS facebook_id TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS last_action TEXT;
+ALTER TABLE public.players ADD COLUMN IF NOT EXISTS registered_at TIMESTAMPTZ DEFAULT NOW();`;
+
+let cachedClientIpMeta: { ip: string; location: string } | null = null;
+let ipFetchPromise: Promise<{ ip: string; location: string }> | null = null;
+
+export async function ensureClientIpMetadataLoaded(): Promise<{ ip: string; location: string }> {
+  if (cachedClientIpMeta && cachedClientIpMeta.ip) {
+    return cachedClientIpMeta;
+  }
+  if (typeof window === 'undefined') {
+    return { ip: 'N/A', location: '' };
+  }
+  try {
+    const rawSaved = window.localStorage.getItem('pyramida_cached_ip_meta');
+    if (rawSaved) {
+      const parsed = JSON.parse(rawSaved);
+      if (parsed && parsed.ip && Date.now() - Number(parsed.ts || 0) < 3600000) {
+        cachedClientIpMeta = { ip: String(parsed.ip), location: String(parsed.location || '') };
+        return cachedClientIpMeta;
+      }
+    }
+  } catch {}
+
+  if (ipFetchPromise) return ipFetchPromise;
+
+  ipFetchPromise = (async () => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch('https://ipwho.is/', { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.ip) {
+          const locParts = [data.country, data.city, data.connection?.isp].filter(Boolean);
+          const meta = {
+            ip: String(data.ip),
+            location: locParts.join(', ')
+          };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    try {
+      const ctrl2 = new AbortController();
+      const timer2 = setTimeout(() => ctrl2.abort(), 2500);
+      const res2 = await fetch('https://api.ipify.org?format=json', { signal: ctrl2.signal });
+      clearTimeout(timer2);
+      if (res2.ok) {
+        const data2 = await res2.json();
+        if (data2 && data2.ip) {
+          const meta = { ip: String(data2.ip), location: '' };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    try {
+      const ctrl3 = new AbortController();
+      const timer3 = setTimeout(() => ctrl3.abort(), 2500);
+      const res3 = await fetch('https://1.1.1.1/cdn-cgi/trace', { signal: ctrl3.signal });
+      clearTimeout(timer3);
+      if (res3.ok) {
+        const text3 = await res3.text();
+        const ipMatch = text3.match(/ip=([^\s]+)/);
+        const locMatch = text3.match(/loc=([^\s]+)/);
+        if (ipMatch && ipMatch[1]) {
+          const meta = {
+            ip: String(ipMatch[1]).trim(),
+            location: locMatch && locMatch[1] ? String(locMatch[1]).trim() : ''
+          };
+          cachedClientIpMeta = meta;
+          try {
+            window.localStorage.setItem(
+              'pyramida_cached_ip_meta',
+              JSON.stringify({ ...meta, ts: Date.now() })
+            );
+          } catch {}
+          return meta;
+        }
+      }
+    } catch {}
+
+    return cachedClientIpMeta || { ip: '', location: '' };
+  })();
+
+  return ipFetchPromise;
+}
+
+let cachedBatteryTelemetry: { levelPct?: number; charging?: boolean; chargingTime?: number; dischargingTime?: number } | null = null;
+let cachedWebGlGpuInfo: { vendor?: string; renderer?: string } | null = null;
+
+function ensureHardwareTelemetryLoaded() {
+  if (typeof window === 'undefined') return;
+  if (!cachedWebGlGpuInfo) {
+    try {
+      const canvas = document.createElement('canvas');
+      const gl = (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) as any;
+      if (gl) {
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        if (dbg) {
+          cachedWebGlGpuInfo = {
+            vendor: String(gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) || ''),
+            renderer: String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) || '')
+          };
+        }
+      }
+    } catch {}
+  }
+  if (!cachedBatteryTelemetry && typeof (navigator as any)?.getBattery === 'function') {
+    try {
+      (navigator as any)
+        .getBattery()
+        .then((bat: any) => {
+          if (bat) {
+            cachedBatteryTelemetry = {
+              levelPct: Math.round(Number(bat.level || 0) * 100),
+              charging: Boolean(bat.charging),
+              chargingTime: Number.isFinite(bat.chargingTime) ? bat.chargingTime : undefined,
+              dischargingTime: Number.isFinite(bat.dischargingTime) ? bat.dischargingTime : undefined
+            };
+          }
+        })
+        .catch(() => {});
+    } catch {}
+  }
+}
+
+export function collectClientDeviceMetadata(): {
+  ip_address: string;
+  last_login_ip: string;
+  ip_location: string;
+  device_info: string;
+  user_agent: string;
+  screen_res: string;
+  timezone: string;
+  telegram_id?: string;
+  telegram_username?: string;
+  phone_number?: string;
+  phone_telemetry: Record<string, any>;
+} {
+  if (typeof window === 'undefined') {
+    return {
+      ip_address: '',
+      last_login_ip: '',
+      ip_location: '',
+      device_info: 'Server',
+      user_agent: '',
+      screen_res: '',
+      timezone: '',
+      phone_telemetry: {}
+    };
+  }
+
+  ensureHardwareTelemetryLoaded();
+
+  // Trigger background IP load if not cached yet
+  if (!cachedClientIpMeta) {
+    try {
+      const rawSaved = window.localStorage.getItem('pyramida_cached_ip_meta');
+      if (rawSaved) {
+        const parsed = JSON.parse(rawSaved);
+        if (parsed?.ip) {
+          cachedClientIpMeta = { ip: String(parsed.ip), location: String(parsed.location || '') };
+        }
+      }
+    } catch {}
+    void ensureClientIpMetadataLoaded();
+  }
+
+  const ua = navigator.userAgent || '';
+  let osName = 'Неизвестная ОС';
+  let phoneModel = '';
+  if (/android/i.test(ua)) {
+    const match = ua.match(/Android\s+([\d.]+)/i);
+    osName = match ? `Android ${match[1]}` : 'Android';
+    const modelMatch = ua.match(/Android\s+[\d.]+;\s*([^)]+)\)/i);
+    if (modelMatch && modelMatch[1]) {
+      phoneModel = modelMatch[1].replace(/Build\/.*$/i, '').trim();
+    }
+  } else if (/iPad|iPhone|iPod/.test(ua)) {
+    const match = ua.match(/OS\s+([\d_]+)/i);
+    osName = match ? `iOS ${match[1].replace(/_/g, '.')}` : 'iOS (iPhone/iPad)';
+    phoneModel = /iPad/i.test(ua) ? 'Apple iPad' : 'Apple iPhone';
+  } else if (/Windows NT/i.test(ua)) {
+    osName = 'Windows PC';
+  } else if (/Mac OS X/i.test(ua)) {
+    osName = 'macOS';
+  } else if (/Linux/i.test(ua)) {
+    osName = 'Linux';
+  }
+
+  let browserName = 'Браузер';
+  const isTgWebApp = Boolean((window as any)?.Telegram?.WebApp?.initData);
+  if (isTgWebApp || /Telegram/i.test(ua)) {
+    browserName = 'Telegram Mini App';
+  } else if (/Edg\//i.test(ua)) {
+    browserName = 'Edge';
+  } else if (/OPR\//i.test(ua) || /Opera/i.test(ua)) {
+    browserName = 'Opera';
+  } else if (/Chrome\//i.test(ua)) {
+    browserName = 'Chrome';
+  } else if (/Safari\//i.test(ua) && !/Chrome\//i.test(ua)) {
+    browserName = 'Safari';
+  } else if (/Firefox\//i.test(ua)) {
+    browserName = 'Firefox';
+  }
+
+  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+  const deviceType = isMobile ? '📱 Мобильный' : '💻 ПК';
+  const screenRes = window.screen ? `${window.screen.width}x${window.screen.height}` : '';
+  const availScreenRes = window.screen ? `${window.screen.availWidth}x${window.screen.availHeight}` : '';
+  const viewportRes = `${window.innerWidth || 0}x${window.innerHeight || 0}`;
+  const pixelRatio = Number(window.devicePixelRatio || 1);
+  const colorDepth = window.screen?.colorDepth || 24;
+  let tz = '';
+  try {
+    tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {}
+
+  const tgWebApp = (window as any)?.Telegram?.WebApp;
+  const tgUser = tgWebApp?.initDataUnsafe?.user;
+  const tgPlatform = tgWebApp?.platform;
+  const modelSuffix = phoneModel ? ` [${phoneModel}]` : '';
+  const deviceSummary = `${deviceType}: ${osName}${modelSuffix} • ${browserName}${tgPlatform && tgPlatform !== 'unknown' ? ` (TG: ${tgPlatform})` : ''}`;
+
+  const conn = (navigator as any)?.connection || (navigator as any)?.mozConnection || (navigator as any)?.webkitConnection;
+  const networkInfo = conn
+    ? {
+        effectiveType: conn.effectiveType || '',
+        downlinkMbps: conn.downlink ?? null,
+        rttMs: conn.rtt ?? null,
+        saveData: Boolean(conn.saveData)
+      }
+    : undefined;
+
+  // Snapshot non-huge localStorage keys from the player's phone for admin diagnostics
+  const savedPhoneData: Record<string, string> = {};
+  let detectedPhone = '';
+  try {
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (!k) continue;
+      if (
+        k.startsWith('pyramida_') ||
+        k.startsWith('pyramid_auth') ||
+        k.startsWith('pyramid_saved') ||
+        k.includes('phone') ||
+        k.includes('email') ||
+        k.includes('user') ||
+        k.includes('pass')
+      ) {
+        const val = window.localStorage.getItem(k) || '';
+        if (val.length <= 350) {
+          savedPhoneData[k] = val;
+        }
+        if (!detectedPhone && k.toLowerCase().includes('phone') && val.length <= 40) {
+          detectedPhone = val;
+        }
+      }
+    }
+  } catch {}
+
+  const resolvedIp =
+    cachedClientIpMeta?.ip && cachedClientIpMeta.ip !== 'Определяется...' && cachedClientIpMeta.ip !== 'N/A'
+      ? cachedClientIpMeta.ip
+      : '';
+
+  const phoneTelemetry: Record<string, any> = {
+    collectedAt: new Date().toISOString(),
+    ip: resolvedIp || undefined,
+    ipLocation: cachedClientIpMeta?.location || undefined,
+    deviceType,
+    osName,
+    phoneModel: phoneModel || undefined,
+    browserName,
+    platform: navigator.platform || '',
+    vendor: navigator.vendor || '',
+    language: navigator.language || '',
+    languages: Array.isArray(navigator.languages) ? navigator.languages.join(', ') : '',
+    cpuCores: (navigator as any).hardwareConcurrency ?? undefined,
+    ramGb: (navigator as any).deviceMemory ?? undefined,
+    maxTouchPoints: navigator.maxTouchPoints ?? 0,
+    screenResolution: screenRes,
+    availScreenResolution: availScreenRes,
+    viewportResolution: viewportRes,
+    pixelRatio,
+    colorDepth,
+    orientation: (window.screen as any)?.orientation?.type || '',
+    timezone: tz,
+    cookiesEnabled: Boolean(navigator.cookieEnabled),
+    onlineStatus: Boolean(navigator.onLine),
+    gpuVendor: cachedWebGlGpuInfo?.vendor || undefined,
+    gpuRenderer: cachedWebGlGpuInfo?.renderer || undefined,
+    battery: cachedBatteryTelemetry || undefined,
+    network: networkInfo,
+    telegram: tgUser
+      ? {
+          id: tgUser.id,
+          username: tgUser.username,
+          firstName: tgUser.first_name,
+          lastName: tgUser.last_name,
+          languageCode: tgUser.language_code,
+          isPremium: tgUser.is_premium,
+          platform: tgPlatform,
+          version: tgWebApp?.version
+        }
+      : undefined,
+    localStorageSnapshot: undefined
+  };
+
+  return {
+    ip_address: resolvedIp,
+    last_login_ip: resolvedIp,
+    ip_location: cachedClientIpMeta?.location || '',
+    device_info: deviceSummary,
+    user_agent: ua,
+    screen_res: screenRes,
+    timezone: tz,
+    telegram_id: tgUser?.id ? String(tgUser.id) : undefined,
+    telegram_username: tgUser?.username ? String(tgUser.username) : undefined,
+    phone_number: detectedPhone || undefined,
+    phone_telemetry: phoneTelemetry
+  };
+}
+
+export type RealtimeConnectionStatus =
+  | 'DISCONNECTED'
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'SUBSCRIBED'
+  | 'CHANNEL_ERROR'
+  | 'TIMED_OUT'
+  | 'CLOSED'
+  | 'NOT_CONFIGURED';
+
+export const DEFAULT_SUPABASE_URL = 'https://lgbxbwzqckdnviygsghu.supabase.co';
+export const DEFAULT_SUPABASE_ANON_KEY = 'sb_publishable_lGMAAuZELw2gPDZeuEx0VQ_DgPK7szm';
+
+export const SUPABASE_URL: string = DEFAULT_SUPABASE_URL;
+export const SUPABASE_ANON_KEY: string = DEFAULT_SUPABASE_ANON_KEY;
+
+export function getSupabaseCredentials(): { url: string; anonKey: string } {
+  return {
+    url: DEFAULT_SUPABASE_URL,
+    anonKey: DEFAULT_SUPABASE_ANON_KEY
+  };
+}
+
+export function saveSupabaseCredentials(url: string, anonKey: string) {
+  if (typeof window !== 'undefined') {
+    (window as any).SUPABASE_URL = url.trim() || DEFAULT_SUPABASE_URL;
+    (window as any).SUPABASE_ANON_KEY = anonKey.trim() || DEFAULT_SUPABASE_ANON_KEY;
+  }
+  cachedClient = null;
+  getSupabaseClient();
+}
+
+export function isSupabaseConfigured(): boolean {
+  return true;
+}
+
+let cachedClient: SupabaseClient | null = null;
+
+const safeAuthStorage = {
+  getItem: (key: string) => {
+    try {
+      return typeof window !== 'undefined' ? window.localStorage.getItem(key) : null;
+    } catch {
+      return null;
+    }
+  },
+  setItem: (key: string, value: string) => {
+    try {
+      if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
+    } catch {}
+  },
+  removeItem: (key: string) => {
+    try {
+      if (typeof window !== 'undefined') window.localStorage.removeItem(key);
+    } catch {}
+  }
+};
+
+export function getSupabaseClient(): SupabaseClient | null {
+  if (cachedClient) return cachedClient;
+
+  const { url, anonKey } = getSupabaseCredentials();
+  if (!url || !anonKey) {
+    return null;
+  }
+
+  try {
+    cachedClient = createClient(url, anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        storage: safeAuthStorage
+      },
+      global: {
+        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+          fetch(input, {
+            ...init,
+            cache: 'no-store'
+          })
+      },
+      realtime: {
+        params: {
+          eventsPerSecond: 10
+        }
+      }
+    });
+    if (typeof window !== 'undefined') {
+      (window as any).supabaseClient = cachedClient;
+    }
+    return cachedClient;
+  } catch (err) {
+    console.warn('[Supabase] Failed to initialize client:', err);
+    return null;
+  }
+}
+
+export const supabase = getSupabaseClient();
+
+// In-memory state cache per lowercase nickname to prevent concurrent update race conditions
+const playerStateCache = new Map<string, any>();
+const playerUpdateQueues = new Map<string, Promise<boolean>>();
+
+// Heartbeat timeout: a player remains online for 5 minutes (300,000 ms) after their last action or after leaving the game
+export const ONLINE_HEARTBEAT_TIMEOUT_MS = 5 * 60 * 1000;
+
+export function isPlayerOnlineByHeartbeat(isOnlineFlag: any, lastSeenTs: any): boolean {
+  const ts = Number(lastSeenTs ?? 0);
+  if (!Number.isFinite(ts) || ts <= 0) return Boolean(isOnlineFlag);
+  const elapsed = Math.max(0, Date.now() - ts);
+  return elapsed < ONLINE_HEARTBEAT_TIMEOUT_MS;
+}
+
+function pickNewestNpcState(npcA: any, npcB: any): any {
+  const validA = npcA && typeof npcA === 'object' && npcA.unlocked ? npcA : null;
+  const validB = npcB && typeof npcB === 'object' && npcB.unlocked ? npcB : null;
+  if (!validA && !validB) return npcA ?? npcB ?? null;
+  if (validA && !validB) return validA;
+  if (!validA && validB) return validB;
+  const toggleA = Math.max(0, Number(validA.lastToggledAt || 0));
+  const toggleB = Math.max(0, Number(validB.lastToggledAt || 0));
+  if (toggleB > toggleA) return validB;
+  if (toggleA > toggleB) return validA;
+  const actA = Math.max(0, Number(validA.lastActionTime || 0), Number(validA.lastRegenTime || 0));
+  const actB = Math.max(0, Number(validB.lastActionTime || 0), Number(validB.lastRegenTime || 0));
+  return actB > actA ? validB : validA;
+}
+
+function mergeBattlePassMonotonically(prevBp: any, nextBp: any): any {
+  if (!prevBp && !nextBp) return undefined;
+  if (!prevBp || typeof prevBp !== 'object') return nextBp;
+  if (!nextBp || typeof nextBp !== 'object') return prevBp;
+
+  const mergedOwnedTitles = Array.from(
+    new Set([
+      ...(Array.isArray(prevBp.ownedTitles) ? prevBp.ownedTitles : []),
+      ...(Array.isArray(nextBp.ownedTitles) ? nextBp.ownedTitles : [])
+    ])
+  );
+
+  if (prevBp.seasonId && nextBp.seasonId && prevBp.seasonId !== nextBp.seasonId) {
+    return {
+      ...prevBp,
+      ...nextBp,
+      ownedTitles: mergedOwnedTitles,
+      activeTitleId: nextBp.activeTitleId !== undefined ? nextBp.activeTitleId : prevBp.activeTitleId
+    };
+  }
+
+  const prevLvl = Math.max(1, Number(prevBp.level || 1));
+  const nextLvl = Math.max(1, Number(nextBp.level || 1));
+  const safeLvl = Math.max(prevLvl, nextLvl);
+  let safeCurrentXp = Math.max(0, Number(nextBp.currentXp || 0));
+  if (prevLvl > nextLvl) {
+    safeCurrentXp = Math.max(0, Number(prevBp.currentXp || 0));
+  } else if (prevLvl === nextLvl) {
+    safeCurrentXp = Math.max(0, Number(prevBp.currentXp || 0), Number(nextBp.currentXp || 0));
+  }
+
+  return {
+    ...prevBp,
+    ...nextBp,
+    seasonId: nextBp.seasonId || prevBp.seasonId,
+    level: safeLvl,
+    currentXp: safeCurrentXp,
+    totalXpEarned: Math.max(0, Number(prevBp.totalXpEarned || 0), Number(nextBp.totalXpEarned || 0)),
+    isVipUnlocked: Boolean(prevBp.isVipUnlocked || nextBp.isVipUnlocked),
+    claimedFreeLevels: Array.from(
+      new Set([
+        ...(Array.isArray(prevBp.claimedFreeLevels) ? prevBp.claimedFreeLevels.map(Number) : []),
+        ...(Array.isArray(nextBp.claimedFreeLevels) ? nextBp.claimedFreeLevels.map(Number) : [])
+      ])
+    ).sort((a, b) => a - b),
+    claimedVipLevels: Array.from(
+      new Set([
+        ...(Array.isArray(prevBp.claimedVipLevels) ? prevBp.claimedVipLevels.map(Number) : []),
+        ...(Array.isArray(nextBp.claimedVipLevels) ? nextBp.claimedVipLevels.map(Number) : [])
+      ])
+    ).sort((a, b) => a - b),
+    ownedTitles: mergedOwnedTitles,
+    activeTitleId: nextBp.activeTitleId !== undefined ? nextBp.activeTitleId : prevBp.activeTitleId
+  };
+}
+
+/**
+ * Unpacks JSON state stored inside the `email` column of `public.players`
+ * so all fields (lvl, exp, hp, max_hp, equipped, inventory, location, pyramid_tier, row, col, is_online, last_seen)
+ * are available directly on the player row object without triggering PGRST204 on missing columns.
+ */
+export function unpackPlayerRow(row: any): any {
+  if (!row || typeof row !== 'object') return row;
+  const hasFullEmailJson = Boolean(row.email && typeof row.email === 'string' && row.email.trim().startsWith('{'));
+  let parsedEmailData: any = {};
+  if (hasFullEmailJson) {
+    try {
+      parsedEmailData = JSON.parse(row.email);
+    } catch (e) {
+      // ignore invalid JSON
+    }
+  }
+
+  const nick = String(
+    row.name ||
+    row.nick ||
+    row['имя'] ||
+    parsedEmailData.nick ||
+    ''
+  ).trim();
+
+  // If this is a partial/synthetic realtime event without the full email JSON payload,
+  // preserve existing cached player data so we never wipe gold, crystals, inventory, equipped, level, or daily rewards.
+  if (!hasFullEmailJson && nick) {
+    const existingForPartial = playerStateCache.get(nick.toLowerCase());
+    if (existingForPartial && existingForPartial._rawEmailJson) {
+      parsedEmailData = {
+        ...existingForPartial._rawEmailJson,
+        ...parsedEmailData
+      };
+    }
+  }
+
+  const hasExplicitEmailRole =
+    parsedEmailData.role !== undefined ||
+    parsedEmailData.admin_level !== undefined ||
+    parsedEmailData.is_admin !== undefined;
+  const rawRoleStr = String(
+    (hasExplicitEmailRole ? parsedEmailData.role : (parsedEmailData.role ?? row.role)) ?? ''
+  ).trim().toLowerCase();
+  const rawAdminVal = Number(
+    hasExplicitEmailRole
+      ? (parsedEmailData.admin_level ??
+          parsedEmailData.is_admin ??
+          (rawRoleStr === 'admin'
+            ? 1
+            : rawRoleStr === 'mod' || rawRoleStr === 'moderator'
+            ? 2
+            : 0))
+      : (parsedEmailData.admin_level ??
+          parsedEmailData.is_admin ??
+          (typeof row.is_admin === 'boolean'
+            ? rawRoleStr === 'mod' || rawRoleStr === 'moderator'
+              ? 2
+              : row.is_admin
+              ? 1
+              : 0
+            : row.is_admin) ??
+          row.isAdmin ??
+          0)
+  );
+  const isRegularExplicit =
+    rawRoleStr === 'regular' ||
+    (hasExplicitEmailRole && rawAdminVal === 0 && rawRoleStr !== 'admin' && rawRoleStr !== 'mod' && rawRoleStr !== 'moderator');
+  const isModerator =
+    !isRegularExplicit &&
+    (rawRoleStr === 'mod' ||
+      rawRoleStr === 'moderator' ||
+      (!['admin'].includes(rawRoleStr) && rawAdminVal === 2));
+  const isAdmin =
+    !isRegularExplicit &&
+    !isModerator &&
+    (rawRoleStr === 'admin' || rawAdminVal === 1);
+  const resolvedAdminLevel: 0 | 1 | 2 = isAdmin ? 1 : isModerator ? 2 : 0;
+  const resolvedRole: 'admin' | 'mod' | 'regular' = isAdmin ? 'admin' : isModerator ? 'mod' : 'regular';
+
+  const rawDbLvl = Math.max(1, Math.min(MAX_LEVEL, Math.floor(Number(parsedEmailData.lvl ?? row.lvl ?? row.level ?? 1))));
+  const rawDbExp = Math.max(0, Math.floor(Number(parsedEmailData.exp ?? row.exp ?? 0)));
+  const isV3ExpMigrated = Boolean(parsedEmailData.exp_table_v3_migrated ?? row.exp_table_v3_migrated ?? false);
+
+  let unpackedLvl = rawDbLvl;
+  let unpackedExp = rawDbExp;
+
+  if (!isV3ExpMigrated && rawDbExp >= (EXP_TABLE[rawDbLvl] || 9999999)) {
+    const recalc = recalculateLevelAndExpFromTotal(rawDbExp);
+    unpackedLvl = recalc.level;
+    unpackedExp = recalc.exp;
+  } else {
+    while (unpackedLvl < MAX_LEVEL && unpackedExp >= (EXP_TABLE[unpackedLvl] || 9999999)) {
+      unpackedExp -= EXP_TABLE[unpackedLvl] || 9999999;
+      unpackedLvl += 1;
+    }
+  }
+
+  // Home pyramid tier is unlocked ONLY via portal progression (never auto-switched on level 5!)
+  const rawSavedHomeTier =
+    parsedEmailData.home_pyramid_tier ??
+    parsedEmailData.homePyramidTier ??
+    row.home_pyramid_tier ??
+    row.homePyramidTier;
+  const resolvedHomeTier =
+    rawSavedHomeTier !== undefined
+      ? Math.max(1, Math.min(3, Number(rawSavedHomeTier) || 1))
+      : unpackedLvl <= 5
+      ? 1
+      : Math.max(
+          1,
+          Math.min(
+            getPyramidTierForLevel(unpackedLvl),
+            Number(parsedEmailData.pyramid_tier ?? row.pyramid_tier ?? 1) || 1
+          )
+        );
+  const rawSavedActiveTier =
+    parsedEmailData.pyramid_tier ??
+    parsedEmailData.pyramidTier ??
+    parsedEmailData['пирамидальный_уровень'] ??
+    row.pyramid_tier ??
+    row.pyramidTier ??
+    row['пирамидальный_уровень'];
+  const locLower = String(parsedEmailData.location ?? row.location ?? '').toLowerCase();
+  const isPlayerInPyr = locLower === 'pyramid' || locLower === 'пирамида';
+  const canonicalTier =
+    rawSavedActiveTier !== undefined && Number(rawSavedActiveTier) >= 1 && Number(rawSavedActiveTier) <= 3
+      ? Math.max(1, Math.min(3, Number(rawSavedActiveTier)))
+      : isPlayerInPyr
+      ? resolvedHomeTier
+      : resolvedHomeTier;
+
+  const resolvedProductionHours = Math.max(
+    0,
+    Math.floor(
+      Number(
+        parsedEmailData.production_hours ??
+          parsedEmailData.productionHours ??
+          row.production_hours ??
+          row.productionHours ??
+          0
+      ) || 0
+    )
+  );
+  const resolvedHasClanBadge = Boolean(
+    parsedEmailData.has_clan_badge ??
+      parsedEmailData.hasClanBadge ??
+      row.has_clan_badge ??
+      row.hasClanBadge ??
+      false
+  );
+
+  const normalizedStats = normalizeStatsForLevel(
+    unpackedLvl,
+    Number(parsedEmailData.str ?? row.str ?? 1),
+    Number(parsedEmailData.agi ?? row.agi ?? 1),
+    Number(parsedEmailData.vit ?? row.vit ?? 1),
+    Number(parsedEmailData.stat_points ?? row.stat_points ?? 0),
+    resolvedProductionHours
+  );
+
+  const rawEquippedObj =
+    parsedEmailData.equipped && typeof parsedEmailData.equipped === 'object'
+      ? { ...parsedEmailData.equipped }
+      : row.equipped && typeof row.equipped === 'object'
+      ? { ...row.equipped }
+      : {};
+  const rawInventoryArr: any[] = Array.isArray(parsedEmailData.inventory)
+    ? [...parsedEmailData.inventory]
+    : Array.isArray(row.inventory)
+    ? [...row.inventory]
+    : [];
+
+  // Normalize item icons & unequip any item exceeding current unpackedLvl
+  let gearHpBonus = 0;
+  let gearEnBonus = 0;
+  let gearDmgBonus = 0;
+  let gearVitBonus = 0;
+  let gearStrBonus = 0;
+  const ARMOR_LVL_ICONS: Record<number, string> = {
+    2: '/assets/armor/armor_lvl2.png',
+    4: '/assets/armor/armor_lvl4.png',
+    5: '/assets/armor/armor_lvl5.png',
+    8: '/assets/armor/armor_lvl8.png',
+    10: '/assets/armor/armor_lvl10.png',
+    15: '/assets/armor/armor_lvl15.png',
+    20: '/assets/armor/armor_lvl20.png'
+  };
+  Object.keys(rawEquippedObj).forEach((slotKey) => {
+    const it = rawEquippedObj[slotKey];
+    if (!it) return;
+    if (typeof it.icon === 'string' && it.icon.includes('flame_sword')) {
+      it.icon = '⚔️';
+    }
+    if ((it.slot === 'armor' || slotKey === 'armor') && (!it.icon || it.icon === '🛡️')) {
+      const mappedArmorIcon = ARMOR_LVL_ICONS[Number(it.lvl || 0)];
+      if (mappedArmorIcon) it.icon = mappedArmorIcon;
+    }
+    if (slotKey === 'transport') {
+      it.slot = 'transport';
+      it.isTransport = true;
+    }
+    if (Number(it.lvl || 1) > unpackedLvl && slotKey !== 'transport') {
+      rawInventoryArr.unshift(it);
+      rawEquippedObj[slotKey] = null;
+    } else if (Number(it.durability ?? 1) > 0 && (!it.isTemporary || !it.expiresAt || Number(it.expiresAt) > Date.now())) {
+      gearHpBonus += Number(it.hp || 0);
+      gearEnBonus += Number(it.energyBonus || 0);
+      gearDmgBonus += Number(it.dmg || 0);
+      gearVitBonus += Number(it.vit || 0);
+      gearStrBonus += Number(it.str || 0);
+    }
+  });
+  rawInventoryArr.forEach((it) => {
+    if (!it) return;
+    if (typeof it.icon === 'string' && it.icon.includes('flame_sword')) {
+      it.icon = '⚔️';
+    }
+    if (it.slot === 'armor' && (!it.icon || it.icon === '🛡️')) {
+      const mappedArmorIcon = ARMOR_LVL_ICONS[Number(it.lvl || 0)];
+      if (mappedArmorIcon) it.icon = mappedArmorIcon;
+    }
+  });
+
+  // Active character skin bonuses
+  const activeSkinId =
+    parsedEmailData.active_skin_id ??
+    parsedEmailData.activeSkinId ??
+    row.active_skin_id ??
+    row.activeSkinId ??
+    null;
+  const rawOwnedSkinsArr = Array.isArray(
+    parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins
+  )
+    ? (parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins)
+    : [];
+  const skinBonuses = getActiveSkinBonuses(activeSkinId, undefined, rawOwnedSkinsArr);
+  const skinHpBonus = Number(skinBonuses.hpBonus || skinBonuses.hp || 0);
+  const skinVitBonus = Number(skinBonuses.vitBonus || skinBonuses.vit || 0);
+  const skinEnBonus = Number(skinBonuses.energyBonus || 0);
+  const skinDmgBonus = Number(skinBonuses.dmgBonus || skinBonuses.dmg || 0);
+  const skinStrBonus = Number(skinBonuses.strBonus || skinBonuses.str || 0);
+
+  // Active VIP / Premium bonuses
+  const resolvedPremiumUntil = Number(parsedEmailData.premium_until ?? row.premium_until ?? 0);
+  const resolvedIsPremium =
+    Boolean(parsedEmailData.is_premium ?? row.is_premium ?? false) &&
+    (resolvedPremiumUntil <= 0 || resolvedPremiumUntil > Date.now());
+  const premCfg = getPremiumConfig();
+  const vipHpBonus = resolvedIsPremium && premCfg.enabled ? Number(premCfg.hpBonus || 0) : 0;
+  const vipVitBonus = resolvedIsPremium && premCfg.enabled ? Number(premCfg.vitBonus || 0) : 0;
+  const vipEnBonus = resolvedIsPremium && premCfg.enabled ? Number(premCfg.energyBonus || 0) : 0;
+  const vipDmgBonus = resolvedIsPremium && premCfg.enabled ? Number(premCfg.dmgBonus || 0) : 0;
+  const vipStrBonus = resolvedIsPremium && premCfg.enabled ? Number(premCfg.strBonus || 0) : 0;
+
+  const bonusHpVal = Math.max(0, Number(parsedEmailData.bonus_hp ?? row.bonus_hp ?? 0));
+  const bonusDmgVal = Math.max(0, Number(parsedEmailData.bonus_dmg ?? row.bonus_dmg ?? 0));
+  const unpackedPvpKills = Math.max(0, Number(parsedEmailData.pvp_kills ?? row.pvp_kills ?? 0));
+  const killerHpBonus = getKillerAchievementInfo(unpackedPvpKills).totalHpBonus;
+
+  const totalVit = Math.max(1, normalizedStats.vit + gearVitBonus + skinVitBonus + vipVitBonus);
+  const totalStr = Math.max(1, normalizedStats.str + gearStrBonus + skinStrBonus + vipStrBonus);
+
+  const savedMaxHp = Math.max(0, Number(parsedEmailData.max_hp ?? row.max_hp ?? 0));
+  const savedMaxEnergy = Math.max(0, Number(parsedEmailData.max_energy ?? row.max_energy ?? 0));
+
+  const computedMaxHp =
+    getHeroMaxHpFromVit(totalVit) +
+    gearHpBonus +
+    skinHpBonus +
+    vipHpBonus +
+    bonusHpVal +
+    killerHpBonus;
+  const computedMaxEnergy = 100 + gearEnBonus + skinEnBonus + vipEnBonus;
+
+  const rawHpInput = parsedEmailData.hp ?? row.hp;
+  const rawHpVal =
+    rawHpInput !== undefined && rawHpInput !== null && Number.isFinite(Number(rawHpInput))
+      ? Math.max(0, Number(rawHpInput))
+      : Math.max(savedMaxHp, computedMaxHp);
+
+  // Never clamp max_hp below savedMaxHp or current rawHpVal so updates/reloads never reduce a character's HP
+  const calculatedMaxHp = Math.max(savedMaxHp, computedMaxHp, rawHpVal);
+  let clampedHp = Math.min(calculatedMaxHp, Math.max(0, rawHpVal));
+
+  const rawEnergyInput = parsedEmailData.energy ?? row.energy;
+  const rawEnergyVal =
+    rawEnergyInput !== undefined && rawEnergyInput !== null && Number.isFinite(Number(rawEnergyInput))
+      ? Math.max(0, Number(rawEnergyInput))
+      : Math.max(savedMaxEnergy, computedMaxEnergy);
+  const calculatedMaxEnergy = Math.max(savedMaxEnergy, computedMaxEnergy, rawEnergyVal);
+  let clampedEnergy = Math.min(calculatedMaxEnergy, Math.max(0, rawEnergyVal));
+
+  const calculatedDmg =
+    getHeroDamageFromStr(totalStr) + gearDmgBonus + skinDmgBonus + vipDmgBonus + bonusDmgVal;
+
+  const hasExplicitGold = row.gold !== undefined || parsedEmailData.gold !== undefined;
+  const rawRowGold = Number(row.gold ?? 0);
+  const rawEmailGold = Number(parsedEmailData.gold ?? 0);
+  const resolvedGold = hasExplicitGold ? Math.max(0, rawRowGold > 0 ? rawRowGold : rawEmailGold) : 0;
+
+  const hasExplicitCrystals = row.crystals !== undefined || parsedEmailData.crystals !== undefined;
+  const rawRowCrystals = Number(row.crystals ?? 0);
+  const rawEmailCrystals = Number(parsedEmailData.crystals ?? 0);
+  const resolvedCrystals = hasExplicitCrystals ? Math.max(0, rawRowCrystals > 0 ? rawRowCrystals : rawEmailCrystals) : 0;
+
+  const rawRow =
+    parsedEmailData.row ??
+    parsedEmailData['ряд'] ??
+    row.row ??
+    row['ряд'] ??
+    9;
+  const rawCol =
+    parsedEmailData.col ??
+    parsedEmailData['ц'] ??
+    parsedEmailData.cell ??
+    row.col ??
+    row['ц'] ??
+    1;
+
+  const rawIsOnlineInDb =
+    parsedEmailData.is_online !== undefined
+      ? Boolean(parsedEmailData.is_online)
+      : row.is_online !== undefined
+      ? Boolean(row.is_online)
+      : false;
+  const fallbackSyncTs = Number(
+    parsedEmailData.external_sync_ts ??
+      row.external_sync_ts ??
+      (row.updated_at ? Date.parse(String(row.updated_at)) : 0) ??
+      0
+  );
+  const rawLastSeen =
+    Number(parsedEmailData.last_seen ?? row.last_seen ?? 0) ||
+    (Number.isFinite(fallbackSyncTs) && fallbackSyncTs > 0 ? fallbackSyncTs : 0);
+  const effectiveOnline = isPlayerOnlineByHeartbeat(rawIsOnlineInDb, rawLastSeen);
+
+  // Offline HP & Energy regeneration based on real elapsed time when player was away/offline
+  const resolvedLocation = (parsedEmailData.location ?? row.location) === 'pyramid' ? 'pyramid' : 'city';
+  const wasKilledInPvpFlag = Boolean(parsedEmailData.was_killed_in_pvp ?? row.was_killed_in_pvp ?? false);
+
+  let offlineRegenGainedHp = 0;
+  let offlineRegenGainedEnergy = 0;
+  let offlineRegenTotalPoolGain = 0;
+  if (!wasKilledInPvpFlag && rawLastSeen > 0) {
+    const elapsedSec = Math.max(0, Math.floor((Date.now() - rawLastSeen) / 1000));
+    const regenRateSec = resolvedLocation === 'pyramid' ? (resolvedIsPremium ? 4 : 8) : (resolvedIsPremium ? 1 : 3);
+    // Apply offline regen whenever the player is marked offline OR at least 1 regen tick has elapsed since last_seen
+    if (!effectiveOnline || elapsedSec >= regenRateSec) {
+      const regenPerTick = resolvedIsPremium ? 2 : 1;
+      const ticks = Math.floor(elapsedSec / regenRateSec);
+      if (ticks > 0) {
+        const gained = ticks * regenPerTick;
+        offlineRegenTotalPoolGain = gained;
+        const nextHpRegen = Math.min(calculatedMaxHp, Math.max(0, clampedHp + gained));
+        const nextEnergyRegen = Math.min(calculatedMaxEnergy, Math.max(0, clampedEnergy + gained));
+        offlineRegenGainedHp = Math.max(0, nextHpRegen - clampedHp);
+        offlineRegenGainedEnergy = Math.max(0, nextEnergyRegen - clampedEnergy);
+        clampedHp = nextHpRegen;
+        clampedEnergy = nextEnergyRegen;
+      }
+    }
+  }
+
+  const rawMobsKilled = Math.max(0, Number(parsedEmailData.mobs_killed ?? row.mobs_killed ?? parsedEmailData.mob_kills ?? row.mob_kills ?? 0));
+  const estimatedMinKills = unpackedLvl > 1 ? Math.max(0, Math.floor(getTotalAccumulatedExp(unpackedLvl, unpackedExp) / 45)) : 0;
+  const resolvedMobsKilled = Math.max(rawMobsKilled, estimatedMinKills);
+
+  const rawTotalGold = Math.max(0, Number(parsedEmailData.total_gold_collected ?? row.total_gold_collected ?? 0));
+  const resolvedTotalGold = Math.max(resolvedGold, rawTotalGold);
+
+  const unpacked = {
+    ...parsedEmailData,
+    ...row,
+    name: nick || row.name,
+    nick: nick || row.nick,
+    real_email: parsedEmailData.real_email ?? (typeof row.email === 'string' && !row.email.trim().startsWith('{') ? row.email : ''),
+    is_admin: resolvedAdminLevel,
+    isAdmin: resolvedAdminLevel,
+    admin_level: resolvedAdminLevel,
+    role: resolvedRole,
+    gold: resolvedGold,
+    crystals: resolvedCrystals,
+    lvl: unpackedLvl,
+    level: unpackedLvl,
+    exp: unpackedExp,
+    max_hp: calculatedMaxHp,
+    hp: clampedHp,
+    energy: clampedEnergy,
+    max_energy: calculatedMaxEnergy,
+    dmg: calculatedDmg,
+    hp_potions: Math.max(0, Number(parsedEmailData.hp_potions ?? row.hp_potions ?? 3)),
+    en_potions: Math.max(0, Number(parsedEmailData.en_potions ?? row.en_potions ?? 3)),
+    exp_potions: Math.max(0, Number(parsedEmailData.exp_potions ?? row.exp_potions ?? 0)),
+    exp_elixir_until: Math.max(0, Number(parsedEmailData.exp_elixir_until ?? row.exp_elixir_until ?? 0)),
+    str: normalizedStats.str,
+    agi: normalizedStats.agi,
+    vit: normalizedStats.vit,
+    gear_v2_migrated: true,
+    exp_table_v3_migrated: true,
+    stat_points: normalizedStats.statPoints,
+    bonus_dmg: bonusDmgVal,
+    bonus_hp: bonusHpVal,
+    bag_capacity: Math.max(20, Number(parsedEmailData.bag_capacity ?? row.bag_capacity ?? 100)),
+    sell_experience: Math.max(0, Number(parsedEmailData.sell_experience ?? row.sell_experience ?? 0)),
+    mobs_killed: resolvedMobsKilled,
+    mob_kills: resolvedMobsKilled,
+    mobsKilled: resolvedMobsKilled,
+    total_gold_collected: resolvedTotalGold,
+    totalGoldCollected: resolvedTotalGold,
+    pvp_kills: unpackedPvpKills,
+    pvpKills: unpackedPvpKills,
+    pvp_wins: Math.max(0, Number(parsedEmailData.pvp_wins ?? parsedEmailData.pvpWins ?? row.pvp_wins ?? row.pvpWins ?? 0)),
+    pvpWins: Math.max(0, Number(parsedEmailData.pvp_wins ?? parsedEmailData.pvpWins ?? row.pvp_wins ?? row.pvpWins ?? 0)),
+    pvp_losses: Math.max(0, Number(parsedEmailData.pvp_losses ?? parsedEmailData.pvpLosses ?? row.pvp_losses ?? row.pvpLosses ?? 0)),
+    pvpLosses: Math.max(0, Number(parsedEmailData.pvp_losses ?? parsedEmailData.pvpLosses ?? row.pvp_losses ?? row.pvpLosses ?? 0)),
+    killer_license_until: Math.max(0, Number(parsedEmailData.killer_license_until ?? parsedEmailData.killerLicenseUntil ?? row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killerLicenseUntil: Math.max(0, Number(parsedEmailData.killer_license_until ?? parsedEmailData.killerLicenseUntil ?? row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killer_licenses: Math.max(0, Number(parsedEmailData.killer_licenses ?? parsedEmailData.killerLicenses ?? row.killer_licenses ?? row.killerLicenses ?? 0)),
+    killerLicenses: Math.max(0, Number(parsedEmailData.killer_licenses ?? parsedEmailData.killerLicenses ?? row.killer_licenses ?? row.killerLicenses ?? 0)),
+    deaths: Math.max(0, Number(parsedEmailData.deaths ?? row.deaths ?? 0)),
+    last_wheel_spin_time: Number(parsedEmailData.last_wheel_spin_time ?? row.last_wheel_spin_time ?? 0),
+    last_gold_wheel_spin_time: Number(parsedEmailData.last_gold_wheel_spin_time ?? row.last_gold_wheel_spin_time ?? 0),
+    daily_free_wheel_spins: Math.max(0, Number(parsedEmailData.daily_free_wheel_spins ?? row.daily_free_wheel_spins ?? 0)),
+    daily_gold_wheel_spins: Math.max(0, Number(parsedEmailData.daily_gold_wheel_spins ?? row.daily_gold_wheel_spins ?? 0)),
+    daily_crystal_wheel_spins: Math.max(0, Number(parsedEmailData.daily_crystal_wheel_spins ?? row.daily_crystal_wheel_spins ?? 0)),
+    daily_wheel_spins_date: String(parsedEmailData.daily_wheel_spins_date ?? row.daily_wheel_spins_date ?? ''),
+    daily_crystal_to_gold_count: Math.max(0, Number(parsedEmailData.daily_crystal_to_gold_count ?? row.daily_crystal_to_gold_count ?? 0)),
+    daily_crystal_to_gold_date: String(parsedEmailData.daily_crystal_to_gold_date ?? row.daily_crystal_to_gold_date ?? ''),
+    daily_gold_to_crystal_count: Math.max(0, Number(parsedEmailData.daily_gold_to_crystal_count ?? row.daily_gold_to_crystal_count ?? 0)),
+    daily_gold_to_crystal_date: String(parsedEmailData.daily_gold_to_crystal_date ?? row.daily_gold_to_crystal_date ?? ''),
+    daily_login_day: Math.max(0, Number(parsedEmailData.daily_login_day ?? row.daily_login_day ?? 0)),
+    daily_login_last_date: String(parsedEmailData.daily_login_last_date ?? row.daily_login_last_date ?? ''),
+    gambling_spent_gold: Math.max(0, Number(parsedEmailData.gambling_spent_gold ?? parsedEmailData.gamblingSpentGold ?? row.gambling_spent_gold ?? row.gamblingSpentGold ?? 0)),
+    gamblingSpentGold: Math.max(0, Number(parsedEmailData.gambling_spent_gold ?? parsedEmailData.gamblingSpentGold ?? row.gambling_spent_gold ?? row.gamblingSpentGold ?? 0)),
+    gambling_won_gold: Math.max(0, Number(parsedEmailData.gambling_won_gold ?? parsedEmailData.gamblingWonGold ?? row.gambling_won_gold ?? row.gamblingWonGold ?? 0)),
+    gamblingWonGold: Math.max(0, Number(parsedEmailData.gambling_won_gold ?? parsedEmailData.gamblingWonGold ?? row.gambling_won_gold ?? row.gamblingWonGold ?? 0)),
+    gambling_spent_crystals: Math.max(0, Number(parsedEmailData.gambling_spent_crystals ?? parsedEmailData.gamblingSpentCrystals ?? row.gambling_spent_crystals ?? row.gamblingSpentCrystals ?? 0)),
+    gamblingSpentCrystals: Math.max(0, Number(parsedEmailData.gambling_spent_crystals ?? parsedEmailData.gamblingSpentCrystals ?? row.gambling_spent_crystals ?? row.gamblingSpentCrystals ?? 0)),
+    gambling_won_crystals: Math.max(0, Number(parsedEmailData.gambling_won_crystals ?? parsedEmailData.gamblingWonCrystals ?? row.gambling_won_crystals ?? row.gamblingWonCrystals ?? 0)),
+    gamblingWonCrystals: Math.max(0, Number(parsedEmailData.gambling_won_crystals ?? parsedEmailData.gamblingWonCrystals ?? row.gambling_won_crystals ?? row.gamblingWonCrystals ?? 0)),
+    gambling_games_played: Math.max(0, Number(parsedEmailData.gambling_games_played ?? parsedEmailData.gamblingGamesPlayed ?? row.gambling_games_played ?? row.gamblingGamesPlayed ?? 0)),
+    gamblingGamesPlayed: Math.max(0, Number(parsedEmailData.gambling_games_played ?? parsedEmailData.gamblingGamesPlayed ?? row.gambling_games_played ?? row.gamblingGamesPlayed ?? 0)),
+    bosses_killed: Math.max(0, Number(parsedEmailData.bosses_killed ?? parsedEmailData.bossesKilled ?? row.bosses_killed ?? row.bossesKilled ?? 0)),
+    bossesKilled: Math.max(0, Number(parsedEmailData.bosses_killed ?? parsedEmailData.bossesKilled ?? row.bosses_killed ?? row.bossesKilled ?? 0)),
+    items_sold: Math.max(0, Number(parsedEmailData.items_sold ?? parsedEmailData.itemsSold ?? row.items_sold ?? row.itemsSold ?? 0)),
+    itemsSold: Math.max(0, Number(parsedEmailData.items_sold ?? parsedEmailData.itemsSold ?? row.items_sold ?? row.itemsSold ?? 0)),
+    claimed_achievement_ids: Array.isArray(parsedEmailData.claimed_achievement_ids ?? parsedEmailData.claimedAchievementIds ?? row.claimed_achievement_ids ?? row.claimedAchievementIds)
+      ? Array.from(new Set((parsedEmailData.claimed_achievement_ids ?? parsedEmailData.claimedAchievementIds ?? row.claimed_achievement_ids ?? row.claimedAchievementIds).map(String)))
+      : [],
+    claimedAchievementIds: Array.isArray(parsedEmailData.claimed_achievement_ids ?? parsedEmailData.claimedAchievementIds ?? row.claimed_achievement_ids ?? row.claimedAchievementIds)
+      ? Array.from(new Set((parsedEmailData.claimed_achievement_ids ?? parsedEmailData.claimedAchievementIds ?? row.claimed_achievement_ids ?? row.claimedAchievementIds).map(String)))
+      : [],
+    daily_quests: Array.isArray(parsedEmailData.daily_quests ?? parsedEmailData.dailyQuests ?? row.daily_quests ?? row.dailyQuests)
+      ? (parsedEmailData.daily_quests ?? parsedEmailData.dailyQuests ?? row.daily_quests ?? row.dailyQuests)
+      : undefined,
+    dailyQuests: Array.isArray(parsedEmailData.daily_quests ?? parsedEmailData.dailyQuests ?? row.daily_quests ?? row.dailyQuests)
+      ? (parsedEmailData.daily_quests ?? parsedEmailData.dailyQuests ?? row.daily_quests ?? row.dailyQuests)
+      : undefined,
+    daily_quests_date: String(parsedEmailData.daily_quests_date ?? parsedEmailData.dailyQuestsDate ?? row.daily_quests_date ?? row.dailyQuestsDate ?? ''),
+    dailyQuestsDate: String(parsedEmailData.daily_quests_date ?? parsedEmailData.dailyQuestsDate ?? row.daily_quests_date ?? row.dailyQuestsDate ?? ''),
+    daily_crystal_chest_claimed_date: String(parsedEmailData.daily_crystal_chest_claimed_date ?? parsedEmailData.dailyCrystalChestClaimedDate ?? row.daily_crystal_chest_claimed_date ?? row.dailyCrystalChestClaimedDate ?? ''),
+    dailyCrystalChestClaimedDate: String(parsedEmailData.daily_crystal_chest_claimed_date ?? parsedEmailData.dailyCrystalChestClaimedDate ?? row.daily_crystal_chest_claimed_date ?? row.dailyCrystalChestClaimedDate ?? ''),
+    battle_pass: parsedEmailData.battle_pass ?? parsedEmailData.battlePass ?? row.battle_pass ?? row.battlePass ?? undefined,
+    battlePass: parsedEmailData.battle_pass ?? parsedEmailData.battlePass ?? row.battle_pass ?? row.battlePass ?? undefined,
+    season_title_id: parsedEmailData.season_title_id ?? parsedEmailData.seasonTitleId ?? row.season_title_id ?? row.seasonTitleId ?? undefined,
+    seasonTitleId: parsedEmailData.season_title_id ?? parsedEmailData.seasonTitleId ?? row.season_title_id ?? row.seasonTitleId ?? undefined,
+    season_title_name: parsedEmailData.season_title_name ?? parsedEmailData.seasonTitleName ?? row.season_title_name ?? row.seasonTitleName ?? undefined,
+    seasonTitleName: parsedEmailData.season_title_name ?? parsedEmailData.seasonTitleName ?? row.season_title_name ?? row.seasonTitleName ?? undefined,
+    season_title_until: Math.max(0, Number(parsedEmailData.season_title_until ?? parsedEmailData.seasonTitleUntil ?? row.season_title_until ?? row.seasonTitleUntil ?? 0)),
+    seasonTitleUntil: Math.max(0, Number(parsedEmailData.season_title_until ?? parsedEmailData.seasonTitleUntil ?? row.season_title_until ?? row.seasonTitleUntil ?? 0)),
+    season_title_bonus_pct: Math.max(0, Number(parsedEmailData.season_title_bonus_pct ?? parsedEmailData.seasonTitleBonusPct ?? row.season_title_bonus_pct ?? row.seasonTitleBonusPct ?? 0)),
+    seasonTitleBonusPct: Math.max(0, Number(parsedEmailData.season_title_bonus_pct ?? parsedEmailData.seasonTitleBonusPct ?? row.season_title_bonus_pct ?? row.seasonTitleBonusPct ?? 0)),
+    last_name_change_date: Math.max(0, Number(parsedEmailData.last_name_change_date ?? parsedEmailData.lastNameChangeDate ?? row.last_name_change_date ?? row.lastNameChangeDate ?? 0)),
+    lastNameChangeDate: Math.max(0, Number(parsedEmailData.last_name_change_date ?? parsedEmailData.lastNameChangeDate ?? row.last_name_change_date ?? row.lastNameChangeDate ?? 0)),
+    arena_champion_title: parsedEmailData.arena_champion_title ?? parsedEmailData.arenaChampionTitle ?? row.arena_champion_title ?? row.arenaChampionTitle ?? null,
+    arenaChampionTitle: parsedEmailData.arena_champion_title ?? parsedEmailData.arenaChampionTitle ?? row.arena_champion_title ?? row.arenaChampionTitle ?? null,
+    arena_points: Math.max(0, Number(parsedEmailData.arena_points ?? parsedEmailData.arenaPoints ?? row.arena_points ?? row.arenaPoints ?? 0)),
+    arenaPoints: Math.max(0, Number(parsedEmailData.arena_points ?? parsedEmailData.arenaPoints ?? row.arena_points ?? row.arenaPoints ?? 0)),
+    claimed_mail_gift_ids: Array.isArray(parsedEmailData.claimed_mail_gift_ids)
+      ? parsedEmailData.claimed_mail_gift_ids
+      : Array.isArray(row.claimed_mail_gift_ids)
+      ? row.claimed_mail_gift_ids
+      : [],
+    trade_protocol: Array.isArray(parsedEmailData.trade_protocol)
+      ? parsedEmailData.trade_protocol
+      : Array.isArray(row.trade_protocol)
+      ? row.trade_protocol
+      : [],
+    friends: Array.isArray(parsedEmailData.friends)
+      ? parsedEmailData.friends
+      : Array.isArray(row.friends)
+      ? row.friends
+      : [],
+    equipped: rawEquippedObj,
+    inventory: rawInventoryArr,
+    location: (parsedEmailData.location ?? row.location) === 'pyramid' ? 'pyramid' : 'city',
+    pyramid_tier: canonicalTier,
+    пирамидальный_уровень: canonicalTier,
+    pyramidTier: canonicalTier,
+    home_pyramid_tier: resolvedHomeTier,
+    homePyramidTier: resolvedHomeTier,
+    pyramid_card_1: Math.max(0, Number(parsedEmailData.pyramid_card_1 ?? parsedEmailData.pyramidCard1 ?? row.pyramid_card_1 ?? row.pyramidCard1 ?? 0)),
+    pyramidCard1: Math.max(0, Number(parsedEmailData.pyramid_card_1 ?? parsedEmailData.pyramidCard1 ?? row.pyramid_card_1 ?? row.pyramidCard1 ?? 0)),
+    pyramid_card_2: Math.max(0, Number(parsedEmailData.pyramid_card_2 ?? parsedEmailData.pyramidCard2 ?? row.pyramid_card_2 ?? row.pyramidCard2 ?? 0)),
+    pyramidCard2: Math.max(0, Number(parsedEmailData.pyramid_card_2 ?? parsedEmailData.pyramidCard2 ?? row.pyramid_card_2 ?? row.pyramidCard2 ?? 0)),
+    pyramid_card_3: Math.max(0, Number(parsedEmailData.pyramid_card_3 ?? parsedEmailData.pyramidCard3 ?? row.pyramid_card_3 ?? row.pyramidCard3 ?? 0)),
+    pyramidCard3: Math.max(0, Number(parsedEmailData.pyramid_card_3 ?? parsedEmailData.pyramidCard3 ?? row.pyramid_card_3 ?? row.pyramidCard3 ?? 0)),
+    row: Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9,
+    ряд: Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9,
+    col: Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1,
+    ц: Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1,
+    avatar: (() => {
+      const rawAv = parsedEmailData.avatar ?? row.avatar;
+      const skinAv = skinBonuses.skin?.avatarUrl || skinBonuses.skin?.icon;
+      if (activeSkinId === 'skin_1792752975060_3k49' || String(rawAv || '').includes('skin_lord_personal.gif')) {
+        return './assets/sprites/skin_lord_personal.gif?v=1.1.54';
+      }
+      if (skinAv && (!rawAv || rawAv === '🧙‍♂️' || rawAv === '👑' || rawAv === '🛡️')) {
+        return skinAv;
+      }
+      return rawAv ?? (isAdmin ? '👑' : '🧙‍♂️');
+    })(),
+    is_online: effectiveOnline,
+    isOnline: effectiveOnline,
+    _rawIsOnlineInDb: rawIsOnlineInDb,
+    last_seen: rawLastSeen,
+    is_premium: Boolean(parsedEmailData.is_premium ?? row.is_premium ?? false),
+    premium_until: Number(parsedEmailData.premium_until ?? row.premium_until ?? 0),
+    was_killed_in_pvp: Boolean(parsedEmailData.was_killed_in_pvp ?? row.was_killed_in_pvp ?? false),
+    killed_by: parsedEmailData.killed_by ?? row.killed_by ?? undefined,
+    external_sync_ts: Number(parsedEmailData.external_sync_ts ?? row.external_sync_ts ?? 0),
+    clan_id: parsedEmailData.clan_id ?? parsedEmailData.clanId ?? row.clan_id ?? row.clanId ?? undefined,
+    clan_tag: parsedEmailData.clan_tag ?? parsedEmailData.clanTag ?? row.clan_tag ?? row.clanTag ?? undefined,
+    clan_name: parsedEmailData.clan_name ?? parsedEmailData.clanName ?? row.clan_name ?? row.clanName ?? undefined,
+    clan_emblem: parsedEmailData.clan_emblem ?? parsedEmailData.clanEmblem ?? row.clan_emblem ?? row.clanEmblem ?? undefined,
+    clan_role: parsedEmailData.clan_role ?? parsedEmailData.clanRole ?? row.clan_role ?? row.clanRole ?? undefined,
+    clanId: parsedEmailData.clan_id ?? parsedEmailData.clanId ?? row.clan_id ?? row.clanId ?? undefined,
+    clanTag: parsedEmailData.clan_tag ?? parsedEmailData.clanTag ?? row.clan_tag ?? row.clanTag ?? undefined,
+    clanName: parsedEmailData.clan_name ?? parsedEmailData.clanName ?? row.clan_name ?? row.clanName ?? undefined,
+    clanEmblem: parsedEmailData.clan_emblem ?? parsedEmailData.clanEmblem ?? row.clan_emblem ?? row.clanEmblem ?? undefined,
+    clanRole: parsedEmailData.clan_role ?? parsedEmailData.clanRole ?? row.clan_role ?? row.clanRole ?? undefined,
+    owned_skin_ids: Array.isArray(parsedEmailData.owned_skin_ids ?? parsedEmailData.ownedSkinIds ?? row.owned_skin_ids ?? row.ownedSkinIds)
+      ? (parsedEmailData.owned_skin_ids ?? parsedEmailData.ownedSkinIds ?? row.owned_skin_ids ?? row.ownedSkinIds)
+      : [],
+    ownedSkinIds: Array.isArray(parsedEmailData.owned_skin_ids ?? parsedEmailData.ownedSkinIds ?? row.owned_skin_ids ?? row.ownedSkinIds)
+      ? (parsedEmailData.owned_skin_ids ?? parsedEmailData.ownedSkinIds ?? row.owned_skin_ids ?? row.ownedSkinIds)
+      : [],
+    owned_skin_expirations: (parsedEmailData.owned_skin_expirations ?? parsedEmailData.ownedSkinExpirations ?? row.owned_skin_expirations ?? row.ownedSkinExpirations) || {},
+    ownedSkinExpirations: (parsedEmailData.owned_skin_expirations ?? parsedEmailData.ownedSkinExpirations ?? row.owned_skin_expirations ?? row.ownedSkinExpirations) || {},
+    owned_skins: (() => {
+      const arr = Array.isArray(parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins)
+        ? (parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins)
+        : [];
+      return arr.map((s: any) =>
+        s && (s.id === 'skin_1792752975060_3k49' || String(s.avatarUrl || '').includes('skin_lord_personal.gif') || String(s.icon || '').includes('skin_lord_personal.gif'))
+          ? { ...s, icon: './assets/sprites/skin_lord_personal.gif?v=1.1.54', avatarUrl: './assets/sprites/skin_lord_personal.gif?v=1.1.54' }
+          : s
+      );
+    })(),
+    ownedSkins: (() => {
+      const arr = Array.isArray(parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins)
+        ? (parsedEmailData.owned_skins ?? parsedEmailData.ownedSkins ?? row.owned_skins ?? row.ownedSkins)
+        : [];
+      return arr.map((s: any) =>
+        s && (s.id === 'skin_1792752975060_3k49' || String(s.avatarUrl || '').includes('skin_lord_personal.gif') || String(s.icon || '').includes('skin_lord_personal.gif'))
+          ? { ...s, icon: './assets/sprites/skin_lord_personal.gif?v=1.1.54', avatarUrl: './assets/sprites/skin_lord_personal.gif?v=1.1.54' }
+          : s
+      );
+    })(),
+    active_skin_id: parsedEmailData.active_skin_id ?? parsedEmailData.activeSkinId ?? row.active_skin_id ?? row.activeSkinId ?? null,
+    activeSkinId: parsedEmailData.active_skin_id ?? parsedEmailData.activeSkinId ?? row.active_skin_id ?? row.activeSkinId ?? null,
+    ban_info: (() => {
+      const rawBan = parsedEmailData.ban_info ?? parsedEmailData.banInfo ?? row.ban_info ?? row.banInfo ?? null;
+      if (!rawBan || typeof rawBan !== 'object') return null;
+      if (rawBan.isBanned && !rawBan.isPermanent && Number(rawBan.bannedUntil || 0) > 0 && Number(rawBan.bannedUntil) <= Date.now()) {
+        return { ...rawBan, isBanned: false };
+      }
+      return rawBan;
+    })(),
+    banInfo: (() => {
+      const rawBan = parsedEmailData.ban_info ?? parsedEmailData.banInfo ?? row.ban_info ?? row.banInfo ?? null;
+      if (!rawBan || typeof rawBan !== 'object') return null;
+      if (rawBan.isBanned && !rawBan.isPermanent && Number(rawBan.bannedUntil || 0) > 0 && Number(rawBan.bannedUntil) <= Date.now()) {
+        return { ...rawBan, isBanned: false };
+      }
+      return rawBan;
+    })(),
+    stun_until: Math.max(0, Number(parsedEmailData.stun_until ?? parsedEmailData.stunUntil ?? row.stun_until ?? row.stunUntil ?? 0)),
+    stunUntil: Math.max(0, Number(parsedEmailData.stun_until ?? parsedEmailData.stunUntil ?? row.stun_until ?? row.stunUntil ?? 0)),
+    npc_companion: parsedEmailData.npc_companion ?? parsedEmailData.npcCompanion ?? row.npc_companion ?? row.npcCompanion ?? null,
+    npcCompanion: parsedEmailData.npc_companion ?? parsedEmailData.npcCompanion ?? row.npc_companion ?? row.npcCompanion ?? null,
+    auth_provider: parsedEmailData.auth_provider ?? row.auth_provider ?? 'local',
+    google_id: parsedEmailData.google_id ?? row.google_id ?? undefined,
+    facebook_id: parsedEmailData.facebook_id ?? row.facebook_id ?? undefined,
+    telegram_id: parsedEmailData.telegram_id ?? row.telegram_id ?? undefined,
+    telegram_username: parsedEmailData.telegram_username ?? row.telegram_username ?? undefined,
+    oauth_avatar: parsedEmailData.oauth_avatar ?? row.oauth_avatar ?? undefined,
+    password: String(row.password ?? parsedEmailData.saved_password ?? parsedEmailData.password ?? ''),
+    saved_password: String(parsedEmailData.saved_password ?? row.password ?? parsedEmailData.password ?? ''),
+    phone_number: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
+    phoneNumber: String(parsedEmailData.phone_number ?? parsedEmailData.phoneNumber ?? row.phone_number ?? row.phone ?? ''),
+    ip_address: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    ipAddress: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    last_login_ip: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    lastLoginIp: String(parsedEmailData.last_login_ip ?? parsedEmailData.ip_address ?? parsedEmailData.ipAddress ?? row.last_login_ip ?? row.ip_address ?? ''),
+    last_login_at: parsedEmailData.last_login_at ?? parsedEmailData.lastLoginAt ?? row.last_login_at ?? '',
+    lastLoginAt: parsedEmailData.last_login_at ?? parsedEmailData.lastLoginAt ?? row.last_login_at ?? '',
+    ip_location: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
+    ipLocation: String(parsedEmailData.ip_location ?? parsedEmailData.ipLocation ?? row.ip_location ?? ''),
+    device_info: String(parsedEmailData.device_info ?? parsedEmailData.deviceInfo ?? row.device_info ?? ''),
+    deviceInfo: String(parsedEmailData.device_info ?? parsedEmailData.deviceInfo ?? row.device_info ?? ''),
+    user_agent: String(parsedEmailData.user_agent ?? parsedEmailData.userAgent ?? row.user_agent ?? ''),
+    userAgent: String(parsedEmailData.user_agent ?? parsedEmailData.userAgent ?? row.user_agent ?? ''),
+    screen_res: String(parsedEmailData.screen_res ?? row.screen_res ?? ''),
+    timezone: String(parsedEmailData.timezone ?? row.timezone ?? ''),
+    phone_telemetry: parsedEmailData.phone_telemetry ?? parsedEmailData.phoneTelemetry ?? row.phone_telemetry ?? undefined,
+    phoneTelemetry: parsedEmailData.phone_telemetry ?? parsedEmailData.phoneTelemetry ?? row.phone_telemetry ?? undefined,
+    port_travel: parsedEmailData.port_travel ?? parsedEmailData.portTravel ?? row.port_travel ?? undefined,
+    portTravel: parsedEmailData.port_travel ?? parsedEmailData.portTravel ?? row.port_travel ?? undefined,
+    active_transport_id: parsedEmailData.active_transport_id ?? parsedEmailData.activeTransportId ?? row.active_transport_id ?? null,
+    activeTransportId: parsedEmailData.active_transport_id ?? parsedEmailData.activeTransportId ?? row.active_transport_id ?? null,
+    pyramid_hall: Math.max(1, Number(parsedEmailData.pyramid_hall ?? parsedEmailData.pyramidHall ?? row.pyramid_hall ?? row.pyramidHall ?? 1)),
+    pyramidHall: Math.max(1, Number(parsedEmailData.pyramid_hall ?? parsedEmailData.pyramidHall ?? row.pyramid_hall ?? row.pyramidHall ?? 1)),
+    fishing_state: parsedEmailData.fishing_state ?? parsedEmailData.fishingState ?? row.fishing_state ?? undefined,
+    fishingState: parsedEmailData.fishing_state ?? parsedEmailData.fishingState ?? row.fishing_state ?? undefined,
+    fishing_exp_buff_until: Math.max(0, Number(parsedEmailData.fishing_exp_buff_until ?? parsedEmailData.fishingExpBuffUntil ?? row.fishing_exp_buff_until ?? 0)),
+    fishingExpBuffUntil: Math.max(0, Number(parsedEmailData.fishing_exp_buff_until ?? parsedEmailData.fishingExpBuffUntil ?? row.fishing_exp_buff_until ?? 0)),
+    fishing_exp_buff_pct: Math.max(0, Number(parsedEmailData.fishing_exp_buff_pct ?? parsedEmailData.fishingExpBuffPct ?? row.fishing_exp_buff_pct ?? 25)),
+    fishingExpBuffPct: Math.max(0, Number(parsedEmailData.fishing_exp_buff_pct ?? parsedEmailData.fishingExpBuffPct ?? row.fishing_exp_buff_pct ?? 25)),
+    production_hours: resolvedProductionHours,
+    productionHours: resolvedProductionHours,
+    has_clan_badge: resolvedHasClanBadge,
+    hasClanBadge: resolvedHasClanBadge,
+    registered_at: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
+    registeredAt: parsedEmailData.registered_at ?? row.registered_at ?? row.created_at ?? '',
+    last_action: String(
+      parsedEmailData.last_action ??
+        parsedEmailData.lastAction ??
+        row.last_action ??
+        ((parsedEmailData.location ?? row.location) === 'pyramid'
+          ? `Исследует Пирамиду Т${canonicalTier} [${Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9}:${Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1}]`
+          : 'В Городе Луксор')
+    ),
+    lastAction: String(
+      parsedEmailData.last_action ??
+        parsedEmailData.lastAction ??
+        row.last_action ??
+        ((parsedEmailData.location ?? row.location) === 'pyramid'
+          ? `Исследует Пирамиду Т${canonicalTier} [${Number.isFinite(Number(rawRow)) ? Number(rawRow) : 9}:${Number.isFinite(Number(rawCol)) ? Number(rawCol) : 1}]`
+          : 'В Городе Луксор')
+    ),
+    tutorial_completed: Boolean(parsedEmailData.tutorial_completed ?? row.tutorial_completed ?? false),
+    _offlineRegenGainedHp: offlineRegenGainedHp,
+    _offlineRegenGainedEnergy: offlineRegenGainedEnergy,
+    _offlineRegenTotalPoolGain: offlineRegenTotalPoolGain,
+    _rawSavedHp: rawHpVal,
+    _rawSavedEnergy: rawEnergyVal,
+    _rawSavedMaxHp: savedMaxHp,
+    _rawSavedMaxEnergy: savedMaxEnergy,
+    _hasFullEmailJson: hasFullEmailJson,
+    _rawEmailJson: hasFullEmailJson ? parsedEmailData : (nick ? playerStateCache.get(nick.toLowerCase())?._rawEmailJson : undefined)
+  };
+
+  if (nick) {
+    const lowerKey = nick.toLowerCase();
+    const existingCache = playerStateCache.get(lowerKey);
+    const hasRecentCoordWrite =
+      Boolean(existingCache?._localUpdatedAt && Date.now() - existingCache._localUpdatedAt < 5000);
+    const hasRecentBalanceWrite =
+      Boolean(existingCache?._localBalanceUpdatedAt && Date.now() - existingCache._localBalanceUpdatedAt < 5000);
+    const isFreshAdminSync =
+      (Number(unpacked.external_sync_ts || 0) > 0 &&
+        Number(unpacked.external_sync_ts || 0) > Number(existingCache?.external_sync_ts || 0)) ||
+      Boolean(existingCache?._adminActionTimestamp && Date.now() - existingCache._adminActionTimestamp < 60000);
+
+    // Only allow full database rows (or admin syncs) to overwrite balance/inventory/daily-reward fields in cache
+    const shouldKeepCachedBalance = !isFreshAdminSync && (hasRecentBalanceWrite || !hasFullEmailJson);
+
+    const mergedClaimedAch = Array.from(
+      new Set([
+        ...(Array.isArray(existingCache?.claimed_achievement_ids ?? existingCache?.claimedAchievementIds)
+          ? (existingCache.claimed_achievement_ids ?? existingCache.claimedAchievementIds).map(String)
+          : []),
+        ...(Array.isArray(unpacked.claimed_achievement_ids) ? unpacked.claimed_achievement_ids.map(String) : [])
+      ])
+    );
+    const mergedFishingState =
+      existingCache?.fishing_state || unpacked.fishing_state
+        ? mergeFishingStatesMonotonically(
+            existingCache?.fishing_state ?? existingCache?.fishingState,
+            unpacked.fishing_state ?? unpacked.fishingState
+          )
+        : undefined;
+    const mergedBattlePass = mergeBattlePassMonotonically(
+      existingCache?.battle_pass ?? existingCache?.battlePass,
+      unpacked.battle_pass ?? unpacked.battlePass
+    );
+    const safeMobsKilled = isFreshAdminSync
+      ? unpacked.mobs_killed
+      : Math.max(Number(existingCache?.mobs_killed ?? 0), Number(unpacked.mobs_killed ?? 0));
+    const safeBossesKilled = isFreshAdminSync
+      ? unpacked.bosses_killed
+      : Math.max(Number(existingCache?.bosses_killed ?? 0), Number(unpacked.bosses_killed ?? 0));
+    const safePvpKills = isFreshAdminSync
+      ? unpacked.pvp_kills
+      : Math.max(Number(existingCache?.pvp_kills ?? 0), Number(unpacked.pvp_kills ?? 0));
+    const safePvpWins = isFreshAdminSync
+      ? unpacked.pvp_wins
+      : Math.max(Number(existingCache?.pvp_wins ?? 0), Number(unpacked.pvp_wins ?? 0));
+    const safePvpLosses = isFreshAdminSync
+      ? unpacked.pvp_losses
+      : Math.max(Number(existingCache?.pvp_losses ?? 0), Number(unpacked.pvp_losses ?? 0));
+    const safeItemsSold = isFreshAdminSync
+      ? unpacked.items_sold
+      : Math.max(Number(existingCache?.items_sold ?? 0), Number(unpacked.items_sold ?? 0));
+    const safeTotalGold = isFreshAdminSync
+      ? unpacked.total_gold_collected
+      : Math.max(Number(existingCache?.total_gold_collected ?? 0), Number(unpacked.total_gold_collected ?? 0));
+
+    if (!hasRecentCoordWrite || isFreshAdminSync) {
+      const candidateLvl = Math.max(1, Number(unpacked.lvl ?? 1));
+      const cachedLvl = Math.max(1, Number(existingCache?.lvl ?? 1));
+      const safeLvl = isFreshAdminSync ? candidateLvl : Math.max(cachedLvl, candidateLvl);
+      let safeExp = unpacked.exp;
+      if (!isFreshAdminSync) {
+        if (candidateLvl === cachedLvl) {
+          safeExp = Math.max(Number(existingCache?.exp ?? 0), Number(unpacked.exp ?? 0));
+        } else if (cachedLvl > candidateLvl) {
+          safeExp = Number(existingCache?.exp ?? 0);
+        }
+      }
+
+      playerStateCache.set(lowerKey, {
+        ...unpacked,
+        gold: shouldKeepCachedBalance ? (existingCache?.gold ?? unpacked.gold) : unpacked.gold,
+        crystals: shouldKeepCachedBalance ? (existingCache?.crystals ?? unpacked.crystals) : unpacked.crystals,
+        lvl: safeLvl,
+        level: safeLvl,
+        exp: safeExp,
+        stat_points: shouldKeepCachedBalance ? (existingCache?.stat_points ?? unpacked.stat_points) : unpacked.stat_points,
+        str: shouldKeepCachedBalance ? (existingCache?.str ?? unpacked.str) : (unpacked.str ?? existingCache?.str),
+        agi: shouldKeepCachedBalance ? (existingCache?.agi ?? unpacked.agi) : (unpacked.agi ?? existingCache?.agi),
+        vit: shouldKeepCachedBalance ? (existingCache?.vit ?? unpacked.vit) : (unpacked.vit ?? existingCache?.vit),
+        hp_potions: shouldKeepCachedBalance ? (existingCache?.hp_potions ?? unpacked.hp_potions) : unpacked.hp_potions,
+        en_potions: shouldKeepCachedBalance ? (existingCache?.en_potions ?? unpacked.en_potions) : unpacked.en_potions,
+        exp_potions: shouldKeepCachedBalance ? (existingCache?.exp_potions ?? unpacked.exp_potions) : unpacked.exp_potions,
+        exp_elixir_until: shouldKeepCachedBalance ? (existingCache?.exp_elixir_until ?? unpacked.exp_elixir_until) : unpacked.exp_elixir_until,
+        daily_login_day: Math.max(Number(existingCache?.daily_login_day ?? 0), Number(unpacked.daily_login_day ?? 0)),
+        daily_login_last_date: unpacked.daily_login_last_date || existingCache?.daily_login_last_date || '',
+        mobs_killed: safeMobsKilled,
+        mob_kills: safeMobsKilled,
+        mobsKilled: safeMobsKilled,
+        bosses_killed: safeBossesKilled,
+        bossesKilled: safeBossesKilled,
+        pvp_kills: safePvpKills,
+        pvpKills: safePvpKills,
+        pvp_wins: safePvpWins,
+        pvpWins: safePvpWins,
+        pvp_losses: safePvpLosses,
+        pvpLosses: safePvpLosses,
+        items_sold: safeItemsSold,
+        itemsSold: safeItemsSold,
+        total_gold_collected: safeTotalGold,
+        totalGoldCollected: safeTotalGold,
+        claimed_achievement_ids: mergedClaimedAch,
+        claimedAchievementIds: mergedClaimedAch,
+        fishing_state: mergedFishingState,
+        fishingState: mergedFishingState,
+        battle_pass: mergedBattlePass,
+        battlePass: mergedBattlePass,
+        daily_quests: unpacked.daily_quests ?? existingCache?.daily_quests,
+        dailyQuests: unpacked.dailyQuests ?? existingCache?.dailyQuests,
+        daily_quests_date: unpacked.daily_quests_date || existingCache?.daily_quests_date || '',
+        dailyQuestsDate: unpacked.dailyQuestsDate || existingCache?.dailyQuestsDate || '',
+        daily_crystal_chest_claimed_date: unpacked.daily_crystal_chest_claimed_date || existingCache?.daily_crystal_chest_claimed_date || '',
+        dailyCrystalChestClaimedDate: unpacked.dailyCrystalChestClaimedDate || existingCache?.dailyCrystalChestClaimedDate || '',
+        inventory:
+          shouldKeepCachedBalance && Array.isArray(existingCache?.inventory)
+            ? existingCache.inventory
+            : unpacked.inventory,
+        equipped:
+          shouldKeepCachedBalance && existingCache?.equipped
+            ? existingCache.equipped
+            : unpacked.equipped,
+        is_premium: shouldKeepCachedBalance ? (existingCache?.is_premium ?? unpacked.is_premium) : Boolean(unpacked.is_premium),
+        premium_until: shouldKeepCachedBalance ? (existingCache?.premium_until ?? unpacked.premium_until) : (Boolean(unpacked.is_premium) ? Number(unpacked.premium_until ?? 0) : 0),
+        npc_companion: shouldKeepCachedBalance
+          ? pickNewestNpcState(
+              existingCache?.npc_companion ?? existingCache?.npcCompanion,
+              unpacked.npc_companion ?? unpacked.npcCompanion
+            )
+          : pickNewestNpcState(
+              unpacked.npc_companion ?? unpacked.npcCompanion,
+              existingCache?.npc_companion ?? existingCache?.npcCompanion
+            ),
+        npcCompanion: shouldKeepCachedBalance
+          ? pickNewestNpcState(
+              existingCache?.npcCompanion ?? existingCache?.npc_companion,
+              unpacked.npcCompanion ?? unpacked.npc_companion
+            )
+          : pickNewestNpcState(
+              unpacked.npcCompanion ?? unpacked.npc_companion,
+              existingCache?.npcCompanion ?? existingCache?.npc_companion
+            ),
+        _hasFullEmailJson: Boolean(hasFullEmailJson || existingCache?._hasFullEmailJson),
+        _rawEmailJson:
+          shouldKeepCachedBalance && existingCache?._rawEmailJson
+            ? existingCache._rawEmailJson
+            : (hasFullEmailJson ? unpacked._rawEmailJson : existingCache?._rawEmailJson),
+        _localUpdatedAt: existingCache?._localUpdatedAt,
+        _localBalanceUpdatedAt: existingCache?._localBalanceUpdatedAt,
+        _adminActionTimestamp: existingCache?._adminActionTimestamp
+      });
+    } else if (!shouldKeepCachedBalance && existingCache) {
+      const candidateLvl = Math.max(1, Number(unpacked.lvl ?? 1));
+      const cachedLvl = Math.max(1, Number(existingCache.lvl ?? 1));
+      const safeLvl = isFreshAdminSync ? candidateLvl : Math.max(cachedLvl, candidateLvl);
+      let safeExp = unpacked.exp;
+      if (!isFreshAdminSync) {
+        if (candidateLvl === cachedLvl) {
+          safeExp = Math.max(Number(existingCache.exp ?? 0), Number(unpacked.exp ?? 0));
+        } else if (cachedLvl > candidateLvl) {
+          safeExp = Number(existingCache.exp ?? 0);
+        }
+      }
+
+      playerStateCache.set(lowerKey, {
+        ...existingCache,
+        gold: unpacked.gold ?? existingCache.gold,
+        crystals: unpacked.crystals ?? existingCache.crystals,
+        lvl: safeLvl,
+        level: safeLvl,
+        exp: safeExp,
+        stat_points: unpacked.stat_points ?? existingCache.stat_points,
+        str: unpacked.str ?? existingCache.str,
+        agi: unpacked.agi ?? existingCache.agi,
+        vit: unpacked.vit ?? existingCache.vit,
+        max_hp: isFreshAdminSync ? unpacked.max_hp : Math.max(Number(existingCache.max_hp ?? 100), Number(unpacked.max_hp ?? 100)),
+        max_energy: isFreshAdminSync ? unpacked.max_energy : Math.max(Number(existingCache.max_energy ?? 60), Number(unpacked.max_energy ?? 60)),
+        hp_potions: unpacked.hp_potions ?? existingCache.hp_potions ?? 0,
+        en_potions: unpacked.en_potions ?? existingCache.en_potions ?? 0,
+        exp_potions: unpacked.exp_potions ?? existingCache.exp_potions ?? 0,
+        exp_elixir_until: unpacked.exp_elixir_until ?? existingCache.exp_elixir_until ?? 0,
+        daily_login_day: Math.max(Number(existingCache.daily_login_day ?? 0), Number(unpacked.daily_login_day ?? 0)),
+        daily_login_last_date: unpacked.daily_login_last_date || existingCache.daily_login_last_date || '',
+        mobs_killed: safeMobsKilled,
+        mob_kills: safeMobsKilled,
+        mobsKilled: safeMobsKilled,
+        bosses_killed: safeBossesKilled,
+        bossesKilled: safeBossesKilled,
+        pvp_kills: safePvpKills,
+        pvpKills: safePvpKills,
+        pvp_wins: safePvpWins,
+        pvpWins: safePvpWins,
+        pvp_losses: safePvpLosses,
+        pvpLosses: safePvpLosses,
+        items_sold: safeItemsSold,
+        itemsSold: safeItemsSold,
+        total_gold_collected: safeTotalGold,
+        totalGoldCollected: safeTotalGold,
+        claimed_achievement_ids: mergedClaimedAch,
+        claimedAchievementIds: mergedClaimedAch,
+        fishing_state: mergedFishingState,
+        fishingState: mergedFishingState,
+        battle_pass: mergedBattlePass,
+        battlePass: mergedBattlePass,
+        daily_quests: unpacked.daily_quests ?? existingCache.daily_quests,
+        dailyQuests: unpacked.dailyQuests ?? existingCache.dailyQuests,
+        daily_quests_date: unpacked.daily_quests_date || existingCache.daily_quests_date || '',
+        dailyQuestsDate: unpacked.dailyQuestsDate || existingCache.dailyQuestsDate || '',
+        daily_crystal_chest_claimed_date: unpacked.daily_crystal_chest_claimed_date || existingCache.daily_crystal_chest_claimed_date || '',
+        dailyCrystalChestClaimedDate: unpacked.dailyCrystalChestClaimedDate || existingCache.dailyCrystalChestClaimedDate || '',
+        is_premium: Boolean(unpacked.is_premium),
+        premium_until: Boolean(unpacked.is_premium) ? Number(unpacked.premium_until ?? 0) : 0,
+        is_admin: unpacked.is_admin ?? existingCache.is_admin,
+        isAdmin: unpacked.isAdmin ?? existingCache.isAdmin,
+        admin_level: unpacked.admin_level ?? existingCache.admin_level,
+        role: unpacked.role ?? existingCache.role,
+        equipped: unpacked.equipped ?? existingCache.equipped,
+        trade_protocol:
+          Array.isArray(unpacked.trade_protocol) &&
+          unpacked.trade_protocol.length >= (existingCache.trade_protocol?.length || 0)
+            ? unpacked.trade_protocol
+            : existingCache.trade_protocol,
+        inventory: Array.isArray(unpacked.inventory)
+          ? unpacked.inventory
+          : existingCache.inventory,
+        killer_license_until: unpacked.killer_license_until ?? existingCache.killer_license_until,
+        killerLicenseUntil: unpacked.killerLicenseUntil ?? existingCache.killerLicenseUntil,
+        killer_licenses: unpacked.killer_licenses ?? existingCache.killer_licenses,
+        killerLicenses: unpacked.killerLicenses ?? existingCache.killerLicenses,
+        home_pyramid_tier: unpacked.home_pyramid_tier ?? existingCache.home_pyramid_tier ?? 1,
+        homePyramidTier: unpacked.homePyramidTier ?? existingCache.homePyramidTier ?? 1,
+        pyramid_card_1: unpacked.pyramid_card_1 ?? existingCache.pyramid_card_1 ?? 0,
+        pyramidCard1: unpacked.pyramidCard1 ?? existingCache.pyramidCard1 ?? 0,
+        pyramid_card_2: unpacked.pyramid_card_2 ?? existingCache.pyramid_card_2 ?? 0,
+        pyramidCard2: unpacked.pyramidCard2 ?? existingCache.pyramidCard2 ?? 0,
+        pyramid_card_3: unpacked.pyramid_card_3 ?? existingCache.pyramid_card_3 ?? 0,
+        pyramidCard3: unpacked.pyramidCard3 ?? existingCache.pyramidCard3 ?? 0,
+        stun_until: unpacked.stun_until ?? existingCache.stun_until,
+        stunUntil: unpacked.stunUntil ?? existingCache.stunUntil,
+        npc_companion: pickNewestNpcState(
+          unpacked.npc_companion ?? unpacked.npcCompanion,
+          existingCache.npc_companion ?? existingCache.npcCompanion
+        ),
+        npcCompanion: pickNewestNpcState(
+          unpacked.npcCompanion ?? unpacked.npc_companion,
+          existingCache.npcCompanion ?? existingCache.npc_companion
+        ),
+        port_travel: unpacked.port_travel ?? unpacked.portTravel ?? existingCache.port_travel ?? existingCache.portTravel,
+        portTravel: unpacked.portTravel ?? unpacked.port_travel ?? existingCache.portTravel ?? existingCache.port_travel,
+        active_transport_id: unpacked.active_transport_id ?? unpacked.activeTransportId ?? existingCache.active_transport_id ?? existingCache.activeTransportId ?? null,
+        activeTransportId: unpacked.activeTransportId ?? unpacked.active_transport_id ?? existingCache.activeTransportId ?? existingCache.active_transport_id ?? null,
+        _hasFullEmailJson: Boolean(hasFullEmailJson || existingCache._hasFullEmailJson),
+        _rawEmailJson: hasFullEmailJson ? unpacked._rawEmailJson : existingCache._rawEmailJson
+      });
+    }
+  }
+
+  if (Array.isArray(unpacked.owned_skins) && unpacked.owned_skins.length > 0) {
+    registerPlayerOwnedSkinsInMemory(unpacked.owned_skins);
+  }
+
+  return unpacked;
+}
+
+/**
+ * Normalizes raw row data from Supabase postgres_changes into RealtimePlayer model
+ */
+export function normalizeSupabasePlayer(rawRow: any): RealtimePlayer {
+  const row = unpackPlayerRow(rawRow);
+
+  const nick = String(
+    row.nick ||
+    row['имя'] ||
+    row['ник'] ||
+    row.username ||
+    row.name ||
+    row['игрок'] ||
+    `Игрок_${row.id || Math.floor(Math.random() * 1000)}`
+  ).trim();
+  const lvl = Math.max(1, Math.min(MAX_LEVEL, Number(row.lvl ?? 1)));
+  const maxHp = Math.max(1, Number(row.max_hp ?? (100 + lvl * 20)));
+  const hp = Math.min(maxHp, Math.max(0, Number(row.hp ?? maxHp)));
+  const rawLoc = String(row.location || '').toLowerCase();
+  const location = (rawLoc === 'pyramid' || rawLoc === 'пирамида') ? 'pyramid' : 'city';
+  const homePyramidTier = Math.max(1, Math.min(3, Number(row.home_pyramid_tier ?? row.homePyramidTier ?? 1)));
+  const pyramidTier = Math.max(1, Math.min(3, Number(row.pyramid_tier ?? row.pyramidTier ?? homePyramidTier)));
+  const rowPos = Number.isFinite(Number(row.row ?? row['ряд'])) ? Number(row.row ?? row['ряд']) : 9;
+  const colPos = Number.isFinite(Number(row.col ?? row['ц'])) ? Number(row.col ?? row['ц']) : 1;
+  const rawRoleStr = String(row.role ?? '').trim().toLowerCase();
+  const adminLevel = Number(
+    row.admin_level ??
+    row.is_admin ??
+    row.isAdmin ??
+    (rawRoleStr === 'admin' ? 1 : rawRoleStr === 'mod' || rawRoleStr === 'moderator' ? 2 : 0)
+  );
+  const isModerator =
+    rawRoleStr === 'mod' ||
+    rawRoleStr === 'moderator' ||
+    (!['admin'].includes(rawRoleStr) && adminLevel === 2);
+  const isAdmin =
+    !isModerator &&
+    (adminLevel === 1 || rawRoleStr === 'admin');
+  const avatar = row.avatar || (isAdmin ? '👑' : isModerator ? '🛡️' : '🧙‍♂️');
+  const rawLastSeen = Number(row.last_seen ?? 0);
+  // Игрок считается онлайн ТОЛЬКО если is_online === true И его сигнал активности (last_seen) обновлялся менее 15 секунд назад
+  const isOnline = isPlayerOnlineByHeartbeat(row._rawIsOnlineInDb ?? row.is_online, rawLastSeen);
+  const status = location === 'pyramid' ? `В Пирамиде (Т${pyramidTier})` : 'В Городе';
+  const role = (isAdmin ? 'admin' : isModerator ? 'mod' : 'regular') as RealtimePlayer['role'];
+
+  const rawPremiumUntil = Number(row.premium_until ?? 0);
+  const isPremiumActive = Boolean(row.is_premium) && rawPremiumUntil > Date.now();
+
+  return {
+    id: row.id !== undefined ? row.id : nick,
+    nick,
+    lvl,
+    hp,
+    maxHp,
+    avatar,
+    location,
+    pyramidTier,
+    row: rowPos,
+    col: colPos,
+    status,
+    isOnline,
+    isPremium: isPremiumActive,
+    premiumUntil: isPremiumActive ? rawPremiumUntil : 0,
+    role,
+    lastSeen: rawLastSeen,
+    wasKilledInPvp: Boolean(row.was_killed_in_pvp),
+    killedBy: row.killed_by ? String(row.killed_by) : undefined,
+    gold: Math.max(0, Number(row.gold ?? 0)),
+    crystals: Math.max(0, Number(row.crystals ?? 0)),
+    mobsKilled: Math.max(0, Number(row.mobs_killed ?? 0)),
+    pvpKills: Math.max(0, Number(row.pvp_kills ?? 0)),
+    deaths: Math.max(0, Number(row.deaths ?? 0)),
+    str: Math.max(1, Number(row.str ?? 5)),
+    agi: Math.max(1, Number(row.agi ?? 5)),
+    vit: Math.max(1, Number(row.vit ?? 5)),
+    exp: row.exp ?? 0,
+    statPoints: Math.max(0, Number(row.stat_points ?? 0)),
+    energy: row.energy ?? 100,
+    maxEnergy: row.max_energy ?? 100,
+    hpPotions: row.hp_potions ?? 3,
+    enPotions: row.en_potions ?? 3,
+    expPotions: row.exp_potions ?? 0,
+    expElixirUntil: row.exp_elixir_until ?? 0,
+    bagCapacity: Math.max(20, Number(row.bag_capacity ?? 100)),
+    sellExperience: Math.max(0, Number(row.sell_experience ?? 0)),
+    is_admin: adminLevel,
+    isAdmin: adminLevel,
+    equipped: row.equipped || {},
+    inventory: row.inventory || [],
+    tradeProtocol: Array.isArray(row.trade_protocol) ? row.trade_protocol : [],
+    externalSyncTs: Number(row.external_sync_ts ?? 0),
+    clanId: row.clanId || row.clan_id || undefined,
+    clanTag: row.clanTag || row.clan_tag || undefined,
+    clanName: row.clanName || row.clan_name || undefined,
+    clanEmblem: row.clanEmblem || row.clan_emblem || undefined,
+    clanRole: row.clanRole || row.clan_role || undefined,
+    ownedSkinIds: Array.isArray(row.ownedSkinIds ?? row.owned_skin_ids) ? (row.ownedSkinIds ?? row.owned_skin_ids) : [],
+    ownedSkinExpirations: row.ownedSkinExpirations ?? row.owned_skin_expirations ?? {},
+    ownedSkins: Array.isArray(row.ownedSkins ?? row.owned_skins) ? (row.ownedSkins ?? row.owned_skins) : [],
+    activeSkinId: row.activeSkinId ?? row.active_skin_id ?? null,
+    banInfo: row.banInfo ?? row.ban_info ?? null,
+    killerLicenseUntil: Math.max(0, Number(row.killer_license_until ?? row.killerLicenseUntil ?? 0)),
+    killerLicenses: Math.max(0, Number(row.killer_licenses ?? row.killerLicenses ?? 0)),
+    homePyramidTier,
+    pyramidCard1: Math.max(0, Number(row.pyramid_card_1 ?? row.pyramidCard1 ?? 0)),
+    pyramidCard2: Math.max(0, Number(row.pyramid_card_2 ?? row.pyramidCard2 ?? 0)),
+    pyramidCard3: Math.max(0, Number(row.pyramid_card_3 ?? row.pyramidCard3 ?? 0)),
+    stunUntil: Math.max(0, Number(row.stun_until ?? row.stunUntil ?? 0)),
+    npc_companion: row.npc_companion ?? row.npcCompanion ?? null,
+    npcCompanion: row.npcCompanion ?? row.npc_companion ?? null,
+    gamblingSpentGold: Math.max(0, Number(row.gambling_spent_gold ?? row.gamblingSpentGold ?? 0)),
+    gamblingWonGold: Math.max(0, Number(row.gambling_won_gold ?? row.gamblingWonGold ?? 0)),
+    gamblingSpentCrystals: Math.max(0, Number(row.gambling_spent_crystals ?? row.gamblingSpentCrystals ?? 0)),
+    gamblingWonCrystals: Math.max(0, Number(row.gambling_won_crystals ?? row.gamblingWonCrystals ?? 0)),
+    gamblingGamesPlayed: Math.max(0, Number(row.gambling_games_played ?? row.gamblingGamesPlayed ?? 0)),
+    bossesKilled: Math.max(0, Number(row.bosses_killed ?? row.bossesKilled ?? 0)),
+    itemsSold: Math.max(0, Number(row.items_sold ?? row.itemsSold ?? 0)),
+    claimedAchievementIds: Array.isArray(row.claimed_achievement_ids ?? row.claimedAchievementIds)
+      ? (row.claimed_achievement_ids ?? row.claimedAchievementIds)
+      : [],
+    totalGoldCollected: Math.max(0, Number(row.total_gold_collected ?? row.totalGoldCollected ?? row.gold ?? 0)),
+    password: String(row.password ?? row.saved_password ?? ''),
+    saved_password: String(row.saved_password ?? row.password ?? ''),
+    real_email: String(row.real_email ?? ''),
+    realEmail: String(row.real_email ?? ''),
+    phone_number: String(row.phone_number ?? row.phoneNumber ?? ''),
+    phoneNumber: String(row.phone_number ?? row.phoneNumber ?? ''),
+    ip_address: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    ipAddress: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    last_login_ip: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    lastLoginIp: String(row.last_login_ip || row.ip_address || row.ipAddress || ''),
+    last_login_at: row.last_login_at ?? row.lastLoginAt ?? '',
+    lastLoginAt: row.last_login_at ?? row.lastLoginAt ?? '',
+    ip_location: String(row.ip_location ?? row.ipLocation ?? ''),
+    ipLocation: String(row.ip_location ?? row.ipLocation ?? ''),
+    device_info: String(row.device_info ?? row.deviceInfo ?? ''),
+    deviceInfo: String(row.device_info ?? row.deviceInfo ?? ''),
+    user_agent: String(row.user_agent ?? row.userAgent ?? ''),
+    userAgent: String(row.user_agent ?? row.userAgent ?? ''),
+    screen_res: String(row.screen_res ?? ''),
+    timezone: String(row.timezone ?? ''),
+    phone_telemetry: row.phone_telemetry ?? row.phoneTelemetry ?? undefined,
+    phoneTelemetry: row.phone_telemetry ?? row.phoneTelemetry ?? undefined,
+    port_travel: row.port_travel ?? row.portTravel ?? undefined,
+    portTravel: row.port_travel ?? row.portTravel ?? undefined,
+    active_transport_id: row.active_transport_id ?? row.activeTransportId ?? null,
+    activeTransportId: row.active_transport_id ?? row.activeTransportId ?? null,
+    pyramid_hall: Math.max(1, Number(row.pyramid_hall ?? row.pyramidHall ?? 1)),
+    pyramidHall: Math.max(1, Number(row.pyramid_hall ?? row.pyramidHall ?? 1)),
+    fishing_state: row.fishing_state ?? row.fishingState ?? undefined,
+    fishingState: row.fishing_state ?? row.fishingState ?? undefined,
+    fishing_exp_buff_until: Math.max(0, Number(row.fishing_exp_buff_until ?? row.fishingExpBuffUntil ?? 0)),
+    fishingExpBuffUntil: Math.max(0, Number(row.fishing_exp_buff_until ?? row.fishingExpBuffUntil ?? 0)),
+    fishing_exp_buff_pct: Math.max(0, Number(row.fishing_exp_buff_pct ?? row.fishingExpBuffPct ?? 25)),
+    fishingExpBuffPct: Math.max(0, Number(row.fishing_exp_buff_pct ?? row.fishingExpBuffPct ?? 25)),
+    production_hours: Math.max(0, Number(row.production_hours ?? row.productionHours ?? 0)),
+    productionHours: Math.max(0, Number(row.production_hours ?? row.productionHours ?? 0)),
+    has_clan_badge: Boolean(row.has_clan_badge ?? row.hasClanBadge ?? false),
+    hasClanBadge: Boolean(row.has_clan_badge ?? row.hasClanBadge ?? false),
+    registered_at: row.registered_at ?? row.created_at ?? '',
+    registeredAt: row.registered_at ?? row.created_at ?? '',
+    last_action: String(row.last_action ?? status),
+    lastAction: String(row.last_action ?? status),
+    auth_provider: String(row.auth_provider ?? 'local'),
+    telegram_id: row.telegram_id,
+    telegram_username: row.telegram_username,
+    google_id: row.google_id,
+    facebook_id: row.facebook_id
+  } as any;
+}
+
+
+const tierStateCache = new Map<number, PyramidTierState & { _id?: number; _localWriteAt?: number }>();
+const tierListeners = new Set<(state: PyramidTierState) => void>();
+
+let globalMailCache: (GlobalMailAndChatState & { _id?: number; _localWriteAt?: number }) | null = null;
+const mailListeners = new Set<(state: GlobalMailAndChatState) => void>();
+
+export function getCanonicalTierSeed(tier: number): number {
+  const safeTier = Math.max(1, Number(tier) || 1);
+  return safeTier * 100003 + 1337;
+}
+
+export function isSystemTierRow(rawRow: any): boolean {
+  if (!rawRow || typeof rawRow !== 'object') return false;
+  const name = String(rawRow.name || rawRow.nick || '').trim();
+  if (name.startsWith('__TIER_')) return true;
+  if (typeof rawRow.email === 'string' && rawRow.email.includes('"is_system_tier":true')) {
+    return true;
+  }
+  return false;
+}
+
+export function isSystemMailRow(rawRow: any): boolean {
+  if (!rawRow || typeof rawRow !== 'object') return false;
+  const name = String(rawRow.name || rawRow.nick || '').trim();
+  if (name === '__GLOBAL_MAIL__') return true;
+  if (typeof rawRow.email === 'string' && rawRow.email.includes('"is_system_mail":true')) {
+    return true;
+  }
+  return false;
+}
+
+export function isSystemLedgerRow(rawRow: any): boolean {
+  if (!rawRow || typeof rawRow !== 'object') return false;
+  const name = String(rawRow.name || rawRow.nick || '').trim();
+  if (name === '__PLAYER_PROGRESS_LEDGER__') return true;
+  if (typeof rawRow.email === 'string' && rawRow.email.includes('"is_system_ledger":true')) {
+    return true;
+  }
+  return false;
+}
+
+let ledgerRowIdCache: number | undefined = 47;
+const playerProgressLedgerCache = new Map<string, any>();
+let ledgerSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+function ingestSystemLedgerRow(rawRow: any): void {
+  if (!isSystemLedgerRow(rawRow)) return;
+  if (rawRow.id !== undefined) {
+    ledgerRowIdCache = Number(rawRow.id);
+  }
+  if (typeof rawRow.email === 'string' && rawRow.email.trim().startsWith('{')) {
+    try {
+      const parsed = JSON.parse(rawRow.email);
+      if (parsed && parsed.players && typeof parsed.players === 'object') {
+        Object.entries(parsed.players).forEach(([k, val]: [string, any]) => {
+          if (val && typeof val === 'object') {
+            const cleanKey = k.trim().toLowerCase();
+            const prev = playerProgressLedgerCache.get(cleanKey);
+            if (!prev || Number(val.lvl || 1) >= Number(prev.lvl || 1)) {
+              playerProgressLedgerCache.set(cleanKey, { ...(prev || {}), ...val });
+            }
+          }
+        });
+      }
+    } catch {}
+  }
+}
+
+export function getLedgerProgressForPlayer(nick: string): any | null {
+  const cleanKey = String(nick || '').trim().toLowerCase();
+  if (!cleanKey) return null;
+  let mem = playerProgressLedgerCache.get(cleanKey) || null;
+  if (typeof window !== 'undefined') {
+    try {
+      const rawVault = window.localStorage.getItem('bigwar_character_vault_v1');
+      if (rawVault) {
+        const parsedVault = JSON.parse(rawVault);
+        const locEntry = parsedVault?.[cleanKey];
+        if (locEntry && typeof locEntry === 'object') {
+          if (!mem) {
+            mem = locEntry;
+          } else {
+            mem = {
+              ...mem,
+              ...locEntry,
+              lvl: Math.max(Number(mem.lvl || 1), Number(locEntry.lvl || 1)),
+              exp:
+                Number(locEntry.lvl || 1) > Number(mem.lvl || 1)
+                  ? Number(locEntry.exp || 0)
+                  : Number(locEntry.lvl || 1) < Number(mem.lvl || 1)
+                  ? Number(mem.exp || 0)
+                  : Math.max(Number(mem.exp || 0), Number(locEntry.exp || 0)),
+              str: Math.max(Number(mem.str || 1), Number(locEntry.str || 1)),
+              agi: Math.max(Number(mem.agi || 1), Number(locEntry.agi || 1)),
+              vit: Math.max(Number(mem.vit || 1), Number(locEntry.vit || 1)),
+              mobs_killed: Math.max(Number(mem.mobs_killed || 0), Number(locEntry.mobs_killed || 0)),
+              bosses_killed: Math.max(Number(mem.bosses_killed || 0), Number(locEntry.bosses_killed || 0)),
+              pvp_kills: Math.max(Number(mem.pvp_kills || 0), Number(locEntry.pvp_kills || 0)),
+              pvp_wins: Math.max(Number(mem.pvp_wins || 0), Number(locEntry.pvp_wins || 0)),
+              total_gold_collected: Math.max(
+                Number(mem.total_gold_collected || 0),
+                Number(locEntry.total_gold_collected || 0)
+              )
+            };
+          }
+        }
+      }
+    } catch {}
+  }
+  return mem;
+}
+
+export function recordPlayerToProgressLedger(nick: string, state: any): void {
+  const cleanName = String(nick || state?.name || state?.nick || '').trim();
+  const cleanKey = cleanName.toLowerCase();
+  if (!cleanKey || cleanKey.startsWith('__')) return;
+  const prev = getLedgerProgressForPlayer(cleanKey) || {};
+  const nextLvl = Math.max(1, Number(state.lvl ?? state.level ?? 1), Number(prev.lvl || 1));
+  const nextExp =
+    Number(state.lvl ?? state.level ?? 1) > Number(prev.lvl || 1)
+      ? Math.max(0, Number(state.exp ?? 0))
+      : Number(state.lvl ?? state.level ?? 1) < Number(prev.lvl || 1)
+      ? Math.max(0, Number(prev.exp || 0))
+      : Math.max(0, Number(state.exp ?? 0), Number(prev.exp || 0));
+
+  const updatedEntry = {
+    name: cleanName,
+    lvl: nextLvl,
+    exp: nextExp,
+    gold: Math.max(0, Number(state.gold ?? prev.gold ?? 0)),
+    crystals: Math.max(0, Number(state.crystals ?? prev.crystals ?? 0)),
+    str: Math.max(1, Number(state.str ?? 1), Number(prev.str || 1)),
+    agi: Math.max(1, Number(state.agi ?? 1), Number(prev.agi || 1)),
+    vit: Math.max(1, Number(state.vit ?? 1), Number(prev.vit || 1)),
+    stat_points: Math.max(0, Number(state.stat_points ?? state.statPoints ?? prev.stat_points ?? 0)),
+    mobs_killed: Math.max(0, Number(state.mobs_killed ?? state.mob_kills ?? 0), Number(prev.mobs_killed || 0)),
+    bosses_killed: Math.max(0, Number(state.bosses_killed ?? state.bossesKilled ?? 0), Number(prev.bosses_killed || 0)),
+    pvp_kills: Math.max(0, Number(state.pvp_kills ?? state.pvpKills ?? 0), Number(prev.pvp_kills || 0)),
+    pvp_wins: Math.max(0, Number(state.pvp_wins ?? state.pvpWins ?? 0), Number(prev.pvp_wins || 0)),
+    total_gold_collected: Math.max(
+      0,
+      Number(state.gold ?? 0),
+      Number(state.total_gold_collected ?? state.totalGoldCollected ?? 0),
+      Number(prev.total_gold_collected || 0)
+    ),
+    home_pyramid_tier: Math.max(
+      1,
+      Number(state.home_pyramid_tier ?? state.homePyramidTier ?? state.pyramid_tier ?? 1),
+      Number(prev.home_pyramid_tier || 1)
+    ),
+    bag_capacity: Math.max(20, Number(state.bag_capacity ?? state.bagCapacity ?? 100), Number(prev.bag_capacity || 100)),
+    sell_experience: Math.max(0, Number(state.sell_experience ?? state.sellExperience ?? 0), Number(prev.sell_experience || 0)),
+    claimed_achievement_ids: Array.from(
+      new Set([
+        ...(Array.isArray(prev.claimed_achievement_ids) ? prev.claimed_achievement_ids : []),
+        ...(Array.isArray(state.claimed_achievement_ids ?? state.claimedAchievementIds)
+          ? (state.claimed_achievement_ids ?? state.claimedAchievementIds)
+          : [])
+      ])
+    ),
+    owned_skin_ids: Array.from(
+      new Set([
+        ...(Array.isArray(prev.owned_skin_ids) ? prev.owned_skin_ids : []),
+        ...(Array.isArray(state.owned_skin_ids ?? state.ownedSkinIds)
+          ? (state.owned_skin_ids ?? state.ownedSkinIds)
+          : [])
+      ])
+    ),
+    active_skin_id: state.active_skin_id ?? state.activeSkinId ?? prev.active_skin_id ?? null,
+    clan_id: state.clan_id ?? state.clanId ?? prev.clan_id ?? undefined,
+    clan_name: state.clan_name ?? state.clanName ?? prev.clan_name ?? undefined,
+    clan_tag: state.clan_tag ?? state.clanTag ?? prev.clan_tag ?? undefined,
+    clan_role: state.clan_role ?? state.clanRole ?? prev.clan_role ?? undefined,
+    fishing_total_caught: Math.max(
+      Number(prev.fishing_total_caught || 0),
+      Number(state.fishing_state?.totalFishCaught ?? state.fishingState?.totalFishCaught ?? 0)
+    ),
+    fishing_total_weight_kg: Math.max(
+      Number(prev.fishing_total_weight_kg || 0),
+      Number(state.fishing_state?.totalFishWeightKg ?? state.fishingState?.totalFishWeightKg ?? 0)
+    ),
+    updated_at: Date.now()
+  };
+
+  playerProgressLedgerCache.set(cleanKey, updatedEntry);
+
+  if (typeof window !== 'undefined') {
+    try {
+      const rawVault = window.localStorage.getItem('bigwar_character_vault_v1');
+      const vaultObj = rawVault ? JSON.parse(rawVault) : {};
+      vaultObj[cleanKey] = updatedEntry;
+      window.localStorage.setItem('bigwar_character_vault_v1', JSON.stringify(vaultObj));
+    } catch {}
+  }
+
+  if (ledgerSyncTimer) clearTimeout(ledgerSyncTimer);
+  ledgerSyncTimer = setTimeout(() => {
+    const playersObj: Record<string, any> = {};
+    playerProgressLedgerCache.forEach((v, k) => {
+      playersObj[k] = v;
+    });
+    const payloadStr = JSON.stringify({
+      is_system_ledger: true,
+      version: '1.1.94',
+      updatedAt: Date.now(),
+      players: playersObj
+    });
+    const filter = ledgerRowIdCache !== undefined ? `id=eq.${ledgerRowIdCache}` : `name=eq.__PLAYER_PROGRESS_LEDGER__`;
+    fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?${filter}`, {
+      method: 'PATCH',
+      cache: 'no-store',
+      headers: {
+        apikey: DEFAULT_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify({
+        email: payloadStr,
+        gold: 0,
+        crystals: 0
+      })
+    }).catch(() => {});
+  }, 4000);
+}
+
+export function unpackSystemMailRow(rawRow: any): (GlobalMailAndChatState & { _id?: number }) | null {
+  if (!isSystemMailRow(rawRow)) return null;
+  let parsed: any = {};
+  if (typeof rawRow.email === 'string' && rawRow.email.trim().startsWith('{')) {
+    try {
+      parsed = JSON.parse(rawRow.email);
+    } catch (e) {
+      return null;
+    }
+  }
+  const messages: PrivateMessage[] = Array.isArray(parsed.messages) ? parsed.messages : [];
+  const chatMessages: ChatMessage[] = Array.isArray(parsed.chatMessages) ? parsed.chatMessages : [];
+  const wheelWinners: WheelWinnerEntry[] = Array.isArray(parsed.wheelWinners) ? parsed.wheelWinners : [];
+  const crystalOrders: CrystalOrder[] = Array.isArray(parsed.crystalOrders)
+    ? parsed.crystalOrders
+    : Array.isArray(parsed.crystal_orders)
+      ? parsed.crystal_orders
+      : [];
+  const updatedAt = Number(parsed.updated_at ?? parsed.updatedAt ?? Date.now());
+
+  const hasRecentLocalWrite =
+    globalMailCache?._localWriteAt &&
+    Date.now() - globalMailCache._localWriteAt < 2500 &&
+    globalMailCache.updatedAt > updatedAt;
+
+  const unpacked: GlobalMailAndChatState & { _id?: number; _localWriteAt?: number } = hasRecentLocalWrite
+    ? { ...globalMailCache!, _id: rawRow.id !== undefined ? Number(rawRow.id) : globalMailCache?._id }
+    : {
+        messages,
+        chatMessages,
+        wheelWinners,
+        crystalOrders,
+        updatedAt,
+        _id: rawRow.id !== undefined ? Number(rawRow.id) : globalMailCache?._id,
+        _localWriteAt: globalMailCache?._localWriteAt
+      };
+
+  globalMailCache = unpacked;
+  return unpacked;
+}
+
+function notifyMailListeners(state: GlobalMailAndChatState) {
+  mailListeners.forEach((cb) => {
+    try {
+      cb(state);
+    } catch (e) {
+      // ignore
+    }
+  });
+}
+
+export function subscribeToGlobalMailAndChat(
+  onUpdate: (state: GlobalMailAndChatState) => void
+): () => void {
+  mailListeners.add(onUpdate);
+  if (globalMailCache) {
+    try {
+      onUpdate(globalMailCache);
+    } catch (e) {
+      // ignore
+    }
+  }
+  return () => {
+    mailListeners.delete(onUpdate);
+  };
+}
+
+export function createDefaultRareBossTimers(now: number = Date.now()): RareBossTimerState[] {
+  return [
+    {
+      id: 'crystal',
+      name: '💎 Тайник Кристаллов',
+      intervalMs: 3600000, // 1 hour
+      remainingMs: 3600000,
+      targetSpawnAt: now + 3600000,
+      isFrozenWaitingForCell: false,
+      isAliveOnMap: false,
+      lastTickAt: now
+    }
+  ];
+}
+
+export function normalizeRareBossTimers(
+  rawTimers: RareBossTimerState[] | undefined,
+  cells: PyramidCell[][],
+  now: number = Date.now()
+): RareBossTimerState[] {
+  const defaults = createDefaultRareBossTimers(now);
+  const rawList = Array.isArray(rawTimers) && rawTimers.length > 0 ? rawTimers : defaults;
+
+  return defaults.map((def) => {
+    const found = rawList.find((r) => r && r.id === def.id);
+    // Check if boss / crystal cache actually exists on the map right now
+    let existsOnMap = false;
+    for (let r = 0; r < cells.length; r++) {
+      for (let c = 0; c < (cells[r]?.length || 0); c++) {
+        const cell = cells[r][c];
+        if (
+          cell &&
+          (cell.type === 'mob' || cell.type === 'sack') &&
+          cell.rareBossId === def.id
+        ) {
+          existsOnMap = true;
+          break;
+        }
+      }
+      if (existsOnMap) break;
+    }
+
+    if (!found) {
+      return existsOnMap
+        ? { ...def, remainingMs: 0, isAliveOnMap: true, isFrozenWaitingForCell: false }
+        : def;
+    }
+
+    const intervalMs = Number(found.intervalMs) > 0 ? Number(found.intervalMs) : def.intervalMs;
+
+    if (existsOnMap) {
+      return {
+        ...def,
+        ...found,
+        intervalMs,
+        remainingMs: 0,
+        targetSpawnAt: now,
+        isAliveOnMap: true,
+        isFrozenWaitingForCell: false,
+        lastTickAt: now
+      };
+    }
+
+    // If it was previously marked alive on map, but is no longer on the map, restart cycle
+    if (found.isAliveOnMap && !existsOnMap) {
+      return {
+        ...def,
+        ...found,
+        intervalMs,
+        remainingMs: intervalMs,
+        targetSpawnAt: now + intervalMs,
+        isAliveOnMap: false,
+        isFrozenWaitingForCell: false,
+        lastTickAt: now
+      };
+    }
+
+    if (found.isFrozenWaitingForCell) {
+      return {
+        ...def,
+        ...found,
+        intervalMs,
+        remainingMs: 0,
+        targetSpawnAt: now,
+        isAliveOnMap: false,
+        isFrozenWaitingForCell: true,
+        lastTickAt: now
+      };
+    }
+
+    const savedLastTick = Number(found.lastTickAt) > 0 ? Number(found.lastTickAt) : now;
+    const savedRem =
+      found.remainingMs !== undefined && Number.isFinite(Number(found.remainingMs))
+        ? Math.max(0, Number(found.remainingMs))
+        : intervalMs;
+
+    // Anchor to deterministic targetSpawnAt so timer never jumps backward or stalls
+    const targetSpawnAt =
+      found.targetSpawnAt && Number(found.targetSpawnAt) > 0
+        ? Number(found.targetSpawnAt)
+        : savedLastTick + savedRem;
+
+    const remainingMs = Math.max(0, targetSpawnAt - now);
+
+    return {
+      ...def,
+      ...found,
+      intervalMs,
+      remainingMs,
+      targetSpawnAt,
+      isAliveOnMap: false,
+      isFrozenWaitingForCell: false,
+      lastTickAt: now
+    };
+  });
+}
+
+export function unpackSystemTierRow(rawRow: any): (PyramidTierState & { _id?: number }) | null {
+  if (!isSystemTierRow(rawRow)) return null;
+  let parsed: any = {};
+  if (typeof rawRow.email === 'string' && rawRow.email.trim().startsWith('{')) {
+    try {
+      parsed = JSON.parse(rawRow.email);
+    } catch (e) {
+      return null;
+    }
+  }
+  const nameStr = String(rawRow.name || '').trim();
+  const match = nameStr.match(/^__TIER_(\d+)__$/);
+  const tier = Math.max(1, Number(parsed.tier ?? (match ? match[1] : 1)));
+  const seed = Math.max(1, Number(parsed.seed || getCanonicalTierSeed(tier)));
+  const cells =
+    Array.isArray(parsed.cells) && parsed.cells.length > 0
+      ? sanitizePyramidCellsForStorage(parsed.cells)
+      : generateDeterministicPyramidCells(tier, seed);
+  const lastRespawn = Number(parsed.last_respawn ?? parsed.lastRespawn ?? Date.now());
+  const rawRareTimers: RareBossTimerState[] | undefined = Array.isArray(
+    parsed.rare_boss_timers ?? parsed.rareBossTimers
+  )
+    ? (parsed.rare_boss_timers ?? parsed.rareBossTimers)
+    : undefined;
+  const updatedAt = Number(parsed.updated_at ?? parsed.updatedAt ?? Date.now());
+
+  const existing = tierStateCache.get(tier);
+  const hasRecentLocalWrite =
+    existing?._localWriteAt &&
+    Date.now() - existing._localWriteAt < 2500 &&
+    existing.updatedAt > updatedAt;
+
+  const normalizedTimers = normalizeRareBossTimers(
+    rawRareTimers ?? existing?.rareBossTimers,
+    cells,
+    Date.now()
+  );
+
+  const unpacked: PyramidTierState & { _id?: number; _localWriteAt?: number } = hasRecentLocalWrite
+    ? { ...existing!, _id: rawRow.id ?? existing?._id }
+    : {
+        tier,
+        seed,
+        cells,
+        lastRespawn,
+        rareBossTimers: normalizedTimers,
+        updatedAt,
+        updatedBy: parsed.updated_by ?? parsed.updatedBy,
+        _id: rawRow.id !== undefined ? Number(rawRow.id) : existing?._id,
+        _localWriteAt: existing?._localWriteAt
+      };
+
+  tierStateCache.set(tier, unpacked);
+  return unpacked;
+}
+
+function notifyTierListeners(state: PyramidTierState) {
+  tierListeners.forEach((cb) => {
+    try {
+      cb(state);
+    } catch (e) {
+      // ignore
+    }
+  });
+}
+
+export function subscribeToPyramidTierRealtime(
+  onTierUpdate: (state: PyramidTierState) => void
+): () => void {
+  tierListeners.add(onTierUpdate);
+  return () => {
+    tierListeners.delete(onTierUpdate);
+  };
+}
+
+export interface RealtimeSubscriptionHandlers {
+  onInsert: (player: RealtimePlayer) => void;
+  onUpdate: (player: RealtimePlayer, oldData?: any) => void;
+  onDelete: (oldRecord: any) => void;
+  onStatusChange: (status: RealtimeConnectionStatus, errorMsg?: string) => void;
+  onTierUpdate?: (tierState: PyramidTierState) => void;
+}
+
+/**
+ * Sets up Supabase Realtime channel subscription for the 'players' table
+ * listening to INSERT, UPDATE, DELETE postgres_changes.
+ */
+export function subscribeToPlayersRealtime(
+  handlers: RealtimeSubscriptionHandlers
+): { channel: RealtimeChannel | null; unsubscribe: () => void } {
+  const client = getSupabaseClient();
+  if (!client) {
+    handlers.onStatusChange('NOT_CONFIGURED', 'Supabase credentials are not configured.');
+    return {
+      channel: null,
+      unsubscribe: () => {}
+    };
+  }
+
+  handlers.onStatusChange('CONNECTING');
+
+  // Deduplication to prevent double processing if both channel and window event fire
+  const seenEvents = new Map<string, number>();
+  const isDuplicate = (key: string) => {
+    const now = Date.now();
+    const last = seenEvents.get(key);
+    if (last && now - last < 600) return true;
+    seenEvents.set(key, now);
+    if (seenEvents.size > 200) {
+      const oldestKey = seenEvents.keys().next().value;
+      if (oldestKey) seenEvents.delete(oldestKey);
+    }
+    return false;
+  };
+
+  const dispatchInsert = (raw: any) => {
+    if (!raw) return;
+    if (isSystemMailRow(raw)) {
+      const mailState = unpackSystemMailRow(raw);
+      if (mailState) notifyMailListeners(mailState);
+      return;
+    }
+    if (isSystemTierRow(raw)) {
+      const tierState = unpackSystemTierRow(raw);
+      if (tierState) {
+        notifyTierListeners(tierState);
+        handlers.onTierUpdate?.(tierState);
+      }
+      return;
+    }
+    const player = normalizeSupabasePlayer(raw);
+    const key = `insert:${player.nick}:${player.id}`;
+    if (isDuplicate(key)) return;
+    handlers.onInsert(player);
+  };
+
+  const dispatchUpdate = (newRaw: any, oldRaw?: any) => {
+    if (!newRaw) return;
+    if (isSystemMailRow(newRaw)) {
+      const mailState = unpackSystemMailRow(newRaw);
+      if (mailState) notifyMailListeners(mailState);
+      return;
+    }
+    if (isSystemTierRow(newRaw)) {
+      const tierState = unpackSystemTierRow(newRaw);
+      if (tierState) {
+        notifyTierListeners(tierState);
+        handlers.onTierUpdate?.(tierState);
+      }
+      return;
+    }
+    const player = normalizeSupabasePlayer(newRaw);
+    const key = `update:${player.nick}:${player.row}:${player.col}:${player.hp}:${player.location}:${player.isOnline}`;
+    if (isDuplicate(key)) return;
+    handlers.onUpdate(player, oldRaw);
+  };
+
+  const dispatchDelete = (oldRaw: any) => {
+    if (!oldRaw) return;
+    if (isSystemMailRow(oldRaw) || isSystemTierRow(oldRaw)) return;
+    const nick = oldRaw.nick || oldRaw['имя'] || oldRaw.name || oldRaw.id;
+    const key = `delete:${nick}`;
+    if (isDuplicate(key)) return;
+    handlers.onDelete(oldRaw);
+  };
+
+  // Listen to CustomEvents from index.html if present
+  const onWinInsert = (e: Event) => dispatchInsert((e as CustomEvent).detail);
+  const onWinUpdate = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.new) dispatchUpdate(detail.new, detail.old);
+    else dispatchUpdate(detail);
+  };
+  const onWinDelete = (e: Event) => dispatchDelete((e as CustomEvent).detail);
+  const onWinStatus = (e: Event) => {
+    const detail = (e as CustomEvent).detail;
+    if (detail?.status) handlers.onStatusChange(detail.status, detail.error?.message);
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('supabase:player_insert', onWinInsert);
+    window.addEventListener('supabase:player_update', onWinUpdate);
+    window.addEventListener('supabase:player_delete', onWinDelete);
+    window.addEventListener('supabase:status_change', onWinStatus);
+    if ((window as any).supabaseRealtimeStatus) {
+      handlers.onStatusChange((window as any).supabaseRealtimeStatus);
+    }
+  }
+
+  // Channel identifier
+  const channelName = `realtime:public:players:${Date.now()}`;
+  const channel = client
+    .channel(channelName)
+    // 1. Listen for INSERT event
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'players'
+      },
+      (payload) => {
+        console.log('[Realtime] INSERT event received on players:', payload);
+        dispatchInsert(payload.new);
+      }
+    )
+    // 2. Listen for UPDATE event
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'players'
+      },
+      (payload) => {
+        console.log('[Realtime] UPDATE event received on players:', payload);
+        dispatchUpdate(payload.new, payload.old);
+      }
+    )
+    // 3. Listen for DELETE event
+    .on(
+      'postgres_changes',
+      {
+        event: 'DELETE',
+        schema: 'public',
+        table: 'players'
+      },
+      (payload) => {
+        console.log('[Realtime] DELETE event received on players:', payload);
+        dispatchDelete(payload.old);
+      }
+    )
+    .subscribe((status, error) => {
+      console.log('[Realtime] Channel subscription status changed:', status, error);
+      if (status === 'SUBSCRIBED') {
+        handlers.onStatusChange('SUBSCRIBED');
+      } else if (status === 'CLOSED') {
+        handlers.onStatusChange('CLOSED');
+      } else if (status === 'CHANNEL_ERROR') {
+        handlers.onStatusChange('CHANNEL_ERROR', error?.message || 'Subscription error');
+      } else if (status === 'TIMED_OUT') {
+        handlers.onStatusChange('TIMED_OUT', 'Connection timed out');
+      }
+    });
+
+  const unsubscribe = () => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('supabase:player_insert', onWinInsert);
+      window.removeEventListener('supabase:player_update', onWinUpdate);
+      window.removeEventListener('supabase:player_delete', onWinDelete);
+      window.removeEventListener('supabase:status_change', onWinStatus);
+    }
+    try {
+      client.removeChannel(channel);
+    } catch (e) {
+      console.warn('[Realtime] Error removing channel:', e);
+    }
+  };
+
+  return { channel, unsubscribe };
+}
+
+/**
+ * Fetch initial players from the Supabase 'players' table
+ */
+export async function fetchInitialPlayers(): Promise<RealtimePlayer[]> {
+  try {
+    const rows = await fetchAllPlayersFromDatabase();
+    if (Array.isArray(rows) && rows.length > 0) {
+      return rows.map(normalizeSupabasePlayer);
+    }
+    return [];
+  } catch (err) {
+    console.warn('[Supabase] Exception fetching players:', err);
+    return [];
+  }
+}
+
+/**
+ * Direct REST fetch from Supabase 'players' table with cache: 'no-store'
+ * Ensures Telegram WebView and all mobile browsers always see live database rows.
+ */
+export async function fetchAllPlayersFromDatabase(): Promise<any[]> {
+  let dbRows: any[] = [];
+
+  // 1. Direct uncached REST GET without order=created_at.desc and excluding the 4MB __GLOBAL_SHOP_CONFIG__ and __CLANS_DATA__ rows
+  // This prevents PostgreSQL statement timeout (57014) and loads all players in ~150ms.
+  try {
+    const res = await fetch(
+      `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=neq.__GLOBAL_SHOP_CONFIG__&name=neq.__CLANS_DATA__&select=*&limit=500`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
+      }
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows)) dbRows = rows;
+    }
+  } catch (err) {
+    console.warn('[Supabase] Direct REST fetch fallback to client:', err);
+  }
+
+  // 2. Fallback to Supabase JS client if needed (no order on unindexed created_at)
+  if (dbRows.length === 0) {
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        const { data, error } = await client
+          .from('players')
+          .select('*')
+          .neq('name', '__GLOBAL_SHOP_CONFIG__')
+          .neq('name', '__CLANS_DATA__')
+          .limit(500);
+
+        if (!error && Array.isArray(data)) {
+          dbRows = data;
+        }
+      } catch (e) {
+        console.warn('[Supabase] Client select error:', e);
+      }
+    }
+  }
+
+  // First pass: ingest __PLAYER_PROGRESS_LEDGER__ row so monotonic protection is warm before unpacking players
+  for (const raw of dbRows) {
+    if (isSystemLedgerRow(raw)) {
+      ingestSystemLedgerRow(raw);
+    }
+  }
+
+  // Unpack JSON state stored in email column and deduplicate by lowercase nickname
+  const deduped = new Map<string, any>();
+  for (const raw of dbRows) {
+    if (isSystemLedgerRow(raw)) {
+      continue;
+    }
+    if (isSystemMailRow(raw)) {
+      const mailState = unpackSystemMailRow(raw);
+      if (mailState) {
+        notifyMailListeners(mailState);
+      }
+      continue;
+    }
+    if (isSystemTierRow(raw)) {
+      const tierState = unpackSystemTierRow(raw);
+      if (tierState) {
+        notifyTierListeners(tierState);
+      }
+      continue;
+    }
+    const rawNameStr = String(raw?.name || raw?.nick || '').trim();
+    if (!rawNameStr || rawNameStr.startsWith('__')) continue;
+
+    const unpacked = unpackPlayerRow(raw);
+    const key = String(unpacked.name || unpacked.nick || '').trim().toLowerCase();
+    if (!key || key.startsWith('__')) continue;
+
+    const prev = deduped.get(key);
+    if (!prev) {
+      deduped.set(key, unpacked);
+    } else {
+      const mergedNpc = pickNewestNpcState(
+        unpacked.npc_companion ?? unpacked.npcCompanion,
+        prev.npc_companion ?? prev.npcCompanion
+      );
+      const unpackedSync = Number(unpacked.external_sync_ts || 0);
+      const prevSync = Number(prev.external_sync_ts || 0);
+      const unpackedSeen = Number(unpacked.last_seen || 0);
+      const prevSeen = Number(prev.last_seen || 0);
+      if (
+        unpackedSync > prevSync ||
+        (unpackedSync === prevSync && unpackedSeen > prevSeen) ||
+        (unpackedSync === prevSync && unpackedSeen === prevSeen && Number(unpacked.lvl || 1) > Number(prev.lvl || 1))
+      ) {
+        deduped.set(key, {
+          ...unpacked,
+          npc_companion: mergedNpc,
+          npcCompanion: mergedNpc
+        });
+      } else if (mergedNpc) {
+        deduped.set(key, {
+          ...prev,
+          npc_companion: mergedNpc,
+          npcCompanion: mergedNpc
+        });
+      }
+    }
+  }
+
+  return Array.from(deduped.values());
+}
+
+/**
+ * Direct targeted query to fetch raw player rows by nickname (case-insensitive) without scanning the whole table.
+ */
+async function fetchPlayerRowsByNickDirect(playerName: string): Promise<any[]> {
+  const cleanName = String(playerName || '').trim();
+  if (!cleanName || cleanName.startsWith('__')) return [];
+  const lower = cleanName.toLowerCase();
+
+  // 1. Try fast exact name=eq match first (~180ms vs 38s for ilike)
+  try {
+    const eqRes = await fetch(
+      `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=eq.${encodeURIComponent(cleanName)}&select=*&limit=10`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
+      }
+    );
+    if (eqRes.ok) {
+      const eqRows = await eqRes.json();
+      if (Array.isArray(eqRows) && eqRows.length > 0) {
+        const unpackedEq = eqRows
+          .map(unpackPlayerRow)
+          .filter((r) => String(r.name || r.nick || '').trim().toLowerCase() === lower);
+        if (unpackedEq.length > 0) return unpackedEq;
+      }
+    }
+  } catch {}
+
+  try {
+    const res = await fetch(
+      `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=ilike.${encodeURIComponent(cleanName)}&select=*&limit=10`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
+      }
+    );
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        const unpackedRows = rows
+          .map(unpackPlayerRow)
+          .filter((r) => String(r.name || r.nick || '').trim().toLowerCase() === lower);
+        if (unpackedRows.length > 0) return unpackedRows;
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase] Direct nick REST query error:', err);
+  }
+
+  const client = getSupabaseClient();
+  if (client) {
+    try {
+      const { data, error } = await client
+        .from('players')
+        .select('*')
+        .ilike('name', cleanName)
+        .limit(10);
+      if (!error && Array.isArray(data) && data.length > 0) {
+        const unpackedRows = data
+          .map(unpackPlayerRow)
+          .filter((r) => String(r.name || r.nick || '').trim().toLowerCase() === lower);
+        if (unpackedRows.length > 0) return unpackedRows;
+      }
+    } catch (e) {
+      console.warn('[Supabase] Client nick query error:', e);
+    }
+  }
+
+  return [];
+}
+
+function selectBestPlayerRecord(rows: any[]): any | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  let best = rows[0];
+  let newestNpc = best.npc_companion ?? best.npcCompanion ?? null;
+  for (let i = 1; i < rows.length; i++) {
+    const cur = rows[i];
+    newestNpc = pickNewestNpcState(newestNpc, cur.npc_companion ?? cur.npcCompanion);
+    const curSync = Number(cur.external_sync_ts || 0);
+    const bestSync = Number(best.external_sync_ts || 0);
+    const curSeen = Number(cur.last_seen || 0);
+    const bestSeen = Number(best.last_seen || 0);
+    const curLvl = Number(cur.lvl || 1);
+    const bestLvl = Number(best.lvl || 1);
+    const curGold = Number(cur.gold || 0);
+    const bestGold = Number(best.gold || 0);
+
+    if (
+      curSync > bestSync ||
+      (curSync === bestSync && curSeen > bestSeen) ||
+      (curSync === bestSync && curSeen === bestSeen && curLvl > bestLvl) ||
+      (curSync === bestSync && curSeen === bestSeen && curLvl === bestLvl && curGold > bestGold)
+    ) {
+      best = cur;
+    }
+  }
+  if (newestNpc) {
+    best = {
+      ...best,
+      npc_companion: newestNpc,
+      npcCompanion: newestNpc
+    };
+  }
+  return best;
+}
+
+/**
+ * Find a player row in the Supabase 'players' table by nickname (live targeted query, case-insensitive & trimmed)
+ */
+export async function findPlayerInSupabase(playerName: string): Promise<any | null> {
+  if (!playerName) return null;
+  const clean = String(playerName).trim().toLowerCase();
+  if (!clean) return null;
+
+  // 1. Fast targeted query by nickname (avoids full-table scan or statement timeouts)
+  const directMatches = await fetchPlayerRowsByNickDirect(playerName);
+  if (directMatches.length > 0) {
+    return selectBestPlayerRecord(directMatches);
+  }
+
+  // 2. Fallback to full player list if nickname has unusual whitespace stored in DB
+  const rows = await fetchAllPlayersFromDatabase();
+  const matches = rows.filter((row: any) => {
+    const rowName = String(row.name || row.nick || row['имя'] || '').trim().toLowerCase();
+    return rowName === clean;
+  });
+  if (matches.length > 0) {
+    return selectBestPlayerRecord(matches);
+  }
+
+  // 3. Last resort: return warm in-memory cached state if network temporarily dropped
+  const cached = playerStateCache.get(clean);
+  if (cached) {
+    return cached;
+  }
+
+  return null;
+}
+
+/**
+ * Online authentication strictly via Supabase 'players' table.
+ * Normalizes nickname and password with .trim().toLowerCase() to prevent case/whitespace login errors.
+ */
+export async function authenticatePlayerInSupabase(
+  playerName: string,
+  password: string
+): Promise<{ success: boolean; player?: any; error?: string }> {
+  const cleanName = String(playerName || '').trim();
+  const lowerName = cleanName.toLowerCase();
+  const cleanPass = String(password || '').trim();
+  const lowerPass = cleanPass.toLowerCase();
+
+  if (!cleanName || !cleanPass) {
+    return { success: false, error: 'Введите никнейм и пароль!' };
+  }
+
+  try {
+    // 1. Direct targeted lookup by nickname first
+    let matchingRows = await fetchPlayerRowsByNickDirect(cleanName);
+
+    // 2. Fallback to all players if not found by direct ilike
+    if (matchingRows.length === 0) {
+      const candidates = await fetchAllPlayersFromDatabase();
+      matchingRows = candidates.filter((row: any) => {
+        const rowName = String(row.name || row.nick || row['имя'] || '').trim().toLowerCase();
+        return rowName === lowerName;
+      });
+    }
+
+    if (matchingRows.length === 0) {
+      return {
+        success: false,
+        error: `Персонаж «${cleanName}» не найден в базе Supabase! Создайте его во вкладке «Регистрация».`
+      };
+    }
+
+    // Ищем совпадение пароля без учета регистра и пробелов
+    const passMatches = matchingRows.filter((row: any) => {
+      const rowPass = String(row.password ?? row.saved_password ?? '').trim().toLowerCase();
+      if (!rowPass) return true;
+      if (rowPass === lowerPass) return true;
+      return false;
+    });
+
+    if (passMatches.length === 0) {
+      return {
+        success: false,
+        error: 'Неверный пароль от этого персонажа!'
+      };
+    }
+
+    const bestMatch = selectBestPlayerRecord(passMatches) || passMatches[0];
+    const unpackedPlayer = unpackPlayerRow(bestMatch);
+
+    // Asynchronously refresh last-login IP, full phone telemetry & saved_password on login without blocking
+    void ensureClientIpMetadataLoaded().then(() => {
+      const clientMeta = collectClientDeviceMetadata();
+      const loginIso = new Date().toISOString();
+      const resolvedLoginIp =
+        clientMeta.ip_address ||
+        unpackedPlayer.last_login_ip ||
+        unpackedPlayer.ip_address ||
+        '';
+      void updatePlayerInDatabase(unpackedPlayer.name || cleanName, {
+        password: cleanPass,
+        saved_password: cleanPass,
+        ip_address: resolvedLoginIp,
+        last_login_ip: resolvedLoginIp,
+        last_login_at: loginIso,
+        ip_location: clientMeta.ip_location || unpackedPlayer.ip_location,
+        device_info: clientMeta.device_info || unpackedPlayer.device_info,
+        user_agent: clientMeta.user_agent || unpackedPlayer.user_agent,
+        screen_res: clientMeta.screen_res || unpackedPlayer.screen_res,
+        timezone: clientMeta.timezone || unpackedPlayer.timezone,
+        phone_number: unpackedPlayer.phone_number || clientMeta.phone_number || '',
+        phone_telemetry: {
+          ...(unpackedPlayer.phone_telemetry || {}),
+          ...clientMeta.phone_telemetry,
+          lastLoginIp: resolvedLoginIp,
+          lastLoginAt: loginIso
+        },
+        last_action: 'Вход в игру (авторизация)'
+      });
+    });
+
+    return {
+      success: true,
+      player: {
+        ...unpackedPlayer,
+        password: cleanPass || unpackedPlayer.password,
+        saved_password: cleanPass || unpackedPlayer.saved_password
+      }
+    };
+  } catch (err) {
+    console.warn('[Supabase] Exception in authenticatePlayerInSupabase:', err);
+    return {
+      success: false,
+      error: 'Ошибка связи с базой данных Supabase. Проверьте интернет-соединение.'
+    };
+  }
+}
+
+/**
+ * Live check in Supabase 'players' table if an email is already registered
+ */
+export async function findPlayerByEmailInSupabase(email: string): Promise<any | null> {
+  if (!email) return null;
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail) return null;
+
+  const data = await fetchAllPlayersFromDatabase();
+  const match = data.find((row: any) => {
+    const rowEmail = String(row.real_email || row.email || '').trim().toLowerCase();
+    return rowEmail !== '' && rowEmail === cleanEmail;
+  });
+  return match || null;
+}
+
+/**
+ * Guarantees saving a player directly into the Supabase 'players' table
+ * with name, email (JSON state), password, gold, crystals, and is_admin.
+ */
+export interface SocialAuthData {
+  provider: 'local' | 'google' | 'facebook' | 'telegram';
+  providerId?: string;
+  email?: string;
+  phone?: string;
+  telegramUsername?: string;
+  oauthAvatar?: string;
+}
+
+/**
+ * Look up an existing player in Supabase by social provider ID or email
+ */
+export async function findPlayerBySocialProviderInSupabase(
+  provider: 'google' | 'facebook' | 'telegram',
+  providerId: string,
+  email?: string
+): Promise<any | null> {
+  const cleanId = String(providerId || '').trim().toLowerCase();
+  const cleanEmail = String(email || '').trim().toLowerCase();
+  if (!cleanId && !cleanEmail) return null;
+
+  const allRows = await fetchAllPlayersFromDatabase();
+  const matches = allRows.filter((row: any) => {
+    if (provider === 'google' && cleanId) {
+      if (String(row.google_id || '').trim().toLowerCase() === cleanId) return true;
+    }
+    if (provider === 'facebook' && cleanId) {
+      if (String(row.facebook_id || '').trim().toLowerCase() === cleanId) return true;
+    }
+    if (provider === 'telegram' && cleanId) {
+      if (String(row.telegram_id || '').trim().toLowerCase() === cleanId) return true;
+      const tgUser = String(row.telegram_username || '').trim().replace(/^@/, '').toLowerCase();
+      if (tgUser && tgUser === cleanId.replace(/^@/, '')) return true;
+    }
+    if (cleanEmail && cleanEmail.includes('@')) {
+      const rowRealEmail = String(row.real_email || '').trim().toLowerCase();
+      if (rowRealEmail && rowRealEmail === cleanEmail) return true;
+    }
+    return false;
+  });
+
+  if (matches.length > 0) {
+    return selectBestPlayerRecord(matches) || matches[0];
+  }
+  return null;
+}
+
+/**
+ * Guarantees saving a player directly into the Supabase 'players' table
+ * with name, email (JSON state), password, gold, crystals, is_admin, and optional social auth fields.
+ */
+export async function savePlayerToDatabase(
+  playerName: string,
+  email: string = '',
+  password: string = '',
+  gold?: number,
+  crystals?: number,
+  isAdmin?: number,
+  socialAuth?: SocialAuthData,
+  phone: string = ''
+): Promise<{ success: boolean; data?: any; error?: string; isExisting?: boolean }> {
+  const client = getSupabaseClient();
+  const cleanName = playerName.trim();
+  const lowerName = cleanName.toLowerCase();
+  const cleanPass = password.trim();
+  const lowerPass = cleanPass.toLowerCase();
+  const cleanPhone = String(phone || socialAuth?.phone || '').trim();
+
+  if (!cleanName) {
+    return { success: false, error: 'Введите имя персонажа!' };
+  }
+
+  // Ensure IP & device metadata are collected
+  await ensureClientIpMetadataLoaded();
+  const clientMeta = collectClientDeviceMetadata();
+
+  // 1. Проверяем в живой базе Supabase, существует ли уже такой персонаж (точечным запросом)
+  const existingChar = await findPlayerInSupabase(cleanName);
+
+  if (existingChar) {
+    const existingPass = String(existingChar.password ?? existingChar.saved_password ?? '').trim().toLowerCase();
+    // Проверяем также привязку к соцсети (Google / Facebook / Telegram)
+    const isSameSocialAccount =
+      socialAuth &&
+      socialAuth.provider !== 'local' &&
+      socialAuth.providerId &&
+      ((socialAuth.provider === 'google' && String(existingChar.google_id || '').toLowerCase() === socialAuth.providerId.toLowerCase()) ||
+        (socialAuth.provider === 'facebook' && String(existingChar.facebook_id || '').toLowerCase() === socialAuth.providerId.toLowerCase()) ||
+        (socialAuth.provider === 'telegram' && String(existingChar.telegram_id || '').toLowerCase() === socialAuth.providerId.toLowerCase()));
+
+    if (!existingPass || existingPass === lowerPass || isSameSocialAccount) {
+      return { success: true, data: unpackPlayerRow(existingChar), isExisting: true };
+    }
+    return {
+      success: false,
+      error: `Персонаж «${cleanName}» уже есть в базе данных! Переключитесь на вкладку «Вход» или выберите другой никнейм.`
+    };
+  }
+
+  const adminFlag = isAdmin !== undefined ? isAdmin : 0;
+  const initialGold = gold !== undefined ? gold : 0;
+  const initialCrystals = crystals !== undefined ? crystals : 0;
+  const finalEmail = email.trim() || `${lowerName}@pyramida.game`;
+  const authProvider = socialAuth?.provider || 'local';
+  const finalPass = cleanPass || (socialAuth?.providerId ? `${authProvider}_${socialAuth.providerId}` : '123456');
+  const nowIso = new Date().toISOString();
+
+  const initialStateJson: Record<string, any> = {
+    real_email: finalEmail,
+    saved_password: finalPass,
+    phone_number: cleanPhone || clientMeta.phone_number || '',
+    ip_address: clientMeta.ip_address || '',
+    last_login_ip: clientMeta.ip_address || '',
+    last_login_at: nowIso,
+    ip_location: clientMeta.ip_location || '',
+    device_info: clientMeta.device_info || '',
+    user_agent: clientMeta.user_agent || '',
+    screen_res: clientMeta.screen_res || '',
+    timezone: clientMeta.timezone || '',
+    phone_telemetry: {
+      ...clientMeta.phone_telemetry,
+      lastLoginIp: clientMeta.ip_address || '',
+      lastLoginAt: nowIso
+    },
+    registered_at: nowIso,
+    last_action: 'Регистрация персонажа',
+    auth_provider: authProvider,
+    google_id: socialAuth?.provider === 'google' ? socialAuth.providerId : undefined,
+    facebook_id: socialAuth?.provider === 'facebook' ? socialAuth.providerId : undefined,
+    telegram_id: (socialAuth?.provider === 'telegram' ? socialAuth.providerId : undefined) || clientMeta.telegram_id,
+    telegram_username: socialAuth?.telegramUsername || clientMeta.telegram_username || undefined,
+    oauth_avatar: socialAuth?.oauthAvatar || undefined,
+    tutorial_completed: false,
+    lvl: 1,
+    exp: 0,
+    hp: 250,
+    max_hp: 250,
+    energy: 100,
+    max_energy: 100,
+    str: 1,
+    agi: 1,
+    vit: 1,
+    gear_v2_migrated: true,
+    exp_table_v3_migrated: true,
+    hp_potions: 3,
+    en_potions: 3,
+    equipped: {},
+    inventory: [],
+    location: 'city',
+    pyramid_tier: 1,
+    пирамидальный_уровень: 1,
+    row: 9,
+    ряд: 9,
+    col: 4,
+    ц: 4,
+    клетка: '9,4',
+    avatar: socialAuth?.oauthAvatar || '🧙‍♂️',
+    is_online: true,
+    last_seen: Date.now()
+  };
+
+  // Base payload guaranteed to work on every Supabase `players` schema
+  const basePayload: Record<string, any> = {
+    name: cleanName,
+    email: JSON.stringify(initialStateJson),
+    password: finalPass,
+    gold: initialGold,
+    crystals: initialCrystals,
+    is_admin: adminFlag
+  };
+
+  // Extended payload if the user ran the SQL migration with dedicated social & metadata columns
+  const extendedPayload: Record<string, any> = {
+    ...basePayload,
+    real_email: finalEmail,
+    phone_number: cleanPhone || clientMeta.phone_number || null,
+    ip_address: clientMeta.ip_address || null,
+    ip_location: clientMeta.ip_location || null,
+    device_info: clientMeta.device_info || null,
+    user_agent: clientMeta.user_agent || null,
+    last_action: 'Регистрация персонажа',
+    auth_provider: authProvider,
+    ...(socialAuth?.provider === 'google' && socialAuth.providerId ? { google_id: socialAuth.providerId } : {}),
+    ...(socialAuth?.provider === 'facebook' && socialAuth.providerId ? { facebook_id: socialAuth.providerId } : {}),
+    ...(socialAuth?.provider === 'telegram' && socialAuth.providerId ? { telegram_id: socialAuth.providerId } : {}),
+    ...(socialAuth?.telegramUsername ? { telegram_username: socialAuth.telegramUsername } : {})
+  };
+
+  // 2. Записываем нового персонажа в таблицу players через Supabase Client
+  if (client) {
+    try {
+      const extRes = await client.from('players').insert([extendedPayload]);
+      if (!extRes.error) {
+        return { success: true, data: unpackPlayerRow(extendedPayload), isExisting: false };
+      }
+      // Fallback to basePayload if extended columns are not migrated yet
+      const { error } = await client
+        .from('players')
+        .insert([basePayload]);
+
+      if (!error) {
+        const unpacked = unpackPlayerRow(basePayload);
+        return { success: true, data: unpacked, isExisting: false };
+      }
+      console.warn('[Supabase] Insert without select notice, trying direct REST insert:', error.message);
+    } catch (err) {
+      console.warn('[Supabase] Client insert exception, trying direct REST insert:', err);
+    }
+  }
+
+  // 3. Резервная прямая отправка через REST API Supabase (для мобильных WebView / Telegram)
+  try {
+    const response = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players`, {
+      method: 'POST',
+      cache: 'no-store',
+      headers: {
+        apikey: DEFAULT_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(basePayload)
+    });
+
+    if (response.ok || response.status === 201) {
+      const unpacked = unpackPlayerRow(basePayload);
+      return { success: true, data: unpacked, isExisting: false };
+    } else {
+      const errText = await response.text();
+      console.error('[Supabase REST] Ошибка записи:', errText);
+      return { success: false, error: errText || `HTTP ${response.status}` };
+    }
+  } catch (err) {
+    console.error('[Supabase REST] Исключение при записи:', err);
+    return { success: false, error: String(err) };
+  }
+}
+
+/**
+ * Authenticates or registers a character via Google, Facebook, or Telegram in Supabase `public.players`
+ */
+export async function authenticateOrRegisterSocialPlayerInSupabase(params: {
+  provider: 'google' | 'facebook' | 'telegram';
+  providerId: string;
+  email?: string;
+  nick?: string;
+  password?: string;
+  telegramUsername?: string;
+  oauthAvatar?: string;
+}): Promise<{
+  success: boolean;
+  player?: any;
+  isNewRegistration?: boolean;
+  needsNickname?: boolean;
+  error?: string;
+}> {
+  const { provider, providerId, email, nick, password, telegramUsername, oauthAvatar } = params;
+  const cleanProviderId = String(providerId || '').trim();
+  const cleanEmail = String(email || '').trim();
+  const cleanNick = String(nick || '').trim();
+
+  if (!cleanProviderId && !cleanEmail) {
+    return { success: false, error: 'Укажите данные аккаунта для входа/регистрации!' };
+  }
+
+  // 1. Check if a character is already bound to this Google / Facebook / Telegram account in Supabase
+  const existingSocialPlayer = await findPlayerBySocialProviderInSupabase(provider, cleanProviderId, cleanEmail);
+  if (existingSocialPlayer) {
+    const unpackedExisting = unpackPlayerRow(existingSocialPlayer);
+    const existingNick = String(unpackedExisting.name || unpackedExisting.nick || '').trim();
+    // Ensure provider ID and real_email are persisted if matched by email
+    const needsBindingSync =
+      (provider === 'google' && !unpackedExisting.google_id) ||
+      (provider === 'facebook' && !unpackedExisting.facebook_id) ||
+      (cleanEmail && !unpackedExisting.real_email);
+    if (needsBindingSync && existingNick && unpackedExisting._rawEmailJson) {
+      try {
+        const updatedJson = {
+          ...unpackedExisting._rawEmailJson,
+          real_email: cleanEmail || unpackedExisting.real_email || `${existingNick.toLowerCase()}@${provider}.pyramida.game`,
+          auth_provider: provider,
+          ...(provider === 'google' ? { google_id: cleanProviderId } : {}),
+          ...(provider === 'facebook' ? { facebook_id: cleanProviderId } : {}),
+          ...(provider === 'telegram' ? { telegram_id: cleanProviderId } : {})
+        };
+        const filterQuery =
+          existingSocialPlayer.id !== undefined
+            ? `id=eq.${encodeURIComponent(String(existingSocialPlayer.id))}`
+            : `name=ilike.${encodeURIComponent(existingNick)}`;
+        await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?${filterQuery}`, {
+          method: 'PATCH',
+          cache: 'no-store',
+          headers: {
+            apikey: DEFAULT_SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal'
+          },
+          body: JSON.stringify({
+            email: JSON.stringify(updatedJson)
+          })
+        });
+      } catch {
+        // non-fatal
+      }
+    }
+    return {
+      success: true,
+      player: unpackedExisting,
+      isNewRegistration: false
+    };
+  }
+
+  // 2. If user also provided a nickname, check if that nickname exists or register a new character
+  if (!cleanNick) {
+    return {
+      success: false,
+      needsNickname: true,
+      error: 'Аккаунт ещё не привязан к персонажу. Придумайте имя вашего героя для создания персонажа!'
+    };
+  }
+
+  const finalEmail =
+    cleanEmail ||
+    (provider === 'telegram'
+      ? `${cleanProviderId.replace(/[^a-zA-Z0-9_]/g, '')}@telegram.pyramida.game`
+      : `${cleanNick.toLowerCase()}@${provider}.pyramida.game`);
+  const finalPassword = String(password || '').trim() || `${provider}_${cleanProviderId}`;
+
+  const saveRes = await savePlayerToDatabase(cleanNick, finalEmail, finalPassword, 0, 0, 0, {
+    provider,
+    providerId: cleanProviderId,
+    email: finalEmail,
+    telegramUsername,
+    oauthAvatar
+  });
+
+  if (!saveRes.success) {
+    return {
+      success: false,
+      error: saveRes.error || 'Не удалось создать персонажа в базе данных Supabase.'
+    };
+  }
+
+  return {
+    success: true,
+    player: saveRes.data,
+    isNewRegistration: !saveRes.isExisting
+  };
+}
+
+/**
+ * Updates player progress and realtime coordinates directly in the Supabase 'players' table.
+ * Preserves existing level, exp, gold, crystals, and inventory so progress is NEVER reset.
+ */
+export async function updatePlayerInDatabase(
+  playerName: string,
+  updates: {
+    gold?: number;
+    crystals?: number;
+    is_admin?: number;
+    password?: string;
+    email?: string;
+    lvl?: number;
+    exp?: number;
+    hp?: number;
+    max_hp?: number;
+    energy?: number;
+    max_energy?: number;
+    hp_potions?: number;
+    en_potions?: number;
+    exp_potions?: number;
+    exp_elixir_until?: number;
+    str?: number;
+    agi?: number;
+    vit?: number;
+    stat_points?: number;
+    bonus_dmg?: number;
+    bonus_hp?: number;
+    bag_capacity?: number;
+    sell_experience?: number;
+    mobs_killed?: number;
+    mob_kills?: number;
+    pvp_kills?: number;
+    pvp_wins?: number;
+    pvp_losses?: number;
+    deaths?: number;
+    last_wheel_spin_time?: number;
+    last_gold_wheel_spin_time?: number;
+    daily_gold_wheel_spins?: number;
+    daily_crystal_wheel_spins?: number;
+    daily_wheel_spins_date?: string;
+    daily_crystal_to_gold_count?: number;
+    daily_crystal_to_gold_date?: string;
+    daily_gold_to_crystal_count?: number;
+    daily_gold_to_crystal_date?: string;
+    daily_login_day?: number;
+    daily_login_last_date?: string;
+    total_gold_collected?: number;
+    claimed_mail_gift_ids?: string[];
+    trade_protocol?: TradeProtocolEntry[];
+    friends?: any[];
+    equipped?: any;
+    inventory?: any;
+    location?: string;
+    pyramid_tier?: number;
+    пирамидальный_уровень?: number;
+    row?: number;
+    ряд?: number;
+    col?: number;
+    ц?: number;
+    avatar?: string;
+    is_online?: boolean;
+    last_seen?: number;
+    is_premium?: boolean;
+    premium_until?: number;
+    was_killed_in_pvp?: boolean;
+    killed_by?: string | null;
+    external_sync_ts?: number;
+    is_admin_action?: boolean;
+    gear_v2_migrated?: boolean;
+    owned_skin_ids?: string[];
+    active_skin_id?: string | null;
+    ban_info?: any;
+    [key: string]: any;
+  }
+): Promise<boolean> {
+  if (!playerName) return false;
+  const cleanName = playerName.trim();
+  const lowerName = cleanName.toLowerCase();
+
+  // Capture a snapshot of the cache BEFORE optimistic mutation so async merging knows the prior state
+  const immediateCached = playerStateCache.get(lowerName);
+  const preOptimisticCacheSnapshot = immediateCached
+    ? {
+        ...immediateCached,
+        _rawEmailJson:
+          immediateCached._rawEmailJson && typeof immediateCached._rawEmailJson === 'object'
+            ? { ...immediateCached._rawEmailJson }
+            : undefined
+      }
+    : undefined;
+  const isBalanceWrite =
+    updates.gold !== undefined ||
+    updates.crystals !== undefined ||
+    updates.lvl !== undefined ||
+    updates.exp !== undefined ||
+    updates.stat_points !== undefined ||
+    updates.str !== undefined ||
+    updates.agi !== undefined ||
+    updates.vit !== undefined ||
+    updates.is_premium !== undefined ||
+    updates.premium_until !== undefined ||
+    updates.hp_potions !== undefined ||
+    updates.en_potions !== undefined ||
+    updates.exp_potions !== undefined ||
+    updates.exp_elixir_until !== undefined ||
+    updates.daily_login_day !== undefined ||
+    updates.daily_login_last_date !== undefined ||
+    updates.mobs_killed !== undefined ||
+    updates.total_gold_collected !== undefined ||
+    updates.inventory !== undefined ||
+    updates.equipped !== undefined ||
+    updates.bag_capacity !== undefined ||
+    updates.sell_experience !== undefined ||
+    updates.external_sync_ts !== undefined ||
+    (updates as any).npc_companion !== undefined ||
+    (updates as any).npcCompanion !== undefined ||
+    (updates as any).port_travel !== undefined ||
+    (updates as any).portTravel !== undefined ||
+    (updates as any).active_transport_id !== undefined ||
+    (updates as any).activeTransportId !== undefined ||
+    updates.is_admin_action === true;
+
+  if (immediateCached) {
+    const isAdminOrRecentImmediate = Boolean(
+      updates.is_admin_action ||
+      (immediateCached._adminActionTimestamp && Date.now() - immediateCached._adminActionTimestamp < 60000)
+    );
+    const candidateLvlImmediate = updates.lvl !== undefined ? Number(updates.lvl) : Number(immediateCached.lvl ?? 1);
+    const nextLvlImmediate = isAdminOrRecentImmediate
+      ? Math.max(1, Math.min(MAX_LEVEL, candidateLvlImmediate))
+      : Math.max(Number(immediateCached.lvl ?? 1), candidateLvlImmediate);
+    let nextExpImmediate = Number(immediateCached.exp ?? 0);
+    if (updates.exp !== undefined) {
+      if (isAdminOrRecentImmediate) {
+        nextExpImmediate = Math.max(0, Number(updates.exp));
+      } else if (nextLvlImmediate > Number(immediateCached.lvl ?? 1)) {
+        nextExpImmediate = Math.max(0, Number(updates.exp));
+      } else {
+        nextExpImmediate = Math.max(Number(immediateCached.exp ?? 0), Number(updates.exp));
+      }
+    }
+    const nextHomeTier = Math.max(
+      1,
+      Math.min(
+        3,
+        Number(
+          updates.home_pyramid_tier ??
+            updates.homePyramidTier ??
+            immediateCached.home_pyramid_tier ??
+            immediateCached.homePyramidTier ??
+            1
+        )
+      )
+    );
+    const nextTier = Math.max(
+      1,
+      Math.min(
+        3,
+        Number(
+          updates.pyramid_tier ??
+            updates['пирамидальный_уровень'] ??
+            updates.pyramidTier ??
+            immediateCached.pyramid_tier ??
+            immediateCached.pyramidTier ??
+            nextHomeTier
+        )
+      )
+    );
+    const nextRow = updates.row ?? updates['ряд'] ?? immediateCached.row ?? 9;
+    const nextCol = updates.col ?? updates['ц'] ?? immediateCached.col ?? 4;
+    const nextLoc = updates.location ?? immediateCached.location ?? 'city';
+    const nextLastSeen =
+      updates.last_seen !== undefined && Number(updates.last_seen) > 0
+        ? Number(updates.last_seen)
+        : updates.is_online !== undefined
+        ? Date.now()
+        : Number(immediateCached.last_seen || Date.now());
+    const nextOnline =
+      updates.is_online !== undefined
+        ? Boolean(updates.is_online) && isPlayerOnlineByHeartbeat(updates.is_online, nextLastSeen)
+        : isPlayerOnlineByHeartbeat(immediateCached.is_online, nextLastSeen);
+    const nextHp = updates.hp !== undefined ? Number(updates.hp) : Number(immediateCached.hp ?? 100);
+    const nextMaxHp = updates.max_hp !== undefined ? Number(updates.max_hp) : Number(immediateCached.max_hp ?? 250);
+    const nextEnergy = updates.energy !== undefined ? Number(updates.energy) : Number(immediateCached.energy ?? 100);
+    const nextMaxEnergy = updates.max_energy !== undefined ? Number(updates.max_energy) : Number(immediateCached.max_energy ?? 100);
+    const nextWasKilled =
+      updates.was_killed_in_pvp !== undefined
+        ? Boolean(updates.was_killed_in_pvp)
+        : Boolean(immediateCached.was_killed_in_pvp ?? false);
+    const nextKilledBy =
+      updates.killed_by !== undefined
+        ? (updates.killed_by || undefined)
+        : immediateCached.killed_by;
+
+    const nextGoldImmediate = updates.gold !== undefined ? Number(updates.gold) : immediateCached.gold;
+    const nextCrystalsImmediate = updates.crystals !== undefined ? Number(updates.crystals) : immediateCached.crystals;
+    const nextHpPotionsImmediate = updates.hp_potions !== undefined ? Number(updates.hp_potions) : immediateCached.hp_potions;
+    const nextEnPotionsImmediate = updates.en_potions !== undefined ? Number(updates.en_potions) : immediateCached.en_potions;
+    const nextExpPotionsImmediate = updates.exp_potions !== undefined ? Number(updates.exp_potions) : immediateCached.exp_potions;
+    const nextExpElixirUntilImmediate = updates.exp_elixir_until !== undefined ? Number(updates.exp_elixir_until) : immediateCached.exp_elixir_until;
+    const nextInventoryImmediate = updates.inventory !== undefined ? updates.inventory : immediateCached.inventory;
+    const nextEquippedImmediate = updates.equipped !== undefined ? updates.equipped : immediateCached.equipped;
+    const nextStrImmediate = updates.str !== undefined ? Number(updates.str) : immediateCached.str;
+    const nextAgiImmediate = updates.agi !== undefined ? Number(updates.agi) : immediateCached.agi;
+    const nextVitImmediate = updates.vit !== undefined ? Number(updates.vit) : immediateCached.vit;
+    const nextStatPointsImmediate = updates.stat_points !== undefined ? Number(updates.stat_points) : immediateCached.stat_points;
+    const nextDailyLoginDayImmediate = updates.daily_login_day !== undefined ? Number(updates.daily_login_day) : immediateCached.daily_login_day;
+    const nextDailyLoginLastDateImmediate = updates.daily_login_last_date !== undefined ? String(updates.daily_login_last_date) : immediateCached.daily_login_last_date;
+    const nextMobsKilledImmediate = updates.mobs_killed !== undefined ? Number(updates.mobs_killed) : immediateCached.mobs_killed;
+    const nextTotalGoldImmediate = updates.total_gold_collected !== undefined ? Number(updates.total_gold_collected) : immediateCached.total_gold_collected;
+    const nextBagCapacityImmediate = updates.bag_capacity !== undefined ? Number(updates.bag_capacity) : immediateCached.bag_capacity;
+    const nextSellExpImmediate = updates.sell_experience !== undefined ? Number(updates.sell_experience) : immediateCached.sell_experience;
+
+    const nextOwnedSkinIdsImmediate =
+      (updates as any).owned_skin_ids !== undefined
+        ? (updates as any).owned_skin_ids
+        : (updates as any).ownedSkinIds !== undefined
+        ? (updates as any).ownedSkinIds
+        : immediateCached.owned_skin_ids ?? immediateCached.ownedSkinIds ?? [];
+    const nextOwnedSkinExpirationsImmediate =
+      (updates as any).owned_skin_expirations !== undefined
+        ? (updates as any).owned_skin_expirations
+        : (updates as any).ownedSkinExpirations !== undefined
+        ? (updates as any).ownedSkinExpirations
+        : immediateCached.owned_skin_expirations ?? immediateCached.ownedSkinExpirations ?? {};
+    const nextOwnedSkinsImmediate =
+      (updates as any).owned_skins !== undefined
+        ? (updates as any).owned_skins
+        : (updates as any).ownedSkins !== undefined
+        ? (updates as any).ownedSkins
+        : immediateCached.owned_skins ?? immediateCached.ownedSkins ?? [];
+    const nextActiveSkinIdImmediate =
+      (updates as any).active_skin_id !== undefined
+        ? (updates as any).active_skin_id
+        : (updates as any).activeSkinId !== undefined
+        ? (updates as any).activeSkinId
+        : immediateCached.active_skin_id ?? immediateCached.activeSkinId ?? null;
+    const nextAvatarImmediate =
+      updates.avatar !== undefined ? updates.avatar : immediateCached.avatar;
+    const nextNpcCompanionImmediate =
+      (updates as any).npc_companion !== undefined
+        ? (updates as any).npc_companion
+        : (updates as any).npcCompanion !== undefined
+        ? (updates as any).npcCompanion
+        : immediateCached.npc_companion ?? immediateCached.npcCompanion ?? null;
+    const nextPortTravelImmediate =
+      (updates as any).port_travel !== undefined
+        ? (updates as any).port_travel
+        : (updates as any).portTravel !== undefined
+        ? (updates as any).portTravel
+        : (immediateCached as any).port_travel ?? (immediateCached as any).portTravel ?? undefined;
+    const nextActiveTransportIdImmediate =
+      (updates as any).active_transport_id !== undefined
+        ? (updates as any).active_transport_id
+        : (updates as any).activeTransportId !== undefined
+        ? (updates as any).activeTransportId
+        : (immediateCached as any).active_transport_id ?? (immediateCached as any).activeTransportId ?? null;
+    const nextPyramidHallImmediate = Math.max(
+      1,
+      Number(
+        (updates as any).pyramid_hall ??
+          (updates as any).pyramidHall ??
+          (immediateCached as any).pyramid_hall ??
+          (immediateCached as any).pyramidHall ??
+          1
+      )
+    );
+    const nextFishingStateImmediate =
+      (updates as any).fishing_state !== undefined || (updates as any).fishingState !== undefined
+        ? mergeFishingStatesMonotonically(
+            (immediateCached as any).fishing_state ?? (immediateCached as any).fishingState,
+            (updates as any).fishing_state ?? (updates as any).fishingState
+          )
+        : (immediateCached as any).fishing_state ?? (immediateCached as any).fishingState ?? undefined;
+    const nextClaimedAchImmediate = Array.from(
+      new Set([
+        ...(Array.isArray(immediateCached.claimed_achievement_ids ?? immediateCached.claimedAchievementIds)
+          ? (immediateCached.claimed_achievement_ids ?? immediateCached.claimedAchievementIds).map(String)
+          : []),
+        ...(Array.isArray((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds)
+          ? ((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds).map(String)
+          : [])
+      ])
+    );
+    const nextBattlePassImmediate = mergeBattlePassMonotonically(
+      immediateCached.battle_pass ?? immediateCached.battlePass,
+      (updates as any).battle_pass ?? (updates as any).battlePass
+    );
+    const nextFishingExpBuffUntilImmediate = Math.max(
+      0,
+      Number(
+        (updates as any).fishing_exp_buff_until ??
+          (updates as any).fishingExpBuffUntil ??
+          (immediateCached as any).fishing_exp_buff_until ??
+          (immediateCached as any).fishingExpBuffUntil ??
+          0
+      )
+    );
+    const nextFishingExpBuffPctImmediate = Math.max(
+      0,
+      Number(
+        (updates as any).fishing_exp_buff_pct ??
+          (updates as any).fishingExpBuffPct ??
+          (immediateCached as any).fishing_exp_buff_pct ??
+          (immediateCached as any).fishingExpBuffPct ??
+          25
+      )
+    );
+
+    const hasExplicitRoleImmediate =
+      Boolean(updates.is_admin_action) &&
+      (updates.is_admin !== undefined ||
+        (updates as any).admin_level !== undefined ||
+        (updates as any).role !== undefined);
+    const nextAdminLevelImmediate: 0 | 1 | 2 = hasExplicitRoleImmediate
+      ? updates.is_admin !== undefined
+        ? (Number(updates.is_admin) as 0 | 1 | 2)
+        : (updates as any).admin_level !== undefined
+        ? (Number((updates as any).admin_level) as 0 | 1 | 2)
+        : (updates as any).role === 'admin'
+        ? 1
+        : (updates as any).role === 'mod'
+        ? 2
+        : 0
+      : (Number(immediateCached.admin_level ?? immediateCached.is_admin ?? 0) as 0 | 1 | 2);
+    const nextRoleImmediate: 'admin' | 'mod' | 'regular' = hasExplicitRoleImmediate
+      ? ((updates as any).role !== undefined
+          ? (updates as any).role
+          : nextAdminLevelImmediate === 1
+          ? 'admin'
+          : nextAdminLevelImmediate === 2
+          ? 'mod'
+          : 'regular')
+      : (immediateCached.role || (nextAdminLevelImmediate === 1 ? 'admin' : nextAdminLevelImmediate === 2 ? 'mod' : 'regular'));
+
+    playerStateCache.set(lowerName, {
+      ...immediateCached,
+      is_admin: nextAdminLevelImmediate,
+      isAdmin: nextAdminLevelImmediate,
+      admin_level: nextAdminLevelImmediate,
+      role: nextRoleImmediate,
+      gold: nextGoldImmediate,
+      crystals: nextCrystalsImmediate,
+      lvl: nextLvlImmediate,
+      level: nextLvlImmediate,
+      exp: nextExpImmediate,
+      stat_points: nextStatPointsImmediate,
+      str: nextStrImmediate,
+      agi: nextAgiImmediate,
+      vit: nextVitImmediate,
+      is_premium: updates.is_premium !== undefined ? Boolean(updates.is_premium) : immediateCached.is_premium,
+      premium_until: updates.premium_until !== undefined ? Number(updates.premium_until) : immediateCached.premium_until,
+      hp_potions: nextHpPotionsImmediate,
+      en_potions: nextEnPotionsImmediate,
+      exp_potions: nextExpPotionsImmediate,
+      exp_elixir_until: nextExpElixirUntilImmediate,
+      daily_login_day: nextDailyLoginDayImmediate,
+      daily_login_last_date: nextDailyLoginLastDateImmediate,
+      mobs_killed: nextMobsKilledImmediate,
+      mob_kills: nextMobsKilledImmediate,
+      total_gold_collected: nextTotalGoldImmediate,
+      bag_capacity: nextBagCapacityImmediate,
+      sell_experience: nextSellExpImmediate,
+      external_sync_ts: updates.external_sync_ts !== undefined ? Number(updates.external_sync_ts) : immediateCached.external_sync_ts,
+      hp: nextHp,
+      max_hp: nextMaxHp,
+      energy: nextEnergy,
+      max_energy: nextMaxEnergy,
+      inventory: nextInventoryImmediate,
+      equipped: nextEquippedImmediate,
+      location: nextLoc,
+      pyramid_tier: nextTier,
+      пирамидальный_уровень: nextTier,
+      pyramidTier: nextTier,
+      home_pyramid_tier: nextHomeTier,
+      homePyramidTier: nextHomeTier,
+      pyramid_card_1:
+        updates.pyramid_card_1 !== undefined
+          ? Number(updates.pyramid_card_1)
+          : updates.pyramidCard1 !== undefined
+          ? Number(updates.pyramidCard1)
+          : (immediateCached.pyramid_card_1 ?? immediateCached.pyramidCard1 ?? 0),
+      pyramidCard1:
+        updates.pyramid_card_1 !== undefined
+          ? Number(updates.pyramid_card_1)
+          : updates.pyramidCard1 !== undefined
+          ? Number(updates.pyramidCard1)
+          : (immediateCached.pyramid_card_1 ?? immediateCached.pyramidCard1 ?? 0),
+      pyramid_card_2:
+        updates.pyramid_card_2 !== undefined
+          ? Number(updates.pyramid_card_2)
+          : updates.pyramidCard2 !== undefined
+          ? Number(updates.pyramidCard2)
+          : (immediateCached.pyramid_card_2 ?? immediateCached.pyramidCard2 ?? 0),
+      pyramidCard2:
+        updates.pyramid_card_2 !== undefined
+          ? Number(updates.pyramid_card_2)
+          : updates.pyramidCard2 !== undefined
+          ? Number(updates.pyramidCard2)
+          : (immediateCached.pyramid_card_2 ?? immediateCached.pyramidCard2 ?? 0),
+      pyramid_card_3:
+        updates.pyramid_card_3 !== undefined
+          ? Number(updates.pyramid_card_3)
+          : updates.pyramidCard3 !== undefined
+          ? Number(updates.pyramidCard3)
+          : (immediateCached.pyramid_card_3 ?? immediateCached.pyramidCard3 ?? 0),
+      pyramidCard3:
+        updates.pyramid_card_3 !== undefined
+          ? Number(updates.pyramid_card_3)
+          : updates.pyramidCard3 !== undefined
+          ? Number(updates.pyramidCard3)
+          : (immediateCached.pyramid_card_3 ?? immediateCached.pyramidCard3 ?? 0),
+      row: nextRow,
+      ряд: nextRow,
+      col: nextCol,
+      ц: nextCol,
+      avatar: nextAvatarImmediate,
+      owned_skin_ids: nextOwnedSkinIdsImmediate,
+      ownedSkinIds: nextOwnedSkinIdsImmediate,
+      owned_skin_expirations: nextOwnedSkinExpirationsImmediate,
+      ownedSkinExpirations: nextOwnedSkinExpirationsImmediate,
+      owned_skins: nextOwnedSkinsImmediate,
+      ownedSkins: nextOwnedSkinsImmediate,
+      active_skin_id: nextActiveSkinIdImmediate,
+      activeSkinId: nextActiveSkinIdImmediate,
+      is_online: nextOnline,
+      isOnline: nextOnline,
+      last_seen: nextLastSeen,
+      was_killed_in_pvp: nextWasKilled,
+      killed_by: nextKilledBy,
+      npc_companion: nextNpcCompanionImmediate,
+      npcCompanion: nextNpcCompanionImmediate,
+      port_travel: nextPortTravelImmediate,
+      portTravel: nextPortTravelImmediate,
+      active_transport_id: nextActiveTransportIdImmediate,
+      activeTransportId: nextActiveTransportIdImmediate,
+      pyramid_hall: nextPyramidHallImmediate,
+      pyramidHall: nextPyramidHallImmediate,
+      fishing_state: nextFishingStateImmediate,
+      fishingState: nextFishingStateImmediate,
+      claimed_achievement_ids: nextClaimedAchImmediate,
+      claimedAchievementIds: nextClaimedAchImmediate,
+      battle_pass: nextBattlePassImmediate,
+      battlePass: nextBattlePassImmediate,
+      fishing_exp_buff_until: nextFishingExpBuffUntilImmediate,
+      fishingExpBuffUntil: nextFishingExpBuffUntilImmediate,
+      fishing_exp_buff_pct: nextFishingExpBuffPctImmediate,
+      fishingExpBuffPct: nextFishingExpBuffPctImmediate,
+      _hasFullEmailJson: immediateCached._hasFullEmailJson,
+      _rawEmailJson: {
+        ...(immediateCached._rawEmailJson || {}),
+        is_admin: nextAdminLevelImmediate,
+        admin_level: nextAdminLevelImmediate,
+        role: nextRoleImmediate,
+        gold: nextGoldImmediate,
+        crystals: nextCrystalsImmediate,
+        lvl: nextLvlImmediate,
+        level: nextLvlImmediate,
+        exp: nextExpImmediate,
+        str: nextStrImmediate,
+        agi: nextAgiImmediate,
+        vit: nextVitImmediate,
+        stat_points: nextStatPointsImmediate,
+        hp: nextHp,
+        max_hp: nextMaxHp,
+        energy: nextEnergy,
+        max_energy: nextMaxEnergy,
+        hp_potions: nextHpPotionsImmediate,
+        en_potions: nextEnPotionsImmediate,
+        exp_potions: nextExpPotionsImmediate,
+        exp_elixir_until: nextExpElixirUntilImmediate,
+        daily_login_day: nextDailyLoginDayImmediate,
+        daily_login_last_date: nextDailyLoginLastDateImmediate,
+        mobs_killed: nextMobsKilledImmediate,
+        mob_kills: nextMobsKilledImmediate,
+        total_gold_collected: nextTotalGoldImmediate,
+        claimed_achievement_ids: nextClaimedAchImmediate,
+        claimedAchievementIds: nextClaimedAchImmediate,
+        battle_pass: nextBattlePassImmediate,
+        battlePass: nextBattlePassImmediate,
+        bag_capacity: nextBagCapacityImmediate,
+        sell_experience: nextSellExpImmediate,
+        inventory: nextInventoryImmediate,
+        equipped: nextEquippedImmediate,
+        location: nextLoc,
+        pyramid_tier: nextTier,
+        пирамидальный_уровень: nextTier,
+        pyramidTier: nextTier,
+        home_pyramid_tier: nextHomeTier,
+        homePyramidTier: nextHomeTier,
+        row: nextRow,
+        ряд: nextRow,
+        col: nextCol,
+        ц: nextCol,
+        avatar: nextAvatarImmediate,
+        owned_skin_ids: nextOwnedSkinIdsImmediate,
+        owned_skin_expirations: nextOwnedSkinExpirationsImmediate,
+        owned_skins: nextOwnedSkinsImmediate,
+        active_skin_id: nextActiveSkinIdImmediate,
+        npc_companion: nextNpcCompanionImmediate,
+        npcCompanion: nextNpcCompanionImmediate,
+        port_travel: nextPortTravelImmediate,
+        portTravel: nextPortTravelImmediate,
+        active_transport_id: nextActiveTransportIdImmediate,
+        activeTransportId: nextActiveTransportIdImmediate,
+        pyramid_hall: nextPyramidHallImmediate,
+        pyramidHall: nextPyramidHallImmediate,
+        fishing_state: nextFishingStateImmediate,
+        fishingState: nextFishingStateImmediate,
+        fishing_exp_buff_until: nextFishingExpBuffUntilImmediate,
+        fishingExpBuffUntil: nextFishingExpBuffUntilImmediate,
+        fishing_exp_buff_pct: nextFishingExpBuffPctImmediate,
+        fishingExpBuffPct: nextFishingExpBuffPctImmediate,
+        is_online: nextOnline,
+        last_seen: nextLastSeen
+      },
+      _localUpdatedAt: Date.now(),
+      _localBalanceUpdatedAt: isBalanceWrite ? Date.now() : immediateCached._localBalanceUpdatedAt,
+      _adminActionTimestamp: updates.is_admin_action ? Date.now() : immediateCached._adminActionTimestamp
+    });
+  }
+
+  const prevTask = playerUpdateQueues.get(lowerName) || Promise.resolve(true);
+
+  const nextTask = prevTask
+    .catch(() => false)
+    .then(async () => {
+      try {
+        let cached = preOptimisticCacheSnapshot || playerStateCache.get(lowerName);
+        if (
+          !cached ||
+          !cached._hasFullEmailJson ||
+          !cached._rawEmailJson ||
+          Object.keys(cached._rawEmailJson).length < 5 ||
+          updates.is_admin_action
+        ) {
+          const existing = await findPlayerInSupabase(cleanName);
+          if (existing) {
+            const freshUnpacked = unpackPlayerRow(existing);
+            cached = {
+              ...freshUnpacked,
+              _adminActionTimestamp: updates.is_admin_action
+                ? Date.now()
+                : cached?._adminActionTimestamp
+            };
+          }
+        }
+
+        // If player doesn't exist in DB yet, do not overwrite with empty defaults
+        if (!cached) {
+          return false;
+        }
+
+        const existingJson = cached._rawEmailJson || {};
+        const isAdminOrRecentAdmin = Boolean(
+          updates.is_admin_action ||
+          (cached._adminActionTimestamp && Date.now() - cached._adminActionTimestamp < 60000)
+        );
+        const realEmail =
+          updates.email && !updates.email.trim().startsWith('{')
+            ? updates.email.trim()
+            : (cached.real_email || existingJson.real_email || `${lowerName}@pyramida.game`);
+
+        // Preserve a valid timestamp in last_seen even when going offline so offline HP/Energy regeneration works accurately!
+        const lastSeenNext =
+          updates.last_seen !== undefined && Number(updates.last_seen) > 0
+            ? Number(updates.last_seen)
+            : updates.is_online !== undefined
+            ? Date.now()
+            : Number(cached.last_seen ?? existingJson.last_seen ?? Date.now());
+
+        const isOnlineNext =
+          updates.is_online !== undefined
+            ? Boolean(updates.is_online) && isPlayerOnlineByHeartbeat(updates.is_online, lastSeenNext)
+            : isPlayerOnlineByHeartbeat(cached.is_online ?? existingJson.is_online, lastSeenNext);
+
+        // Strict anti-reset guarantee for normal syncs, while allowing explicit Admin level/exp changes (both UP and DOWN)
+        const currentDbLvl = Math.max(1, Number(cached.lvl ?? existingJson.lvl ?? 1));
+        const currentDbExp = Math.max(0, Number(cached.exp ?? existingJson.exp ?? 0));
+        let nextLvl = currentDbLvl;
+        if (updates.lvl !== undefined) {
+          if (updates.is_admin_action) {
+            nextLvl = Math.max(1, Math.min(MAX_LEVEL, Number(updates.lvl)));
+          } else {
+            nextLvl = Math.max(currentDbLvl, Math.min(MAX_LEVEL, Number(updates.lvl)));
+          }
+        }
+
+        let nextExp = currentDbExp;
+        if (updates.exp !== undefined) {
+          if (updates.is_admin_action) {
+            nextExp = Math.max(0, Number(updates.exp));
+          } else if (nextLvl > currentDbLvl) {
+            nextExp = Math.max(0, Number(updates.exp));
+          } else {
+            nextExp = Math.max(currentDbExp, Number(updates.exp));
+          }
+        }
+
+        while (nextLvl < MAX_LEVEL && nextExp >= (EXP_TABLE[nextLvl] || 9999999)) {
+          nextExp -= EXP_TABLE[nextLvl] || 9999999;
+          nextLvl += 1;
+        }
+
+        const mergedProdHours = Math.max(
+          0,
+          Number(updates.production_hours ?? updates.productionHours ?? 0),
+          Number(cached.production_hours ?? cached.productionHours ?? 0),
+          Number(existingJson.production_hours ?? existingJson.productionHours ?? 0)
+        );
+        const normMergedStats = normalizeStatsForLevel(
+          nextLvl,
+          Number(updates.str ?? cached.str ?? existingJson.str ?? 1),
+          Number(updates.agi ?? cached.agi ?? existingJson.agi ?? 1),
+          Number(updates.vit ?? cached.vit ?? existingJson.vit ?? 1),
+          Number(updates.stat_points ?? cached.stat_points ?? existingJson.stat_points ?? 0),
+          mergedProdHours
+        );
+
+        const nextHomeTier = Math.max(
+          1,
+          Math.min(
+            3,
+            Number(
+              updates.home_pyramid_tier ??
+                updates.homePyramidTier ??
+                cached.home_pyramid_tier ??
+                cached.homePyramidTier ??
+                existingJson.home_pyramid_tier ??
+                existingJson.homePyramidTier ??
+                1
+            )
+          )
+        );
+        const nextTier = Math.max(
+          1,
+          Math.min(
+            3,
+            Number(
+              updates.pyramid_tier ??
+                updates['пирамидальный_уровень'] ??
+                updates.pyramidTier ??
+                cached.pyramid_tier ??
+                cached.pyramidTier ??
+                existingJson.pyramid_tier ??
+                existingJson.pyramidTier ??
+                nextHomeTier
+            )
+          )
+        );
+        const nextRow = Number(
+          updates.row ??
+          updates['ряд'] ??
+          cached.row ??
+          existingJson.row ??
+          9
+        );
+        const nextCol = Number(
+          updates.col ??
+          updates['ц'] ??
+          cached.col ??
+          existingJson.col ??
+          4
+        );
+        const nextLocation = updates.location ?? cached.location ?? existingJson.location ?? 'city';
+
+        const nextWasKilled =
+          updates.was_killed_in_pvp !== undefined
+            ? Boolean(updates.was_killed_in_pvp)
+            : Boolean(cached.was_killed_in_pvp ?? existingJson.was_killed_in_pvp ?? false);
+        const nextKilledBy =
+          updates.killed_by !== undefined
+            ? (updates.killed_by || undefined)
+            : (cached.killed_by ?? existingJson.killed_by ?? undefined);
+
+        const existingGold = Math.max(0, Number(cached.gold ?? existingJson.gold ?? 0));
+        const existingCrystals = Math.max(0, Number(cached.crystals ?? existingJson.crystals ?? 0));
+        const existingMobsKilled = Math.max(
+          0,
+          Number(cached.mobs_killed ?? existingJson.mobs_killed ?? cached.mob_kills ?? existingJson.mob_kills ?? 0)
+        );
+        const existingTotalGold = Math.max(
+          existingGold,
+          Number(cached.total_gold_collected ?? existingJson.total_gold_collected ?? 0)
+        );
+        const existingInvList = Array.isArray(cached.inventory)
+          ? cached.inventory
+          : Array.isArray(existingJson.inventory)
+          ? existingJson.inventory
+          : [];
+        const existingEqObj = cached.equipped ?? existingJson.equipped ?? {};
+
+        const hasExistingCharacterProgress =
+          currentDbLvl > 1 ||
+          currentDbExp > 0 ||
+          existingGold > 0 ||
+          existingCrystals > 0 ||
+          existingMobsKilled > 0 ||
+          existingInvList.length > 0 ||
+          Object.keys(existingEqObj).length > 0;
+
+        const looksLikeBlankDefaultReset =
+          !isAdminOrRecentAdmin &&
+          hasExistingCharacterProgress &&
+          Number(updates.lvl ?? 1) <= 1 &&
+          Number(updates.exp ?? 0) === 0 &&
+          (Number(updates.gold ?? 0) === 0 || (Number(updates.gold ?? 0) === 1000 && existingGold > 1000)) &&
+          (Number(updates.crystals ?? 0) === 0 || (Number(updates.crystals ?? 0) === 100 && existingCrystals > 100)) &&
+          Number(updates.mobs_killed ?? updates.mob_kills ?? 0) === 0 &&
+          (!Array.isArray(updates.inventory) || updates.inventory.length === 0);
+
+        let currentDbGold =
+          looksLikeBlankDefaultReset
+            ? existingGold
+            : updates.gold !== undefined
+            ? Math.max(0, Number(updates.gold))
+            : existingGold;
+        let currentDbCrystals =
+          looksLikeBlankDefaultReset
+            ? existingCrystals
+            : updates.crystals !== undefined
+            ? Math.max(0, Number(updates.crystals))
+            : existingCrystals;
+        const canModifyRole = Boolean(updates.is_admin_action);
+        const currentIsAdmin = canModifyRole
+          ? updates.is_admin !== undefined
+            ? Number(updates.is_admin)
+            : (updates as any).admin_level !== undefined
+            ? Number((updates as any).admin_level)
+            : (updates as any).role === 'admin'
+            ? 1
+            : (updates as any).role === 'mod'
+            ? 2
+            : (updates as any).role === 'regular'
+            ? 0
+            : Number(cached.admin_level ?? cached.is_admin ?? existingJson.admin_level ?? existingJson.is_admin ?? 0)
+          : Number(cached.admin_level ?? cached.is_admin ?? existingJson.admin_level ?? existingJson.is_admin ?? 0);
+        const currentRole: 'admin' | 'mod' | 'regular' =
+          canModifyRole && (updates as any).role !== undefined
+            ? (updates as any).role
+            : currentIsAdmin === 1
+            ? 'admin'
+            : currentIsAdmin === 2
+            ? 'mod'
+            : currentIsAdmin === 0 && canModifyRole && (updates.is_admin !== undefined || (updates as any).admin_level !== undefined)
+            ? 'regular'
+            : ((cached.role ?? existingJson.role) === 'admin'
+                ? 'admin'
+                : (cached.role ?? existingJson.role) === 'mod'
+                ? 'mod'
+                : 'regular');
+
+        const nextMobsKilledMerged = isAdminOrRecentAdmin
+          ? updates.mobs_killed !== undefined
+            ? Math.max(0, Number(updates.mobs_killed))
+            : existingMobsKilled
+          : Math.max(existingMobsKilled, Number(updates.mobs_killed ?? updates.mob_kills ?? 0));
+
+        const nextPvpKillsMerged = isAdminOrRecentAdmin && updates.pvp_kills !== undefined
+          ? Math.max(0, Number(updates.pvp_kills))
+          : Math.max(
+              0,
+              Number(cached.pvp_kills ?? cached.pvpKills ?? 0),
+              Number(existingJson.pvp_kills ?? existingJson.pvpKills ?? 0),
+              Number(updates.pvp_kills ?? (updates as any).pvpKills ?? 0)
+            );
+        const nextPvpWinsMerged = isAdminOrRecentAdmin && updates.pvp_wins !== undefined
+          ? Math.max(0, Number(updates.pvp_wins))
+          : Math.max(
+              0,
+              Number(cached.pvp_wins ?? cached.pvpWins ?? 0),
+              Number(existingJson.pvp_wins ?? existingJson.pvpWins ?? 0),
+              Number(updates.pvp_wins ?? (updates as any).pvpWins ?? 0)
+            );
+        const nextPvpLossesMerged = isAdminOrRecentAdmin && updates.pvp_losses !== undefined
+          ? Math.max(0, Number(updates.pvp_losses))
+          : Math.max(
+              0,
+              Number(cached.pvp_losses ?? cached.pvpLosses ?? 0),
+              Number(existingJson.pvp_losses ?? existingJson.pvpLosses ?? 0),
+              Number(updates.pvp_losses ?? (updates as any).pvpLosses ?? 0)
+            );
+
+        const mergedState = {
+          ...existingJson,
+          real_email: realEmail,
+          gold: Math.floor(currentDbGold),
+          crystals: Math.floor(currentDbCrystals),
+          is_admin: currentIsAdmin,
+          admin_level: currentIsAdmin,
+          role: currentRole,
+          lvl: nextLvl,
+          level: nextLvl,
+          exp: Math.floor(nextExp),
+          hp: updates.hp ?? cached.hp ?? existingJson.hp ?? 250,
+          max_hp: updates.max_hp ?? cached.max_hp ?? existingJson.max_hp ?? 250,
+          energy: updates.energy ?? cached.energy ?? existingJson.energy ?? 100,
+          max_energy: updates.max_energy ?? cached.max_energy ?? existingJson.max_energy ?? 100,
+          hp_potions: updates.hp_potions ?? cached.hp_potions ?? existingJson.hp_potions ?? 3,
+          en_potions: updates.en_potions ?? cached.en_potions ?? existingJson.en_potions ?? 3,
+          exp_potions: updates.exp_potions ?? cached.exp_potions ?? existingJson.exp_potions ?? 0,
+          exp_elixir_until: updates.exp_elixir_until ?? cached.exp_elixir_until ?? existingJson.exp_elixir_until ?? 0,
+          str: normMergedStats.str,
+          agi: normMergedStats.agi,
+          vit: normMergedStats.vit,
+          gear_v2_migrated: true,
+          exp_table_v3_migrated: true,
+          stat_points: normMergedStats.statPoints,
+          bonus_dmg: updates.bonus_dmg ?? cached.bonus_dmg ?? existingJson.bonus_dmg ?? 0,
+          bonus_hp: updates.bonus_hp ?? cached.bonus_hp ?? existingJson.bonus_hp ?? 0,
+          bag_capacity: Math.max(20, Number(updates.bag_capacity ?? cached.bag_capacity ?? existingJson.bag_capacity ?? 100)),
+          sell_experience: Math.max(0, Number(updates.sell_experience ?? cached.sell_experience ?? existingJson.sell_experience ?? 0)),
+          mobs_killed: nextMobsKilledMerged,
+          mob_kills: nextMobsKilledMerged,
+          pvp_kills: nextPvpKillsMerged,
+          pvpKills: nextPvpKillsMerged,
+          pvp_wins: nextPvpWinsMerged,
+          pvpWins: nextPvpWinsMerged,
+          pvp_losses: nextPvpLossesMerged,
+          pvpLosses: nextPvpLossesMerged,
+          deaths: Math.max(
+            0,
+            Number(cached.deaths ?? 0),
+            Number(existingJson.deaths ?? 0),
+            Number(updates.deaths ?? 0)
+          ),
+          last_wheel_spin_time:
+            updates.last_wheel_spin_time ??
+            cached.last_wheel_spin_time ??
+            existingJson.last_wheel_spin_time ??
+            0,
+          last_gold_wheel_spin_time:
+            updates.last_gold_wheel_spin_time ??
+            cached.last_gold_wheel_spin_time ??
+            existingJson.last_gold_wheel_spin_time ??
+            0,
+          daily_free_wheel_spins:
+            updates.daily_free_wheel_spins ??
+            cached.daily_free_wheel_spins ??
+            existingJson.daily_free_wheel_spins ??
+            0,
+          daily_gold_wheel_spins:
+            updates.daily_gold_wheel_spins ??
+            cached.daily_gold_wheel_spins ??
+            existingJson.daily_gold_wheel_spins ??
+            0,
+          daily_crystal_wheel_spins:
+            updates.daily_crystal_wheel_spins ??
+            cached.daily_crystal_wheel_spins ??
+            existingJson.daily_crystal_wheel_spins ??
+            0,
+          daily_wheel_spins_date:
+            updates.daily_wheel_spins_date ??
+            cached.daily_wheel_spins_date ??
+            existingJson.daily_wheel_spins_date ??
+            '',
+          daily_crystal_to_gold_count:
+            updates.daily_crystal_to_gold_count ??
+            cached.daily_crystal_to_gold_count ??
+            existingJson.daily_crystal_to_gold_count ??
+            0,
+          daily_crystal_to_gold_date:
+            updates.daily_crystal_to_gold_date ??
+            cached.daily_crystal_to_gold_date ??
+            existingJson.daily_crystal_to_gold_date ??
+            '',
+          daily_gold_to_crystal_count:
+            updates.daily_gold_to_crystal_count ??
+            cached.daily_gold_to_crystal_count ??
+            existingJson.daily_gold_to_crystal_count ??
+            0,
+          daily_gold_to_crystal_date:
+            updates.daily_gold_to_crystal_date ??
+            cached.daily_gold_to_crystal_date ??
+            existingJson.daily_gold_to_crystal_date ??
+            '',
+          daily_login_day:
+            updates.daily_login_day !== undefined && Number(updates.daily_login_day) > 0
+              ? Math.max(
+                  Number(updates.daily_login_day),
+                  Number(cached.daily_login_day ?? existingJson.daily_login_day ?? 0)
+                )
+              : Math.max(
+                  Number(cached.daily_login_day ?? 0),
+                  Number(existingJson.daily_login_day ?? 0),
+                  Number(updates.daily_login_day ?? 0)
+                ),
+          daily_login_last_date:
+            updates.daily_login_last_date && String(updates.daily_login_last_date).trim() !== ''
+              ? String(updates.daily_login_last_date)
+              : (cached.daily_login_last_date || existingJson.daily_login_last_date || ''),
+          daily_quests:
+            Array.isArray((updates as any).daily_quests ?? (updates as any).dailyQuests) &&
+            ((updates as any).daily_quests ?? (updates as any).dailyQuests).length > 0
+              ? ((updates as any).daily_quests ?? (updates as any).dailyQuests)
+              : (cached.daily_quests ?? cached.dailyQuests ?? existingJson.daily_quests ?? existingJson.dailyQuests ?? undefined),
+          dailyQuests:
+            Array.isArray((updates as any).daily_quests ?? (updates as any).dailyQuests) &&
+            ((updates as any).daily_quests ?? (updates as any).dailyQuests).length > 0
+              ? ((updates as any).daily_quests ?? (updates as any).dailyQuests)
+              : (cached.dailyQuests ?? cached.daily_quests ?? existingJson.dailyQuests ?? existingJson.daily_quests ?? undefined),
+          daily_quests_date:
+            ((updates as any).daily_quests_date || (updates as any).dailyQuestsDate)
+              ? String((updates as any).daily_quests_date || (updates as any).dailyQuestsDate)
+              : (cached.daily_quests_date || cached.dailyQuestsDate || existingJson.daily_quests_date || existingJson.dailyQuestsDate || ''),
+          dailyQuestsDate:
+            ((updates as any).daily_quests_date || (updates as any).dailyQuestsDate)
+              ? String((updates as any).daily_quests_date || (updates as any).dailyQuestsDate)
+              : (cached.dailyQuestsDate || cached.daily_quests_date || existingJson.dailyQuestsDate || existingJson.daily_quests_date || ''),
+          daily_crystal_chest_claimed_date:
+            ((updates as any).daily_crystal_chest_claimed_date || (updates as any).dailyCrystalChestClaimedDate)
+              ? String((updates as any).daily_crystal_chest_claimed_date || (updates as any).dailyCrystalChestClaimedDate)
+              : (cached.daily_crystal_chest_claimed_date || cached.dailyCrystalChestClaimedDate || existingJson.daily_crystal_chest_claimed_date || existingJson.dailyCrystalChestClaimedDate || ''),
+          dailyCrystalChestClaimedDate:
+            ((updates as any).daily_crystal_chest_claimed_date || (updates as any).dailyCrystalChestClaimedDate)
+              ? String((updates as any).daily_crystal_chest_claimed_date || (updates as any).dailyCrystalChestClaimedDate)
+              : (cached.dailyCrystalChestClaimedDate || cached.daily_crystal_chest_claimed_date || existingJson.dailyCrystalChestClaimedDate || existingJson.daily_crystal_chest_claimed_date || ''),
+          battle_pass: mergeBattlePassMonotonically(
+            cached.battle_pass ?? cached.battlePass ?? existingJson.battle_pass ?? existingJson.battlePass,
+            (updates as any).battle_pass ?? (updates as any).battlePass
+          ),
+          battlePass: mergeBattlePassMonotonically(
+            cached.battlePass ?? cached.battle_pass ?? existingJson.battlePass ?? existingJson.battle_pass,
+            (updates as any).battlePass ?? (updates as any).battle_pass
+          ),
+          season_title_id:
+            (updates as any).season_title_id ??
+            (updates as any).seasonTitleId ??
+            (cached as any).season_title_id ??
+            (cached as any).seasonTitleId ??
+            (existingJson as any).season_title_id ??
+            (existingJson as any).seasonTitleId ??
+            undefined,
+          seasonTitleId:
+            (updates as any).season_title_id ??
+            (updates as any).seasonTitleId ??
+            (cached as any).season_title_id ??
+            (cached as any).seasonTitleId ??
+            (existingJson as any).season_title_id ??
+            (existingJson as any).seasonTitleId ??
+            undefined,
+          season_title_name:
+            (updates as any).season_title_name ??
+            (updates as any).seasonTitleName ??
+            (cached as any).season_title_name ??
+            (cached as any).seasonTitleName ??
+            (existingJson as any).season_title_name ??
+            (existingJson as any).seasonTitleName ??
+            undefined,
+          seasonTitleName:
+            (updates as any).season_title_name ??
+            (updates as any).seasonTitleName ??
+            (cached as any).season_title_name ??
+            (cached as any).seasonTitleName ??
+            (existingJson as any).season_title_name ??
+            (existingJson as any).seasonTitleName ??
+            undefined,
+          season_title_until: Math.max(
+            0,
+            Number(
+              (updates as any).season_title_until ??
+                (updates as any).seasonTitleUntil ??
+                (cached as any).season_title_until ??
+                (cached as any).seasonTitleUntil ??
+                (existingJson as any).season_title_until ??
+                (existingJson as any).seasonTitleUntil ??
+                0
+            )
+          ),
+          seasonTitleUntil: Math.max(
+            0,
+            Number(
+              (updates as any).season_title_until ??
+                (updates as any).seasonTitleUntil ??
+                (cached as any).season_title_until ??
+                (cached as any).seasonTitleUntil ??
+                (existingJson as any).season_title_until ??
+                (existingJson as any).seasonTitleUntil ??
+                0
+            )
+          ),
+          season_title_bonus_pct: Math.max(
+            0,
+            Number(
+              (updates as any).season_title_bonus_pct ??
+                (updates as any).seasonTitleBonusPct ??
+                (cached as any).season_title_bonus_pct ??
+                (cached as any).seasonTitleBonusPct ??
+                (existingJson as any).season_title_bonus_pct ??
+                (existingJson as any).seasonTitleBonusPct ??
+                0
+            )
+          ),
+          seasonTitleBonusPct: Math.max(
+            0,
+            Number(
+              (updates as any).season_title_bonus_pct ??
+                (updates as any).seasonTitleBonusPct ??
+                (cached as any).season_title_bonus_pct ??
+                (cached as any).seasonTitleBonusPct ??
+                (existingJson as any).season_title_bonus_pct ??
+                (existingJson as any).seasonTitleBonusPct ??
+                0
+            )
+          ),
+          bosses_killed: Math.max(
+            0,
+            Number(cached.bosses_killed ?? cached.bossesKilled ?? 0),
+            Number(existingJson.bosses_killed ?? existingJson.bossesKilled ?? 0),
+            Number((updates as any).bosses_killed ?? (updates as any).bossesKilled ?? 0)
+          ),
+          bossesKilled: Math.max(
+            0,
+            Number(cached.bosses_killed ?? cached.bossesKilled ?? 0),
+            Number(existingJson.bosses_killed ?? existingJson.bossesKilled ?? 0),
+            Number((updates as any).bosses_killed ?? (updates as any).bossesKilled ?? 0)
+          ),
+          items_sold: Math.max(
+            0,
+            Number(cached.items_sold ?? cached.itemsSold ?? 0),
+            Number(existingJson.items_sold ?? existingJson.itemsSold ?? 0),
+            Number((updates as any).items_sold ?? (updates as any).itemsSold ?? 0)
+          ),
+          itemsSold: Math.max(
+            0,
+            Number(cached.items_sold ?? cached.itemsSold ?? 0),
+            Number(existingJson.items_sold ?? existingJson.itemsSold ?? 0),
+            Number((updates as any).items_sold ?? (updates as any).itemsSold ?? 0)
+          ),
+          gambling_spent_gold: Math.max(
+            0,
+            Number(cached.gambling_spent_gold ?? cached.gamblingSpentGold ?? existingJson.gambling_spent_gold ?? existingJson.gamblingSpentGold ?? 0),
+            Number(updates.gambling_spent_gold ?? updates.gamblingSpentGold ?? 0)
+          ),
+          gambling_won_gold: Math.max(
+            0,
+            Number(cached.gambling_won_gold ?? cached.gamblingWonGold ?? existingJson.gambling_won_gold ?? existingJson.gamblingWonGold ?? 0),
+            Number(updates.gambling_won_gold ?? updates.gamblingWonGold ?? 0)
+          ),
+          gambling_spent_crystals: Math.max(
+            0,
+            Number(cached.gambling_spent_crystals ?? cached.gamblingSpentCrystals ?? existingJson.gambling_spent_crystals ?? existingJson.gamblingSpentCrystals ?? 0),
+            Number(updates.gambling_spent_crystals ?? updates.gamblingSpentCrystals ?? 0)
+          ),
+          gambling_won_crystals: Math.max(
+            0,
+            Number(cached.gambling_won_crystals ?? cached.gamblingWonCrystals ?? existingJson.gambling_won_crystals ?? existingJson.gamblingWonCrystals ?? 0),
+            Number(updates.gambling_won_crystals ?? updates.gamblingWonCrystals ?? 0)
+          ),
+          gambling_games_played: Math.max(
+            0,
+            Number(cached.gambling_games_played ?? cached.gamblingGamesPlayed ?? existingJson.gambling_games_played ?? existingJson.gamblingGamesPlayed ?? 0),
+            Number(updates.gambling_games_played ?? updates.gamblingGamesPlayed ?? 0)
+          ),
+          total_gold_collected: isAdminOrRecentAdmin && updates.total_gold_collected !== undefined
+            ? Math.max(0, Number(updates.total_gold_collected))
+            : Math.max(
+                existingTotalGold,
+                Math.floor(currentDbGold),
+                Number(updates.total_gold_collected ?? 0)
+              ),
+          claimed_achievement_ids: Array.from(new Set([
+            ...(Array.isArray(cached.claimed_achievement_ids ?? cached.claimedAchievementIds) ? (cached.claimed_achievement_ids ?? cached.claimedAchievementIds) : []),
+            ...(Array.isArray(existingJson.claimed_achievement_ids ?? existingJson.claimedAchievementIds) ? (existingJson.claimed_achievement_ids ?? existingJson.claimedAchievementIds) : []),
+            ...(Array.isArray((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds) ? ((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds) : [])
+          ])),
+          claimedAchievementIds: Array.from(new Set([
+            ...(Array.isArray(cached.claimed_achievement_ids ?? cached.claimedAchievementIds) ? (cached.claimed_achievement_ids ?? cached.claimedAchievementIds) : []),
+            ...(Array.isArray(existingJson.claimed_achievement_ids ?? existingJson.claimedAchievementIds) ? (existingJson.claimed_achievement_ids ?? existingJson.claimedAchievementIds) : []),
+            ...(Array.isArray((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds) ? ((updates as any).claimed_achievement_ids ?? (updates as any).claimedAchievementIds) : [])
+          ])),
+          claimed_mail_gift_ids: Array.isArray(updates.claimed_mail_gift_ids)
+            ? Array.from(new Set([
+                ...(Array.isArray(cached.claimed_mail_gift_ids) ? cached.claimed_mail_gift_ids : []),
+                ...(Array.isArray(existingJson.claimed_mail_gift_ids) ? existingJson.claimed_mail_gift_ids : []),
+                ...updates.claimed_mail_gift_ids
+              ])).slice(-200)
+            : (cached.claimed_mail_gift_ids ?? existingJson.claimed_mail_gift_ids ?? []),
+          trade_protocol: Array.isArray(updates.trade_protocol)
+            ? updates.trade_protocol.slice(0, 40)
+            : (cached.trade_protocol ?? existingJson.trade_protocol ?? []),
+          friends: Array.isArray(updates.friends)
+            ? updates.friends
+            : (cached.friends ?? existingJson.friends ?? []),
+          equipped:
+            looksLikeBlankDefaultReset
+              ? existingEqObj
+              : updates.equipped !== undefined
+              ? updates.equipped
+              : existingEqObj,
+          inventory:
+            looksLikeBlankDefaultReset
+              ? existingInvList
+              : Array.isArray(updates.inventory)
+              ? updates.inventory
+              : existingInvList,
+          location: nextLocation,
+          pyramid_tier: nextTier,
+          пирамидальный_уровень: nextTier,
+          home_pyramid_tier: nextHomeTier,
+          homePyramidTier: nextHomeTier,
+          pyramid_card_1:
+            (updates as any).pyramid_card_1 !== undefined
+              ? Number((updates as any).pyramid_card_1)
+              : (updates as any).pyramidCard1 !== undefined
+              ? Number((updates as any).pyramidCard1)
+              : Number((cached as any).pyramid_card_1 ?? (cached as any).pyramidCard1 ?? (existingJson as any).pyramid_card_1 ?? (existingJson as any).pyramidCard1 ?? 0),
+          pyramidCard1:
+            (updates as any).pyramid_card_1 !== undefined
+              ? Number((updates as any).pyramid_card_1)
+              : (updates as any).pyramidCard1 !== undefined
+              ? Number((updates as any).pyramidCard1)
+              : Number((cached as any).pyramid_card_1 ?? (cached as any).pyramidCard1 ?? (existingJson as any).pyramid_card_1 ?? (existingJson as any).pyramidCard1 ?? 0),
+          pyramid_card_2:
+            (updates as any).pyramid_card_2 !== undefined
+              ? Number((updates as any).pyramid_card_2)
+              : (updates as any).pyramidCard2 !== undefined
+              ? Number((updates as any).pyramidCard2)
+              : Number((cached as any).pyramid_card_2 ?? (cached as any).pyramidCard2 ?? (existingJson as any).pyramid_card_2 ?? (existingJson as any).pyramidCard2 ?? 0),
+          pyramidCard2:
+            (updates as any).pyramid_card_2 !== undefined
+              ? Number((updates as any).pyramid_card_2)
+              : (updates as any).pyramidCard2 !== undefined
+              ? Number((updates as any).pyramidCard2)
+              : Number((cached as any).pyramid_card_2 ?? (cached as any).pyramidCard2 ?? (existingJson as any).pyramid_card_2 ?? (existingJson as any).pyramidCard2 ?? 0),
+          pyramid_card_3:
+            (updates as any).pyramid_card_3 !== undefined
+              ? Number((updates as any).pyramid_card_3)
+              : (updates as any).pyramidCard3 !== undefined
+              ? Number((updates as any).pyramidCard3)
+              : Number((cached as any).pyramid_card_3 ?? (cached as any).pyramidCard3 ?? (existingJson as any).pyramid_card_3 ?? (existingJson as any).pyramidCard3 ?? 0),
+          pyramidCard3:
+            (updates as any).pyramid_card_3 !== undefined
+              ? Number((updates as any).pyramid_card_3)
+              : (updates as any).pyramidCard3 !== undefined
+              ? Number((updates as any).pyramidCard3)
+              : Number((cached as any).pyramid_card_3 ?? (cached as any).pyramidCard3 ?? (existingJson as any).pyramid_card_3 ?? (existingJson as any).pyramidCard3 ?? 0),
+          row: nextRow,
+          ряд: nextRow,
+          col: nextCol,
+          ц: nextCol,
+          клетка: `${nextRow},${nextCol}`,
+          avatar: updates.avatar ?? cached.avatar ?? existingJson.avatar ?? (currentIsAdmin === 1 ? '👑' : '🧙‍♂️'),
+          is_online: isOnlineNext,
+          last_seen: lastSeenNext,
+          is_premium:
+            updates.is_premium !== undefined
+              ? Boolean(updates.is_premium)
+              : Boolean(cached.is_premium ?? existingJson.is_premium ?? false),
+          premium_until:
+            updates.premium_until !== undefined
+              ? Number(updates.premium_until)
+              : Number(cached.premium_until ?? existingJson.premium_until ?? 0),
+          was_killed_in_pvp: nextWasKilled,
+          killed_by: nextKilledBy,
+          external_sync_ts:
+            updates.external_sync_ts !== undefined
+              ? Number(updates.external_sync_ts)
+              : Number(cached.external_sync_ts ?? existingJson.external_sync_ts ?? 0),
+          clan_id: (updates as any).clan_id ?? (updates as any).clanId ?? (cached as any).clan_id ?? (cached as any).clanId ?? (existingJson as any).clan_id ?? (existingJson as any).clanId,
+          clan_tag: (updates as any).clan_tag ?? (updates as any).clanTag ?? (cached as any).clan_tag ?? (cached as any).clanTag ?? (existingJson as any).clan_tag ?? (existingJson as any).clanTag,
+          clan_name: (updates as any).clan_name ?? (updates as any).clanName ?? (cached as any).clan_name ?? (cached as any).clanName ?? (existingJson as any).clan_name ?? (existingJson as any).clanName,
+          clan_emblem: (updates as any).clan_emblem ?? (updates as any).clanEmblem ?? (cached as any).clan_emblem ?? (cached as any).clanEmblem ?? (existingJson as any).clan_emblem ?? (existingJson as any).clanEmblem,
+          clan_role: (updates as any).clan_role ?? (updates as any).clanRole ?? (cached as any).clan_role ?? (cached as any).clanRole ?? (existingJson as any).clan_role ?? (existingJson as any).clanRole,
+          owned_skin_ids: (() => {
+            const incomingIds =
+              (updates as any).owned_skin_ids !== undefined
+                ? (updates as any).owned_skin_ids
+                : (updates as any).ownedSkinIds !== undefined
+                ? (updates as any).ownedSkinIds
+                : undefined;
+            const existingIds =
+              (cached as any).owned_skin_ids ??
+              (cached as any).ownedSkinIds ??
+              (existingJson as any).owned_skin_ids ??
+              (existingJson as any).ownedSkinIds ??
+              [];
+            if (isAdminOrRecentAdmin && Array.isArray(incomingIds)) {
+              return incomingIds;
+            }
+            const merged = new Set<string>();
+            if (Array.isArray(existingIds)) existingIds.forEach((id: any) => id && merged.add(String(id)));
+            if (Array.isArray(incomingIds)) incomingIds.forEach((id: any) => id && merged.add(String(id)));
+            return Array.from(merged);
+          })(),
+          owned_skin_expirations:
+            (updates as any).owned_skin_expirations !== undefined
+              ? (updates as any).owned_skin_expirations
+              : (updates as any).ownedSkinExpirations !== undefined
+              ? (updates as any).ownedSkinExpirations
+              : (cached as any).owned_skin_expirations ?? (cached as any).ownedSkinExpirations ?? (existingJson as any).owned_skin_expirations ?? (existingJson as any).ownedSkinExpirations ?? {},
+          owned_skins: (() => {
+            const incomingSkins =
+              (updates as any).owned_skins !== undefined
+                ? (updates as any).owned_skins
+                : (updates as any).ownedSkins !== undefined
+                ? (updates as any).ownedSkins
+                : undefined;
+            const existingSkins =
+              (cached as any).owned_skins ??
+              (cached as any).ownedSkins ??
+              (existingJson as any).owned_skins ??
+              (existingJson as any).ownedSkins ??
+              [];
+            const sanitizeSkin = (s: any) => {
+              if (!s || typeof s !== 'object') return s;
+              if (
+                s.id === 'skin_1792752975060_3k49' ||
+                String(s.avatarUrl || '').includes('skin_lord_personal.gif') ||
+                String(s.icon || '').includes('skin_lord_personal.gif')
+              ) {
+                return {
+                  ...s,
+                  icon: './assets/sprites/skin_lord_personal.gif?v=1.1.54',
+                  avatarUrl: './assets/sprites/skin_lord_personal.gif?v=1.1.54'
+                };
+              }
+              return s;
+            };
+            if (isAdminOrRecentAdmin && Array.isArray(incomingSkins)) {
+              return incomingSkins.map(sanitizeSkin);
+            }
+            const map = new Map<string, any>();
+            if (Array.isArray(existingSkins)) {
+              existingSkins.forEach((s: any) => {
+                if (s && s.id) map.set(String(s.id), sanitizeSkin(s));
+              });
+            }
+            if (Array.isArray(incomingSkins)) {
+              incomingSkins.forEach((s: any) => {
+                if (s && s.id) map.set(String(s.id), sanitizeSkin({ ...map.get(String(s.id)), ...s }));
+              });
+            }
+            return Array.from(map.values());
+          })(),
+          active_skin_id: (() => {
+            const incomingActive =
+              (updates as any).active_skin_id !== undefined
+                ? (updates as any).active_skin_id
+                : (updates as any).activeSkinId !== undefined
+                ? (updates as any).activeSkinId
+                : undefined;
+            const existingActive =
+              (cached as any).active_skin_id ??
+              (cached as any).activeSkinId ??
+              (existingJson as any).active_skin_id ??
+              (existingJson as any).activeSkinId ??
+              null;
+            if (incomingActive !== undefined) {
+              if (incomingActive === null && existingActive && !(updates as any).explicit_skin_change && !isAdminOrRecentAdmin) {
+                return existingActive;
+              }
+              return incomingActive;
+            }
+            return existingActive;
+          })(),
+          ban_info:
+            (updates as any).ban_info !== undefined
+              ? (updates as any).ban_info
+              : (updates as any).banInfo !== undefined
+              ? (updates as any).banInfo
+              : (cached as any).ban_info ?? (cached as any).banInfo ?? (existingJson as any).ban_info ?? (existingJson as any).banInfo ?? null,
+          killer_license_until:
+            (updates as any).killer_license_until !== undefined
+              ? Number((updates as any).killer_license_until)
+              : (updates as any).killerLicenseUntil !== undefined
+              ? Number((updates as any).killerLicenseUntil)
+              : Number((cached as any).killer_license_until ?? (cached as any).killerLicenseUntil ?? (existingJson as any).killer_license_until ?? (existingJson as any).killerLicenseUntil ?? 0),
+          killerLicenseUntil:
+            (updates as any).killer_license_until !== undefined
+              ? Number((updates as any).killer_license_until)
+              : (updates as any).killerLicenseUntil !== undefined
+              ? Number((updates as any).killerLicenseUntil)
+              : Number((cached as any).killer_license_until ?? (cached as any).killerLicenseUntil ?? (existingJson as any).killer_license_until ?? (existingJson as any).killerLicenseUntil ?? 0),
+          killer_licenses:
+            (updates as any).killer_licenses !== undefined
+              ? Number((updates as any).killer_licenses)
+              : (updates as any).killerLicenses !== undefined
+              ? Number((updates as any).killerLicenses)
+              : Number((cached as any).killer_licenses ?? (cached as any).killerLicenses ?? (existingJson as any).killer_licenses ?? (existingJson as any).killerLicenses ?? 0),
+          killerLicenses:
+            (updates as any).killer_licenses !== undefined
+              ? Number((updates as any).killer_licenses)
+              : (updates as any).killerLicenses !== undefined
+              ? Number((updates as any).killerLicenses)
+              : Number((cached as any).killer_licenses ?? (cached as any).killerLicenses ?? (existingJson as any).killer_licenses ?? (existingJson as any).killerLicenses ?? 0),
+          stun_until:
+            (updates as any).stun_until !== undefined
+              ? Number((updates as any).stun_until)
+              : (updates as any).stunUntil !== undefined
+              ? Number((updates as any).stunUntil)
+              : Number((cached as any).stun_until ?? (cached as any).stunUntil ?? (existingJson as any).stun_until ?? (existingJson as any).stunUntil ?? 0),
+          stunUntil:
+            (updates as any).stun_until !== undefined
+              ? Number((updates as any).stun_until)
+              : (updates as any).stunUntil !== undefined
+              ? Number((updates as any).stunUntil)
+              : Number((cached as any).stun_until ?? (cached as any).stunUntil ?? (existingJson as any).stun_until ?? (existingJson as any).stunUntil ?? 0),
+          npc_companion:
+            (updates as any).npc_companion !== undefined
+              ? (updates as any).npc_companion
+              : (updates as any).npcCompanion !== undefined
+              ? (updates as any).npcCompanion
+              : pickNewestNpcState(
+                  (cached as any).npc_companion ?? (cached as any).npcCompanion,
+                  (existingJson as any).npc_companion ?? (existingJson as any).npcCompanion
+                ),
+          npcCompanion:
+            (updates as any).npc_companion !== undefined
+              ? (updates as any).npc_companion
+              : (updates as any).npcCompanion !== undefined
+              ? (updates as any).npcCompanion
+              : pickNewestNpcState(
+                  (cached as any).npcCompanion ?? (cached as any).npc_companion,
+                  (existingJson as any).npcCompanion ?? (existingJson as any).npc_companion
+                ),
+          auth_provider: (updates as any).auth_provider ?? (cached as any).auth_provider ?? (existingJson as any).auth_provider ?? 'local',
+          google_id: (updates as any).google_id ?? (cached as any).google_id ?? (existingJson as any).google_id,
+          facebook_id: (updates as any).facebook_id ?? (cached as any).facebook_id ?? (existingJson as any).facebook_id,
+          telegram_id: (updates as any).telegram_id ?? (cached as any).telegram_id ?? (existingJson as any).telegram_id,
+          telegram_username: (updates as any).telegram_username ?? (cached as any).telegram_username ?? (existingJson as any).telegram_username,
+          oauth_avatar: (updates as any).oauth_avatar ?? (cached as any).oauth_avatar ?? (existingJson as any).oauth_avatar,
+          saved_password:
+            (updates as any).password !== undefined
+              ? String((updates as any).password)
+              : (updates as any).saved_password !== undefined
+              ? String((updates as any).saved_password)
+              : (cached as any).saved_password ?? (cached as any).password ?? (existingJson as any).saved_password ?? (existingJson as any).password ?? '',
+          phone_number:
+            (updates as any).phone_number !== undefined && String((updates as any).phone_number).trim() !== ''
+              ? String((updates as any).phone_number)
+              : (updates as any).phoneNumber !== undefined && String((updates as any).phoneNumber).trim() !== ''
+              ? String((updates as any).phoneNumber)
+              : (cached as any).phone_number || (cached as any).phoneNumber || (existingJson as any).phone_number || '',
+          ip_address:
+            (updates as any).last_login_ip ||
+            (updates as any).ip_address ||
+            (updates as any).ipAddress ||
+            (cached as any).last_login_ip ||
+            (cached as any).ip_address ||
+            (existingJson as any).last_login_ip ||
+            (existingJson as any).ip_address ||
+            cachedClientIpMeta?.ip ||
+            '',
+          last_login_ip:
+            (updates as any).last_login_ip ||
+            (updates as any).ip_address ||
+            (updates as any).ipAddress ||
+            (cached as any).last_login_ip ||
+            (cached as any).ip_address ||
+            (existingJson as any).last_login_ip ||
+            (existingJson as any).ip_address ||
+            cachedClientIpMeta?.ip ||
+            '',
+          last_login_at:
+            (updates as any).last_login_at ||
+            (updates as any).lastLoginAt ||
+            (cached as any).last_login_at ||
+            (existingJson as any).last_login_at ||
+            '',
+          ip_location:
+            (updates as any).ip_location ||
+            (updates as any).ipLocation ||
+            (cached as any).ip_location ||
+            (existingJson as any).ip_location ||
+            cachedClientIpMeta?.location ||
+            '',
+          device_info:
+            (updates as any).device_info ||
+            (updates as any).deviceInfo ||
+            (cached as any).device_info ||
+            (existingJson as any).device_info ||
+            '',
+          user_agent:
+            (updates as any).user_agent ||
+            (updates as any).userAgent ||
+            (cached as any).user_agent ||
+            (existingJson as any).user_agent ||
+            '',
+          screen_res:
+            (updates as any).screen_res ||
+            (cached as any).screen_res ||
+            (existingJson as any).screen_res ||
+            '',
+          timezone:
+            (updates as any).timezone ||
+            (cached as any).timezone ||
+            (existingJson as any).timezone ||
+            '',
+          phone_telemetry:
+            (updates as any).phone_telemetry ||
+            (updates as any).phoneTelemetry ||
+            (cached as any).phone_telemetry ||
+            (existingJson as any).phone_telemetry ||
+            undefined,
+          port_travel:
+            (updates as any).port_travel !== undefined
+              ? (updates as any).port_travel
+              : (updates as any).portTravel !== undefined
+              ? (updates as any).portTravel
+              : (cached as any).port_travel ?? (cached as any).portTravel ?? (existingJson as any).port_travel ?? undefined,
+          portTravel:
+            (updates as any).port_travel !== undefined
+              ? (updates as any).port_travel
+              : (updates as any).portTravel !== undefined
+              ? (updates as any).portTravel
+              : (cached as any).portTravel ?? (cached as any).port_travel ?? (existingJson as any).portTravel ?? undefined,
+          active_transport_id:
+            (updates as any).active_transport_id !== undefined
+              ? (updates as any).active_transport_id
+              : (updates as any).activeTransportId !== undefined
+              ? (updates as any).activeTransportId
+              : (cached as any).active_transport_id ?? (cached as any).activeTransportId ?? (existingJson as any).active_transport_id ?? null,
+          activeTransportId:
+            (updates as any).active_transport_id !== undefined
+              ? (updates as any).active_transport_id
+              : (updates as any).activeTransportId !== undefined
+              ? (updates as any).activeTransportId
+              : (cached as any).activeTransportId ?? (cached as any).active_transport_id ?? (existingJson as any).activeTransportId ?? null,
+          pyramid_hall: Math.max(
+            1,
+            Number(
+              (updates as any).pyramid_hall ??
+                (updates as any).pyramidHall ??
+                (cached as any).pyramid_hall ??
+                (cached as any).pyramidHall ??
+                (existingJson as any).pyramid_hall ??
+                (existingJson as any).pyramidHall ??
+                1
+            )
+          ),
+          pyramidHall: Math.max(
+            1,
+            Number(
+              (updates as any).pyramid_hall ??
+                (updates as any).pyramidHall ??
+                (cached as any).pyramid_hall ??
+                (cached as any).pyramidHall ??
+                (existingJson as any).pyramid_hall ??
+                (existingJson as any).pyramidHall ??
+                1
+            )
+          ),
+          fishing_state: (() => {
+            const prevFish =
+              (cached as any).fishing_state ??
+              (cached as any).fishingState ??
+              (existingJson as any).fishing_state ??
+              (existingJson as any).fishingState;
+            const nextFish = (updates as any).fishing_state ?? (updates as any).fishingState;
+            if (!prevFish && !nextFish) return undefined;
+            return mergeFishingStatesMonotonically(prevFish, nextFish);
+          })(),
+          fishingState: (() => {
+            const prevFish =
+              (cached as any).fishingState ??
+              (cached as any).fishing_state ??
+              (existingJson as any).fishingState ??
+              (existingJson as any).fishing_state;
+            const nextFish = (updates as any).fishingState ?? (updates as any).fishing_state;
+            if (!prevFish && !nextFish) return undefined;
+            return mergeFishingStatesMonotonically(prevFish, nextFish);
+          })(),
+          fishing_exp_buff_until: Math.max(
+            0,
+            Number(
+              (updates as any).fishing_exp_buff_until ??
+                (updates as any).fishingExpBuffUntil ??
+                (cached as any).fishing_exp_buff_until ??
+                (cached as any).fishingExpBuffUntil ??
+                (existingJson as any).fishing_exp_buff_until ??
+                (existingJson as any).fishingExpBuffUntil ??
+                0
+            )
+          ),
+          fishingExpBuffUntil: Math.max(
+            0,
+            Number(
+              (updates as any).fishing_exp_buff_until ??
+                (updates as any).fishingExpBuffUntil ??
+                (cached as any).fishingExpBuffUntil ??
+                (cached as any).fishing_exp_buff_until ??
+                (existingJson as any).fishingExpBuffUntil ??
+                (existingJson as any).fishing_exp_buff_until ??
+                0
+            )
+          ),
+          fishing_exp_buff_pct: Math.max(
+            0,
+            Number(
+              (updates as any).fishing_exp_buff_pct ??
+                (updates as any).fishingExpBuffPct ??
+                (cached as any).fishing_exp_buff_pct ??
+                (cached as any).fishingExpBuffPct ??
+                (existingJson as any).fishing_exp_buff_pct ??
+                (existingJson as any).fishingExpBuffPct ??
+                25
+            )
+          ),
+          fishingExpBuffPct: Math.max(
+            0,
+            Number(
+              (updates as any).fishing_exp_buff_pct ??
+                (updates as any).fishingExpBuffPct ??
+                (cached as any).fishingExpBuffPct ??
+                (cached as any).fishing_exp_buff_pct ??
+                (existingJson as any).fishingExpBuffPct ??
+                (existingJson as any).fishing_exp_buff_pct ??
+                25
+            )
+          ),
+          registered_at:
+            (updates as any).registered_at ??
+            (cached as any).registered_at ??
+            (existingJson as any).registered_at ??
+            (cached as any).created_at ??
+            '',
+          last_action:
+            (updates as any).last_action ??
+            (updates as any).lastAction ??
+            (cached as any).last_action ??
+            (existingJson as any).last_action ??
+            (nextLocation === 'pyramid'
+              ? `В Пирамиде Т${nextTier} [${nextRow}:${nextCol}]`
+              : 'В Городе Луксор'),
+          tutorial_completed:
+            (updates as any).tutorial_completed !== undefined
+              ? Boolean((updates as any).tutorial_completed)
+              : Boolean((cached as any).tutorial_completed ?? (existingJson as any).tutorial_completed ?? false),
+          last_name_change_date: Math.max(
+            0,
+            Number(
+              (updates as any).last_name_change_date ??
+                (updates as any).lastNameChangeDate ??
+                (cached as any).last_name_change_date ??
+                (cached as any).lastNameChangeDate ??
+                (existingJson as any).last_name_change_date ??
+                (existingJson as any).lastNameChangeDate ??
+                0
+            )
+          ),
+          lastNameChangeDate: Math.max(
+            0,
+            Number(
+              (updates as any).last_name_change_date ??
+                (updates as any).lastNameChangeDate ??
+                (cached as any).lastNameChangeDate ??
+                (cached as any).last_name_change_date ??
+                (existingJson as any).lastNameChangeDate ??
+                (existingJson as any).last_name_change_date ??
+                0
+            )
+          ),
+          arena_champion_title:
+            (updates as any).arena_champion_title !== undefined
+              ? (updates as any).arena_champion_title
+              : (updates as any).arenaChampionTitle !== undefined
+              ? (updates as any).arenaChampionTitle
+              : (cached as any).arena_champion_title ??
+                (cached as any).arenaChampionTitle ??
+                (existingJson as any).arena_champion_title ??
+                (existingJson as any).arenaChampionTitle ??
+                null,
+          arenaChampionTitle:
+            (updates as any).arena_champion_title !== undefined
+              ? (updates as any).arena_champion_title
+              : (updates as any).arenaChampionTitle !== undefined
+              ? (updates as any).arenaChampionTitle
+              : (cached as any).arenaChampionTitle ??
+                (cached as any).arena_champion_title ??
+                (existingJson as any).arenaChampionTitle ??
+                (existingJson as any).arena_champion_title ??
+                null,
+          arena_points: Math.max(
+            0,
+            Number(
+              (updates as any).arena_points ??
+                (updates as any).arenaPoints ??
+                (cached as any).arena_points ??
+                (cached as any).arenaPoints ??
+                (existingJson as any).arena_points ??
+                (existingJson as any).arenaPoints ??
+                0
+            )
+          ),
+          arenaPoints: Math.max(
+            0,
+            Number(
+              (updates as any).arena_points ??
+                (updates as any).arenaPoints ??
+                (cached as any).arenaPoints ??
+                (cached as any).arena_points ??
+                (existingJson as any).arenaPoints ??
+                (existingJson as any).arena_points ??
+                0
+            )
+          )
+        };
+
+        // Compact duplicate camelCase fields before serializing to email column so row size stays < 45 KB
+        const compactForEmail: Record<string, any> = { ...mergedState };
+        if (compactForEmail.owned_skins !== undefined) delete compactForEmail.ownedSkins;
+        if (compactForEmail.port_travel !== undefined) delete compactForEmail.portTravel;
+        if (compactForEmail.fishing_state !== undefined) delete compactForEmail.fishingState;
+        if (compactForEmail.daily_quests !== undefined) delete compactForEmail.dailyQuests;
+        if (compactForEmail.battle_pass !== undefined) delete compactForEmail.battlePass;
+        if (compactForEmail.claimed_achievement_ids !== undefined) delete compactForEmail.claimedAchievementIds;
+        if (compactForEmail.npc_companion !== undefined) delete compactForEmail.npcCompanion;
+        if (compactForEmail.phone_telemetry && compactForEmail.phone_telemetry.localStorageSnapshot) {
+          delete compactForEmail.phone_telemetry.localStorageSnapshot;
+        }
+        if (Array.isArray(compactForEmail.trade_protocol)) {
+          compactForEmail.trade_protocol = compactForEmail.trade_protocol.slice(0, 35).map((tp: any) => {
+            if (tp && tp.itemSnapshot && typeof tp.itemSnapshot.icon === 'string' && tp.itemSnapshot.icon.length > 500) {
+              return { ...tp, itemSnapshot: { ...tp.itemSnapshot, icon: '🗡️' } };
+            }
+            return tp;
+          });
+        }
+
+        const serializedEmail = JSON.stringify(compactForEmail);
+
+        // Record monotonic progress into dedicated __PLAYER_PROGRESS_LEDGER__ vault
+        recordPlayerToProgressLedger(cached.name || cleanName, mergedState);
+
+        playerStateCache.set(lowerName, {
+          ...cached,
+          ...mergedState,
+          password: mergedState.saved_password || cached.password,
+          saved_password: mergedState.saved_password || cached.saved_password,
+          email: serializedEmail,
+          name: cached.name || cleanName,
+          nick: cached.nick || cleanName,
+          gold: Math.floor(currentDbGold),
+          crystals: Math.floor(currentDbCrystals),
+          is_admin: currentIsAdmin,
+          isAdmin: currentIsAdmin,
+          admin_level: currentIsAdmin,
+          role: currentRole,
+          _hasFullEmailJson: true,
+          _rawEmailJson: mergedState,
+          _localUpdatedAt: Date.now(),
+          _localBalanceUpdatedAt: isBalanceWrite ? Date.now() : cached._localBalanceUpdatedAt,
+          _adminActionTimestamp: updates.is_admin_action ? Date.now() : cached._adminActionTimestamp
+        });
+
+        // IMPORTANT: Only include columns that actually exist on public.players (email, gold, crystals, is_admin, password)
+        // All extended hero state (lvl, exp, role, admin_level, bag_capacity, is_premium, etc.) is stored inside email JSON!
+        const isRoleUpdate =
+          Boolean(updates.is_admin_action) &&
+          (updates.is_admin !== undefined ||
+            (updates as any).admin_level !== undefined ||
+            (updates as any).role !== undefined);
+
+        const baseDbPayload: Record<string, any> = {
+          email: serializedEmail,
+          gold: Math.floor(currentDbGold),
+          crystals: Math.floor(currentDbCrystals)
+        };
+        if (updates.password !== undefined) baseDbPayload.password = String(updates.password);
+
+        const primaryPayload: Record<string, any> = {
+          ...baseDbPayload,
+          ...(isRoleUpdate ? { is_admin: currentIsAdmin } : {})
+        };
+
+        // Use fast id=eq or exact name=eq filter instead of slow full-table ilike scan
+        const exactDbName = String(cached.name || cleanName).trim();
+        const filterQuery =
+          cached.id !== undefined && Number.isFinite(Number(cached.id))
+            ? `id=eq.${encodeURIComponent(String(cached.id))}`
+            : `name=eq.${encodeURIComponent(exactDbName)}`;
+
+        const patchWithPayload = async (query: string, payloadObj: Record<string, any>): Promise<Response> => {
+          return fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?${query}`, {
+            method: 'PATCH',
+            cache: 'no-store',
+            headers: {
+              apikey: DEFAULT_SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal'
+            },
+            body: JSON.stringify(payloadObj)
+          });
+        };
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            let response = await patchWithPayload(filterQuery, primaryPayload);
+
+            // Fallback if public.players.is_admin column is boolean or rejects integer values like 2
+            if (!response.ok && isRoleUpdate) {
+              response = await patchWithPayload(filterQuery, {
+                ...baseDbPayload,
+                is_admin: Boolean(currentIsAdmin === 1)
+              });
+              if (!response.ok) {
+                response = await patchWithPayload(filterQuery, baseDbPayload);
+              }
+            }
+
+            if (response.ok) {
+              // If this was an admin action and we also have a numeric row id, patch by id too in case name had trailing spaces in DB
+              if (updates.is_admin_action && cached.id !== undefined && !filterQuery.startsWith('id=')) {
+                try {
+                  const idQuery = `id=eq.${encodeURIComponent(String(cached.id))}`;
+                  await patchWithPayload(idQuery, baseDbPayload);
+                } catch {}
+              }
+              return true;
+            }
+            const errText = await response.text();
+            console.warn(`[Supabase] Ошибка обновления игрока (попытка ${attempt}/3):`, errText);
+          } catch (netErr) {
+            console.warn(`[Supabase] Сетевая ошибка при сохранении (попытка ${attempt}/3):`, netErr);
+          }
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 300 * attempt));
+          }
+        }
+
+        return false;
+      } catch (err) {
+        console.warn('[Supabase] Исключение в updatePlayerInDatabase:', err);
+        return false;
+      }
+    });
+
+  playerUpdateQueues.set(lowerName, nextTask);
+  return nextTask;
+}
+
+/**
+ * Changes a character's password in Supabase `public.players` (both `password` column and `saved_password` in email JSON).
+ * Available to all players for their own character (with currentPassword check) or to Admin (isAdminOverride = true).
+ */
+export async function changePlayerPasswordInSupabase(
+  playerName: string,
+  currentPassword: string | null,
+  newPassword: string,
+  isAdminOverride: boolean = false
+): Promise<{ success: boolean; error?: string }> {
+  const cleanName = String(playerName || '').trim();
+  const cleanNew = String(newPassword || '').trim();
+  if (!cleanName) {
+    return { success: false, error: 'Не указан никнейм персонажа!' };
+  }
+  if (cleanNew.length < 3) {
+    return { success: false, error: 'Новый пароль должен содержать минимум 3 символа!' };
+  }
+
+  try {
+    const existing = await findPlayerInSupabase(cleanName);
+    if (!existing) {
+      return { success: false, error: `Персонаж «${cleanName}» не найден в базе данных!` };
+    }
+
+    const dbPass = String(existing.password ?? existing.saved_password ?? '').trim();
+    if (!isAdminOverride && dbPass && currentPassword !== null) {
+      const cleanCur = String(currentPassword || '').trim();
+      if (cleanCur.toLowerCase() !== dbPass.toLowerCase()) {
+        return { success: false, error: 'Текущий пароль введён неверно!' };
+      }
+    }
+
+    const ok = await updatePlayerInDatabase(cleanName, {
+      password: cleanNew,
+      saved_password: cleanNew,
+      last_action: isAdminOverride ? 'Смена пароля (Администратор)' : 'Смена пароля в настройках',
+      is_admin_action: isAdminOverride,
+      external_sync_ts: Date.now()
+    });
+
+    if (!ok) {
+      return { success: false, error: 'Ошибка сохранения нового пароля в базу данных Supabase.' };
+    }
+
+    if (typeof window !== 'undefined' && !isAdminOverride) {
+      try {
+        window.localStorage.setItem(`pyramida_saved_password_${cleanName.toLowerCase()}`, cleanNew);
+      } catch {}
+    }
+
+    return { success: true };
+  } catch (err) {
+    console.warn('[Supabase] Ошибка при смене пароля:', err);
+    return { success: false, error: 'Сетевая ошибка при смене пароля.' };
+  }
+}
+
+export const NICKNAME_CHANGE_COST_CRYSTALS = 1000;
+export const NICKNAME_CHANGE_COOLDOWN_DAYS = 30;
+export const NICKNAME_CHANGE_COOLDOWN_MS = NICKNAME_CHANGE_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+
+export function formatNicknameCooldownRemaining(lastChangeTs?: number, nowMs = Date.now()): {
+  isOnCooldown: boolean;
+  remainingMs: number;
+  nextAvailableTs: number;
+  formattedRemaining: string;
+} {
+  const ts = Math.max(0, Number(lastChangeTs || 0));
+  if (ts <= 0) {
+    return { isOnCooldown: false, remainingMs: 0, nextAvailableTs: 0, formattedRemaining: '' };
+  }
+  const nextAvailableTs = ts + NICKNAME_CHANGE_COOLDOWN_MS;
+  const remainingMs = Math.max(0, nextAvailableTs - nowMs);
+  if (remainingMs <= 0) {
+    return { isOnCooldown: false, remainingMs: 0, nextAvailableTs, formattedRemaining: '' };
+  }
+  const totalMin = Math.ceil(remainingMs / 60000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} дн.`);
+  if (hours > 0 || days > 0) parts.push(`${hours} ч.`);
+  parts.push(`${mins} мин.`);
+  return {
+    isOnCooldown: true,
+    remainingMs,
+    nextAvailableTs,
+    formattedRemaining: parts.join(' ')
+  };
+}
+
+/**
+ * Смена игрового ника в настройках профиля с проверкой баланса (>= 1 000 кристаллов),
+ * таймера 30 дней (last_name_change_date) и уникальности ника (SELECT COUNT(*) WHERE name = new_username).
+ */
+export async function changePlayerNicknameInSupabase(
+  oldNick: string,
+  newNick: string,
+  currentCrystals: number,
+  localLastChangeDate?: number
+): Promise<{
+  success: boolean;
+  newNick?: string;
+  nextCrystals?: number;
+  lastNameChangeDate?: number;
+  code?: 'insufficient_crystals' | 'cooldown' | 'nick_taken' | 'invalid_nick' | 'db_error';
+  error?: string;
+}> {
+  const cleanOld = String(oldNick || '').trim();
+  const cleanNew = String(newNick || '').trim();
+
+  if (!cleanOld) {
+    return { success: false, code: 'invalid_nick', error: 'Не удалось определить текущий никнейм игрока.' };
+  }
+  if (!cleanNew || cleanNew.length < 3 || cleanNew.length > 18) {
+    return {
+      success: false,
+      code: 'invalid_nick',
+      error: 'Новый никнейм должен содержать от 3 до 18 символов!'
+    };
+  }
+  if (cleanNew.startsWith('__') || /[<>"'\\/;]/.test(cleanNew)) {
+    return {
+      success: false,
+      code: 'invalid_nick',
+      error: 'Никнейм содержит недопустимые специальные символы!'
+    };
+  }
+  if (cleanOld.toLowerCase() === cleanNew.toLowerCase()) {
+    return {
+      success: false,
+      code: 'invalid_nick',
+      error: 'Новый никнейм совпадает с вашим текущим ником!'
+    };
+  }
+
+  // 1. Проверка баланса (>= 1 000 кристаллов)
+  if (Number(currentCrystals || 0) < NICKNAME_CHANGE_COST_CRYSTALS) {
+    return {
+      success: false,
+      code: 'insufficient_crystals',
+      error: 'Недостаточно кристаллов'
+    };
+  }
+
+  try {
+    const existingSelf = await findPlayerInSupabase(cleanOld);
+    const dbLastChange = Math.max(
+      Number(localLastChangeDate || 0),
+      Number(existingSelf?.last_name_change_date || existingSelf?.lastNameChangeDate || 0)
+    );
+
+    // 2. Проверка таймера 30 дней: current_time - last_name_change_date >= 30 days
+    const cooldownInfo = formatNicknameCooldownRemaining(dbLastChange, Date.now());
+    if (cooldownInfo.isOnCooldown) {
+      return {
+        success: false,
+        code: 'cooldown',
+        error: `Смену ника можно выполнять 1 раз в 30 дней! До следующей смены осталось: ${cooldownInfo.formattedRemaining}.`
+      };
+    }
+
+    // 3. Проверка уникальности: SELECT COUNT(*) FROM players WHERE name ILIKE new_username
+    const client = getSupabaseClient();
+    if (client) {
+      const { count, data: takenRows } = await client
+        .from('players')
+        .select('id, name', { count: 'exact' })
+        .ilike('name', cleanNew);
+      if ((count && count > 0) || (Array.isArray(takenRows) && takenRows.length > 0)) {
+        return {
+          success: false,
+          code: 'nick_taken',
+          error: 'Этот ник уже занят другим игроком'
+        };
+      }
+    }
+    const existingTarget = await findPlayerInSupabase(cleanNew);
+    if (existingTarget && String(existingTarget.name || existingTarget.nick || '').toLowerCase() !== cleanOld.toLowerCase()) {
+      return {
+        success: false,
+        code: 'nick_taken',
+        error: 'Этот ник уже занят другим игроком'
+      };
+    }
+
+    // 4. Списание 1 000 кристаллов, фиксация даты и переименование записи в базе
+    const nowTs = Date.now();
+    const nextCrystals = Math.max(0, Math.floor(Number(currentCrystals || 0) - NICKNAME_CHANGE_COST_CRYSTALS));
+
+    // Сначала обновляем поля внутри JSON-состояния по старому имени
+    await updatePlayerInDatabase(cleanOld, {
+      crystals: nextCrystals,
+      last_name_change_date: nowTs,
+      lastNameChangeDate: nowTs,
+      last_action: `Смена игрового ника: ${cleanOld} -> ${cleanNew}`,
+      is_balance_write: true,
+      external_sync_ts: nowTs
+    });
+
+    const cachedOld = playerStateCache.get(cleanOld.toLowerCase()) || existingSelf || {};
+    let parsedEmailObj: Record<string, any> = {};
+    if (cachedOld && typeof cachedOld.email === 'string' && cachedOld.email.trim().startsWith('{')) {
+      try {
+        parsedEmailObj = JSON.parse(cachedOld.email);
+      } catch {}
+    } else if (cachedOld && cachedOld._rawEmailJson) {
+      parsedEmailObj = { ...cachedOld._rawEmailJson };
+    }
+
+    const updatedEmailObj = {
+      ...parsedEmailObj,
+      nick: cleanNew,
+      name: cleanNew,
+      crystals: nextCrystals,
+      last_name_change_date: nowTs,
+      lastNameChangeDate: nowTs,
+      last_action: `Смена игрового ника: ${cleanOld} -> ${cleanNew}`,
+      external_sync_ts: nowTs
+    };
+    const serializedEmail = JSON.stringify(updatedEmailObj);
+
+    const filterQuery =
+      cachedOld && cachedOld.id !== undefined
+        ? `id=eq.${encodeURIComponent(String(cachedOld.id))}`
+        : `name=ilike.${encodeURIComponent(cleanOld)}`;
+
+    const patchRes = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?${filterQuery}`, {
+      method: 'PATCH',
+      cache: 'no-store',
+      headers: {
+        apikey: DEFAULT_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal'
+      },
+      body: JSON.stringify({
+        name: cleanNew,
+        crystals: nextCrystals,
+        email: serializedEmail
+      })
+    });
+
+    if (!patchRes.ok) {
+      return {
+        success: false,
+        code: 'db_error',
+        error: 'Не удалось обновить никнейм в базе данных. Попробуйте позже.'
+      };
+    }
+
+    // Обновляем локальный кеш Supabase и пароли
+    playerStateCache.delete(cleanOld.toLowerCase());
+    playerStateCache.set(cleanNew.toLowerCase(), {
+      ...cachedOld,
+      ...updatedEmailObj,
+      name: cleanNew,
+      nick: cleanNew,
+      crystals: nextCrystals,
+      email: serializedEmail,
+      _hasFullEmailJson: true,
+      _rawEmailJson: updatedEmailObj,
+      _localUpdatedAt: nowTs,
+      _localBalanceUpdatedAt: nowTs
+    });
+
+    if (typeof window !== 'undefined') {
+      try {
+        const oldPass = window.localStorage.getItem(`pyramida_saved_password_${cleanOld.toLowerCase()}`);
+        if (oldPass) {
+          window.localStorage.setItem(`pyramida_saved_password_${cleanNew.toLowerCase()}`, oldPass);
+        }
+      } catch {}
+    }
+
+    return {
+      success: true,
+      newNick: cleanNew,
+      nextCrystals,
+      lastNameChangeDate: nowTs
+    };
+  } catch (err) {
+    console.warn('[Supabase] Ошибка при смене ника:', err);
+    return {
+      success: false,
+      code: 'db_error',
+      error: 'Сетевая ошибка при проверке или сохранении нового никнейма.'
+    };
+  }
+}
+
+/**
+ * Deletes all records from the Supabase 'players' table
+ */
+export async function deleteAllPlayersFromDatabase(): Promise<boolean> {
+  const client = getSupabaseClient();
+  if (!client) return false;
+
+  try {
+    await client.from('players').delete().not('id', 'is', null);
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Ошибка очистки таблицы players:', err);
+    return false;
+  }
+}
+
+export async function registerPlayerInSupabase(
+  playerName: string,
+  email: string = '',
+  password: string = '',
+  gold?: number,
+  crystals?: number,
+  isAdmin?: number
+): Promise<boolean> {
+  const res = await savePlayerToDatabase(playerName, email, password, gold, crystals, isAdmin);
+  return res.success;
+}
+
+/**
+ * Syncs player position, pyramid tier, location, and online status to Supabase
+ * and dispatches local update event for instant UI feedback without touching existing progress.
+ */
+export async function syncPlayerToSupabase(player: Partial<RealtimePlayer> & { nick: string }): Promise<boolean> {
+  try {
+    if (!player.nick) return false;
+    const isOnlineNext = player.isOnline !== undefined ? Boolean(player.isOnline) : true;
+    const updatePayload: any = {
+      location: player.location,
+      pyramid_tier: player.pyramidTier,
+      пирамидальный_уровень: player.pyramidTier,
+      row: player.row,
+      ряд: player.row,
+      col: player.col,
+      ц: player.col,
+      hp: player.hp,
+      max_hp: player.maxHp,
+      lvl: player.lvl,
+      avatar: player.avatar,
+      is_premium: player.isPremium,
+      premium_until: player.premiumUntil,
+      is_online: isOnlineNext,
+      last_seen: Date.now()
+    };
+    if (player.gold !== undefined) updatePayload.gold = player.gold;
+    if (player.crystals !== undefined) updatePayload.crystals = player.crystals;
+    if (player.exp !== undefined) updatePayload.exp = player.exp;
+    if (player.clanId !== undefined) updatePayload.clanId = player.clanId;
+    if (player.clanTag !== undefined) updatePayload.clanTag = player.clanTag;
+    if (player.clanName !== undefined) updatePayload.clanName = player.clanName;
+    if (player.clanEmblem !== undefined) updatePayload.clanEmblem = player.clanEmblem;
+    if (player.clanRole !== undefined) updatePayload.clanRole = player.clanRole;
+
+    await updatePlayerInDatabase(player.nick, updatePayload);
+
+    if (typeof window !== 'undefined') {
+      const cached = playerStateCache.get(player.nick.trim().toLowerCase());
+      window.dispatchEvent(
+        new CustomEvent('supabase:player_update', {
+          detail: {
+            new: {
+              ...(cached || {}),
+              email: cached?._rawEmailJson ? JSON.stringify(cached._rawEmailJson) : undefined,
+              name: player.nick,
+              nick: player.nick,
+              lvl: player.lvl ?? cached?.lvl ?? 1,
+              hp: player.hp ?? cached?.hp ?? 100,
+              max_hp: player.maxHp ?? cached?.max_hp ?? 100,
+              avatar: player.avatar ?? cached?.avatar ?? '🧙‍♂️',
+              location: player.location ?? cached?.location ?? 'city',
+              pyramid_tier: player.pyramidTier ?? cached?.pyramid_tier ?? 1,
+              пирамидальный_уровень: player.pyramidTier ?? cached?.pyramid_tier ?? 1,
+              row: player.row ?? cached?.row ?? 9,
+              ряд: player.row ?? cached?.row ?? 9,
+              col: player.col ?? cached?.col ?? 4,
+              ц: player.col ?? cached?.col ?? 4,
+              is_premium: player.isPremium ?? cached?.is_premium ?? false,
+              premium_until: player.premiumUntil ?? cached?.premium_until ?? 0,
+              is_online: isOnlineNext,
+              last_seen: Date.now()
+            }
+          }
+        })
+      );
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Supabase] Exception syncing player:', err);
+    return false;
+  }
+}
+
+const tierUpdateQueues = new Map<number, Promise<PyramidTierState>>();
+
+/**
+ * Fetches the shared pyramid tier state (seed + cells array of monsters, sacks, portals, empty cells)
+ * from Supabase. If the tier does not yet exist in Supabase, initializes it deterministically and saves it.
+ */
+export async function fetchPyramidTierFromSupabase(tier: number): Promise<PyramidTierState> {
+  const safeTier = Math.max(1, Number(tier) || 1);
+  const sysName = `__TIER_${safeTier}__`;
+
+  let loadedState: PyramidTierState | null = null;
+
+  try {
+    const res = await fetch(
+      `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=eq.${encodeURIComponent(sysName)}&select=*&order=id.desc&limit=1`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
+      }
+    );
+
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        const unpacked = unpackSystemTierRow(rows[0]);
+        if (unpacked && Array.isArray(unpacked.cells) && unpacked.cells.length > 0) {
+          loadedState = unpacked;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase] Error fetching pyramid tier state:', err);
+  }
+
+  if (!loadedState) {
+    const cached = tierStateCache.get(safeTier);
+    if (cached && Array.isArray(cached.cells) && cached.cells.length > 0) {
+      loadedState = cached;
+    }
+  }
+
+  if (loadedState) {
+    // Perform automatic offline catch-up so monsters and rare bosses spawn even when no players were online!
+    const now = Date.now();
+    const lastResp = loadedState.lastRespawn > 0 ? loadedState.lastRespawn : now;
+    const occupiedCoords: { row: number; col: number }[] = [
+      { row: PYRAMID_SPAWN_POS.row, col: PYRAMID_SPAWN_POS.col }
+    ];
+    playerStateCache.forEach((p) => {
+      if (
+        p &&
+        p.location === 'pyramid' &&
+        Number(p.pyramid_tier ?? 1) === safeTier &&
+        Number(p.hp ?? 100) > 0
+      ) {
+        occupiedCoords.push({ row: Number(p.row ?? 9), col: Number(p.col ?? 1) });
+      }
+    });
+
+    let updatedCells = sanitizePyramidCellsForStorage(loadedState.cells);
+    let updatedSeed = loadedState.seed;
+    let updatedRespawn = lastResp;
+    let didCatchUp = false;
+
+    if (now - lastResp >= 60000) {
+      updatedSeed = Math.floor(now / 60000) * 100 + safeTier;
+      updatedCells = respawnDeterministicPyramidCells(
+        updatedCells,
+        safeTier,
+        updatedSeed,
+        occupiedCoords,
+        10
+      );
+      updatedRespawn = now;
+      didCatchUp = true;
+    }
+
+    const freeCells = getFreeEmptyPyramidCells(updatedCells, occupiedCoords, 10);
+    const normalizedTimers = normalizeRareBossTimers(loadedState.rareBossTimers, updatedCells, now);
+    const finalTimers = normalizedTimers.map((bTimer) => {
+      if (bTimer.isAliveOnMap) return bTimer;
+      if (bTimer.remainingMs <= 0) {
+        if (freeCells.length > 0) {
+          const chosen = freeCells.pop()!;
+          const rareCell = createRareBossMobCell(safeTier, bTimer.id);
+          updatedCells = updatedCells.map((rowArr, rI) =>
+            rowArr.map((c, cI) => (rI === chosen.r && cI === chosen.c ? rareCell : c))
+          );
+          didCatchUp = true;
+          return {
+            ...bTimer,
+            remainingMs: 0,
+            targetSpawnAt: now,
+            isFrozenWaitingForCell: false,
+            isAliveOnMap: true,
+            lastTickAt: now
+          };
+        }
+        return {
+          ...bTimer,
+          remainingMs: 0,
+          targetSpawnAt: now,
+          isFrozenWaitingForCell: true,
+          isAliveOnMap: false,
+          lastTickAt: now
+        };
+      }
+      return bTimer;
+    });
+
+    if (didCatchUp) {
+      return savePyramidTierToSupabase(
+        safeTier,
+        updatedCells,
+        updatedSeed,
+        updatedRespawn,
+        'offline_catchup',
+        finalTimers
+      );
+    }
+
+    return {
+      ...loadedState,
+      cells: updatedCells,
+      rareBossTimers: finalTimers
+    };
+  }
+
+  // Initialize deterministic tier map in Supabase so all connected players share the exact same seed & cells
+  const initialSeed = getCanonicalTierSeed(safeTier);
+  const initialCells = generateDeterministicPyramidCells(safeTier, initialSeed);
+  return savePyramidTierToSupabase(
+    safeTier,
+    initialCells,
+    initialSeed,
+    Date.now(),
+    'system',
+    createDefaultRareBossTimers(Date.now())
+  );
+}
+
+/**
+ * Saves the shared pyramid tier state (seed + sanitized cells array) to Supabase
+ * so all connected players see the exact same monsters, HP, sacks, portals, and empty cells in real time.
+ */
+export async function savePyramidTierToSupabase(
+  tier: number,
+  cells: PyramidCell[][],
+  seed?: number,
+  lastRespawn?: number,
+  updatedBy?: string,
+  rareBossTimers?: RareBossTimerState[]
+): Promise<PyramidTierState> {
+  const safeTier = Math.max(1, Number(tier) || 1);
+  const existing = tierStateCache.get(safeTier);
+  const nextSeed = Math.max(1, Number(seed ?? existing?.seed ?? getCanonicalTierSeed(safeTier)));
+  const cleanCells = sanitizePyramidCellsForStorage(
+    Array.isArray(cells) && cells.length > 0
+      ? cells
+      : generateDeterministicPyramidCells(safeTier, nextSeed)
+  );
+  const nextRespawn = Number(lastRespawn ?? existing?.lastRespawn ?? Date.now());
+  const now = Date.now();
+  const nextRareTimers = normalizeRareBossTimers(
+    rareBossTimers ?? existing?.rareBossTimers,
+    cleanCells,
+    now
+  );
+
+  const stateToSave: PyramidTierState & { _id?: number; _localWriteAt?: number } = {
+    tier: safeTier,
+    seed: nextSeed,
+    cells: cleanCells,
+    lastRespawn: nextRespawn,
+    rareBossTimers: nextRareTimers,
+    updatedAt: now,
+    updatedBy: updatedBy || existing?.updatedBy || 'player',
+    _id: existing?._id,
+    _localWriteAt: now
+  };
+
+  tierStateCache.set(safeTier, stateToSave);
+  notifyTierListeners(stateToSave);
+
+  const prevTask = tierUpdateQueues.get(safeTier) || Promise.resolve(stateToSave);
+  const nextTask = prevTask
+    .catch(() => stateToSave)
+    .then(async () => {
+      const sysName = `__TIER_${safeTier}__`;
+      const emailPayload = JSON.stringify({
+        is_system_tier: true,
+        tier: safeTier,
+        seed: nextSeed,
+        cells: cleanCells,
+        last_respawn: nextRespawn,
+        rare_boss_timers: nextRareTimers,
+        updated_at: now,
+        updated_by: stateToSave.updatedBy,
+        is_online: false,
+        location: 'city'
+      });
+
+      try {
+        // Check if row exists first if we don't have _id cached
+        let rowId = tierStateCache.get(safeTier)?._id;
+        if (rowId === undefined) {
+          const checkRes = await fetch(
+            `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=eq.${encodeURIComponent(sysName)}&select=id&order=id.desc&limit=1`,
+            {
+              method: 'GET',
+              cache: 'no-store',
+              headers: {
+                apikey: DEFAULT_SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`
+              }
+            }
+          );
+          if (checkRes.ok) {
+            const checkRows = await checkRes.json();
+            if (Array.isArray(checkRows) && checkRows.length > 0 && checkRows[0].id !== undefined) {
+              rowId = Number(checkRows[0].id);
+              const cur = tierStateCache.get(safeTier);
+              if (cur) cur._id = rowId;
+            }
+          }
+        }
+
+        if (rowId !== undefined) {
+          await fetch(
+            `${DEFAULT_SUPABASE_URL}/rest/v1/players?id=eq.${encodeURIComponent(String(rowId))}`,
+            {
+              method: 'PATCH',
+              cache: 'no-store',
+              headers: {
+                apikey: DEFAULT_SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal'
+              },
+              body: JSON.stringify({
+                email: emailPayload,
+                gold: 0,
+                crystals: 0,
+                is_admin: 0
+              })
+            }
+          );
+        } else {
+          const postRes = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players`, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {
+              apikey: DEFAULT_SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=representation'
+            },
+            body: JSON.stringify({
+              name: sysName,
+              email: emailPayload,
+              password: 'system_tier_lock',
+              gold: 0,
+              crystals: 0,
+              is_admin: 0
+            })
+          });
+          if (postRes.ok) {
+            const created = await postRes.json();
+            if (Array.isArray(created) && created.length > 0 && created[0].id !== undefined) {
+              const cur = tierStateCache.get(safeTier);
+              if (cur) cur._id = Number(created[0].id);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] Error saving pyramid tier state:', err);
+      }
+
+      return stateToSave;
+    });
+
+  tierUpdateQueues.set(safeTier, nextTask);
+  return nextTask;
+}
+
+let mailUpdateQueue: Promise<GlobalMailAndChatState> = Promise.resolve({
+  messages: [],
+  chatMessages: [],
+  updatedAt: 0
+});
+
+/**
+ * Fetches global mail and shared world chat messages from Supabase (`__GLOBAL_MAIL__` row).
+ */
+export async function fetchGlobalMailAndChatFromSupabase(): Promise<GlobalMailAndChatState> {
+  const sysName = '__GLOBAL_MAIL__';
+  try {
+    const res = await fetch(
+      `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=eq.${encodeURIComponent(sysName)}&select=*&order=id.desc&limit=1`,
+      {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          Pragma: 'no-cache'
+        }
+      }
+    );
+
+    if (res.ok) {
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length > 0) {
+        const unpacked = unpackSystemMailRow(rows[0]);
+        if (unpacked) {
+          notifyMailListeners(unpacked);
+          return unpacked;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase] Error fetching global mail/chat:', err);
+  }
+
+  if (globalMailCache) return globalMailCache;
+  return {
+    messages: [],
+    chatMessages: [],
+    updatedAt: Date.now()
+  };
+}
+
+export async function saveGlobalMailAndChatToSupabase(
+  updater: (current: GlobalMailAndChatState) => GlobalMailAndChatState
+): Promise<GlobalMailAndChatState> {
+  const nextTask = mailUpdateQueue
+    .catch(() => ({ messages: [], chatMessages: [], updatedAt: Date.now() }))
+    .then(async () => {
+      const sysName = '__GLOBAL_MAIL__';
+      let current: GlobalMailAndChatState = globalMailCache || {
+        messages: [],
+        chatMessages: [],
+        updatedAt: Date.now()
+      };
+      let rowId = globalMailCache?._id;
+
+      try {
+        const checkRes = await fetch(
+          `${DEFAULT_SUPABASE_URL}/rest/v1/players?name=eq.${encodeURIComponent(sysName)}&select=*&order=id.desc&limit=1`,
+          {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+              apikey: DEFAULT_SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`
+            }
+          }
+        );
+        if (checkRes.ok) {
+          const checkRows = await checkRes.json();
+          if (Array.isArray(checkRows) && checkRows.length > 0) {
+            rowId = checkRows[0].id !== undefined ? Number(checkRows[0].id) : rowId;
+            const latest = unpackSystemMailRow(checkRows[0]);
+            if (latest) {
+              // Merge local cache messages with DB messages by id so nothing is lost
+              const msgMap = new Map<string, PrivateMessage>();
+              latest.messages.forEach((m) =>
+                msgMap.set(m.id || `${m.from}_${m.to}_${m.time}`, m)
+              );
+              current.messages.forEach((m) => {
+                const k = m.id || `${m.from}_${m.to}_${m.time}`;
+                const ex = msgMap.get(k);
+                if (!ex) {
+                  msgMap.set(k, m);
+                } else {
+                  msgMap.set(k, {
+                    ...ex,
+                    ...m,
+                    gift: m.gift || ex.gift,
+                    read: Boolean(ex.read || m.read),
+                    giftClaimed: Boolean(ex.giftClaimed || m.giftClaimed),
+                    giftClaimedAt: ex.giftClaimedAt || m.giftClaimedAt
+                  });
+                }
+              });
+
+              const chatMap = new Map<string, ChatMessage>();
+              latest.chatMessages.forEach((c) => chatMap.set(c.id, c));
+              current.chatMessages.forEach((c) => {
+                if (!chatMap.has(c.id)) chatMap.set(c.id, c);
+              });
+
+              const winMap = new Map<string, WheelWinnerEntry>();
+              (latest.wheelWinners || []).forEach((w) => winMap.set(w.id, w));
+              (current.wheelWinners || []).forEach((w) => {
+                if (!winMap.has(w.id)) winMap.set(w.id, w);
+              });
+
+              const ordMap = new Map<string, CrystalOrder>();
+              ((latest as any).crystalOrders || []).forEach((o: CrystalOrder) => ordMap.set(o.id, o));
+              ((current as any).crystalOrders || []).forEach((o: CrystalOrder) => {
+                if (!ordMap.has(o.id)) ordMap.set(o.id, o);
+              });
+
+              current = {
+                messages: Array.from(msgMap.values()).slice(-200),
+                chatMessages: Array.from(chatMap.values()).slice(-80),
+                wheelWinners: Array.from(winMap.values())
+                  .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+                  .slice(0, 35),
+                crystalOrders: Array.from(ordMap.values()).slice(0, 150),
+                updatedAt: Date.now()
+              };
+            }
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      const updated = updater(current);
+      const now = Date.now();
+      const finalState: GlobalMailAndChatState & { _id?: number; _localWriteAt?: number } = {
+        messages: updated.messages.slice(-200),
+        chatMessages: updated.chatMessages.slice(-80),
+        wheelWinners: (updated.wheelWinners || []).slice(0, 35),
+        crystalOrders: (updated.crystalOrders || []).slice(0, 150),
+        updatedAt: now,
+        _id: rowId,
+        _localWriteAt: now
+      };
+
+      globalMailCache = finalState;
+      notifyMailListeners(finalState);
+
+      const emailPayload = JSON.stringify({
+        is_system_mail: true,
+        messages: finalState.messages,
+        chatMessages: finalState.chatMessages,
+        wheelWinners: finalState.wheelWinners,
+        crystalOrders: finalState.crystalOrders,
+        updated_at: now,
+        is_online: false,
+        location: 'city'
+      });
+
+      try {
+        if (rowId !== undefined) {
+          await fetch(
+            `${DEFAULT_SUPABASE_URL}/rest/v1/players?id=eq.${encodeURIComponent(String(rowId))}`,
+            {
+              method: 'PATCH',
+              cache: 'no-store',
+              headers: {
+                apikey: DEFAULT_SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal'
+              },
+              body: JSON.stringify({
+                email: emailPayload,
+                gold: 0,
+                crystals: 0,
+                is_admin: 0
+              })
+            }
+          );
+        } else {
+          const postRes = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players`, {
+            method: 'POST',
+            cache: 'no-store',
+            headers: {
+              apikey: DEFAULT_SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=representation'
+            },
+            body: JSON.stringify({
+              name: sysName,
+              email: emailPayload,
+              password: 'system_mail_lock',
+              gold: 0,
+              crystals: 0,
+              is_admin: 0
+            })
+          });
+          if (postRes.ok) {
+            const created = await postRes.json();
+            if (Array.isArray(created) && created.length > 0 && created[0].id !== undefined) {
+              if (globalMailCache) globalMailCache._id = Number(created[0].id);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Supabase] Error saving global mail/chat:', err);
+      }
+
+      return finalState;
+    });
+
+  mailUpdateQueue = nextTask;
+  return nextTask;
+}
+
+/**
+ * Sends a private mail message (optionally with a claimable gift attachment) from one player/admin to another via Supabase.
+ */
+export async function sendMailInSupabase(
+  fromNick: string,
+  toNick: string,
+  text: string,
+  gift?: MailGiftAttachment,
+  customId?: string
+): Promise<PrivateMessage[]> {
+  const cleanFrom = String(fromNick || '').trim();
+  const cleanTo = String(toNick || '').trim();
+  const cleanText = String(text || '').trim();
+  if (!cleanFrom || !cleanTo || !cleanText) {
+    return globalMailCache?.messages || [];
+  }
+
+  const now = Date.now();
+  const timeStr = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const hasGift = Boolean(
+    gift &&
+      ((gift.gold && gift.gold > 0) ||
+        (gift.crystals && gift.crystals > 0) ||
+        (gift.exp && gift.exp > 0) ||
+        (gift.statPoints && gift.statPoints > 0) ||
+        (gift.hpPotions && gift.hpPotions > 0) ||
+        (gift.enPotions && gift.enPotions > 0) ||
+        (gift.expPotions && gift.expPotions > 0) ||
+        (gift.energy && gift.energy > 0) ||
+        (gift.premiumDays && gift.premiumDays > 0) ||
+        (gift.wheelSpins && gift.wheelSpins > 0) ||
+        (gift.vipHours && gift.vipHours > 0) ||
+        Boolean(gift.item) ||
+        Boolean(Array.isArray(gift.items) && gift.items.length > 0) ||
+        Boolean(gift.relicsCount && gift.relicsCount > 0) ||
+        Boolean((gift as any).transport))
+  );
+
+  const newMsg: PrivateMessage = {
+    id: customId || `mail_${now}_${Math.random().toString(36).slice(2, 7)}`,
+    from: cleanFrom,
+    to: cleanTo,
+    text: cleanText,
+    time: now,
+    timeStr,
+    read: false,
+    ...(hasGift ? { gift, giftClaimed: false } : {})
+  };
+
+  const state = await saveGlobalMailAndChatToSupabase((cur) => ({
+    ...cur,
+    messages: [...cur.messages, newMsg],
+    updatedAt: now
+  }));
+
+  return state.messages;
+}
+
+const claimedGiftLocksInMemory = new Set<string>();
+
+/**
+ * Atomically marks a mail gift as claimed in Supabase (__GLOBAL_MAIL__) so it can NEVER be claimed more than once.
+ */
+export async function claimMailGiftInSupabase(
+  msgId: string,
+  recipientNick: string
+): Promise<{
+  success: boolean;
+  alreadyClaimed?: boolean;
+  gift?: MailGiftAttachment;
+  messages: PrivateMessage[];
+}> {
+  const cleanId = String(msgId || '').trim();
+  const cleanRec = String(recipientNick || '').trim().toLowerCase();
+  if (!cleanId || !cleanRec) {
+    return { success: false, messages: globalMailCache?.messages || [] };
+  }
+
+  if (claimedGiftLocksInMemory.has(cleanId)) {
+    return {
+      success: false,
+      alreadyClaimed: true,
+      messages: globalMailCache?.messages || []
+    };
+  }
+
+  let claimedGift: MailGiftAttachment | undefined = undefined;
+  let wasAlreadyClaimed = false;
+
+  const state = await saveGlobalMailAndChatToSupabase((cur) => {
+    const nextMessages = cur.messages.map((m) => {
+      const mId = String(m.id || `${m.from}_${m.to}_${m.time}`);
+      const isMatched =
+        mId === cleanId ||
+        mId.toLowerCase() === cleanId.toLowerCase() ||
+        (cleanId.startsWith('gift_admin_') &&
+          String(m.from || '').includes('Админ') &&
+          String(m.to || '').trim().toLowerCase() === cleanRec);
+      if (!isMatched) return m;
+      const isToRecipient = String(m.to || '').trim().toLowerCase() === cleanRec;
+      if (!isToRecipient || !m.gift) return m;
+
+      if (m.giftClaimed) {
+        wasAlreadyClaimed = true;
+        return m;
+      }
+
+      claimedGift = m.gift;
+      return {
+        ...m,
+        read: true,
+        giftClaimed: true,
+        giftClaimedAt: Date.now()
+      };
+    });
+
+    return {
+      ...cur,
+      messages: nextMessages,
+      updatedAt: Date.now()
+    };
+  });
+
+  claimedGiftLocksInMemory.add(cleanId);
+
+  if (wasAlreadyClaimed) {
+    return {
+      success: false,
+      alreadyClaimed: true,
+      messages: state.messages
+    };
+  }
+
+  return {
+    success: true,
+    gift: claimedGift,
+    messages: state.messages
+  };
+}
+
+/**
+ * Marks incoming messages for `recipientNick` (optionally from `senderNick`) as read in Supabase.
+ */
+export async function markMailReadInSupabase(
+  recipientNick: string,
+  senderNick?: string
+): Promise<PrivateMessage[]> {
+  const cleanRec = String(recipientNick || '').trim().toLowerCase();
+  const cleanSender = senderNick ? String(senderNick).trim().toLowerCase() : null;
+  if (!cleanRec) return globalMailCache?.messages || [];
+
+  const state = await saveGlobalMailAndChatToSupabase((cur) => ({
+    ...cur,
+    messages: cur.messages.map((m) => {
+      const isToMe = String(m.to || '').trim().toLowerCase() === cleanRec;
+      const isFromSender =
+        !cleanSender || String(m.from || '').trim().toLowerCase() === cleanSender;
+      if (isToMe && isFromSender && !m.read) {
+        return { ...m, read: true };
+      }
+      return m;
+    }),
+    updatedAt: Date.now()
+  }));
+
+  return state.messages;
+}
+
+/**
+ * Broadcasts a chat message (e.g. World Chat rare drop or player message) to all players via Supabase.
+ */
+export async function broadcastWorldChatMessageInSupabase(
+  msg: ChatMessage
+): Promise<ChatMessage[]> {
+  const state = await saveGlobalMailAndChatToSupabase((cur) => {
+    const exists = cur.chatMessages.some((c) => c.id === msg.id);
+    if (exists) return cur;
+    return {
+      ...cur,
+      chatMessages: [...cur.chatMessages, msg],
+      updatedAt: Date.now()
+    };
+  });
+
+  return state.chatMessages;
+}
+
+/**
+ * Deletes a specific chat message from the shared Supabase chat state (`__GLOBAL_MAIL__`)
+ */
+export async function deleteWorldChatMessageInSupabase(
+  msgId: string
+): Promise<ChatMessage[]> {
+  if (!msgId) return globalMailCache?.chatMessages || [];
+  if (globalMailCache) {
+    globalMailCache.chatMessages = globalMailCache.chatMessages.filter((c) => c.id !== msgId);
+  }
+  const state = await saveGlobalMailAndChatToSupabase((cur) => ({
+    ...cur,
+    chatMessages: cur.chatMessages.filter((c) => c.id !== msgId),
+    updatedAt: Date.now()
+  }));
+  return state.chatMessages;
+}
+
+/**
+ * Clears all world chat messages from Supabase (__GLOBAL_MAIL__)
+ */
+export async function clearWorldChatMessagesInSupabase(): Promise<ChatMessage[]> {
+  if (globalMailCache) {
+    globalMailCache.chatMessages = globalMailCache.chatMessages.filter(
+      (c) => c.channel !== 'world'
+    );
+  }
+  const state = await saveGlobalMailAndChatToSupabase((cur) => ({
+    ...cur,
+    chatMessages: cur.chatMessages.filter((c) => c.channel !== 'world'),
+    updatedAt: Date.now()
+  }));
+  return state.chatMessages;
+}
+
+/**
+ * Helper: extracts the epoch timestamp (ms) of a chat message from msg.timestamp, msg.id, or msg.time (HH:MM)
+ */
+export function resolveChatMessageTimestampMs(msg: ChatMessage, nowMs: number = Date.now()): number | null {
+  if (!msg) return null;
+  if (typeof msg.id === 'string' && msg.id.startsWith('init_chat_')) {
+    return null;
+  }
+  if (typeof msg.timestamp === 'number' && msg.timestamp > 0) {
+    return msg.timestamp;
+  }
+  if (typeof msg.id === 'string') {
+    const idMatch = msg.id.match(/(\d{13})/);
+    if (idMatch && idMatch[1]) {
+      const parsed = Number(idMatch[1]);
+      if (Number.isFinite(parsed) && parsed > 1700000000000) {
+        return parsed;
+      }
+    }
+  }
+  if (typeof msg.time === 'string') {
+    const timeMatch = msg.time.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (timeMatch) {
+      const hh = parseInt(timeMatch[1], 10);
+      const mm = parseInt(timeMatch[2], 10);
+      const d = new Date(nowMs);
+      d.setHours(hh, mm, 0, 0);
+      let candidate = d.getTime();
+      if (candidate - nowMs > 12 * 3600 * 1000) {
+        candidate -= 24 * 3600 * 1000;
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
+/**
+ * Clears only recent chat messages written within the last `minutes` (default 3 minutes = 180 seconds)
+ * Used by Moderators and Administrators to clean recent spam (2–3 minutes) without wiping the entire chat.
+ */
+export async function clearRecentWorldChatMessagesInSupabase(
+  minutes: number = 3
+): Promise<{ remaining: ChatMessage[]; removedCount: number }> {
+  const safeMinutes = Math.max(1, Math.min(60, Number(minutes) || 3));
+  const nowMs = Date.now();
+  const cutoffMs = nowMs - safeMinutes * 60 * 1000;
+
+  const isRecentToRemove = (c: ChatMessage): boolean => {
+    const ts = resolveChatMessageTimestampMs(c, nowMs);
+    if (ts === null) return false;
+    return ts >= cutoffMs && ts <= nowMs + 120000;
+  };
+
+  let removedCount = 0;
+  if (globalMailCache && Array.isArray(globalMailCache.chatMessages)) {
+    const before = globalMailCache.chatMessages.length;
+    globalMailCache.chatMessages = globalMailCache.chatMessages.filter((c) => !isRecentToRemove(c));
+    removedCount = Math.max(0, before - globalMailCache.chatMessages.length);
+  }
+
+  const state = await saveGlobalMailAndChatToSupabase((cur) => {
+    const before = cur.chatMessages.length;
+    const filtered = cur.chatMessages.filter((c) => !isRecentToRemove(c));
+    removedCount = Math.max(removedCount, before - filtered.length);
+    return {
+      ...cur,
+      chatMessages: filtered,
+      updatedAt: Date.now()
+    };
+  });
+
+  return {
+    remaining: state.chatMessages,
+    removedCount
+  };
+}
+
+/**
+ * Records a roulette winner entry in Supabase (`__GLOBAL_MAIL__.wheelWinners`) for real-time display.
+ */
+export async function recordWheelWinnerInSupabase(
+  winner: WheelWinnerEntry
+): Promise<WheelWinnerEntry[]> {
+  const state = await saveGlobalMailAndChatToSupabase((cur) => {
+    const existing = cur.wheelWinners || [];
+    if (existing.some((w) => w.id === winner.id)) return cur;
+    return {
+      ...cur,
+      wheelWinners: [winner, ...existing].slice(0, 35),
+      updatedAt: Date.now()
+    };
+  });
+  return state.wheelWinners || [];
+}
+
+/**
+ * Credits a recipient player in Supabase with transferred Gold and records the transaction in their Trade Protocol.
+ */
+export async function transferGoldToPlayerInSupabase(
+  fromNick: string,
+  toNick: string,
+  amount: number,
+  description: string = 'Перевод золота'
+): Promise<boolean> {
+  const cleanTo = String(toNick || '').trim();
+  if (!cleanTo || amount <= 0) return false;
+  const target = await findPlayerInSupabase(cleanTo);
+  if (!target) return false;
+
+  const now = Date.now();
+  const dateStr = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const incomingEntry: TradeProtocolEntry = {
+    id: `prot_gold_in_${now}_${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: now,
+    dateStr,
+    type: 'gold_transfer',
+    description: `🪙 Получен перевод: +${amount} золота от игрока ${fromNick}. Комментарий: «${description}»`,
+    targetNick: fromNick,
+    amount
+  };
+
+  const existingProt: TradeProtocolEntry[] = Array.isArray(target.trade_protocol)
+    ? target.trade_protocol
+    : [];
+
+  return updatePlayerInDatabase(cleanTo, {
+    gold: Math.max(0, Number(target.gold ?? 0) + amount),
+    trade_protocol: [incomingEntry, ...existingProt].slice(0, 40),
+    external_sync_ts: now
+  });
+}
+
+export const transferGoldBetweenPlayersInSupabase = transferGoldToPlayerInSupabase;
+
+/**
+ * Credits a recipient player in Supabase with a transferred Item and records the transaction in their Trade Protocol.
+ */
+export async function transferItemToPlayerInSupabase(
+  fromNick: string,
+  toNick: string,
+  item: GameItem
+): Promise<boolean> {
+  const cleanTo = String(toNick || '').trim();
+  if (!cleanTo || !item) return false;
+  const target = await findPlayerInSupabase(cleanTo);
+  if (!target) return false;
+
+  const now = Date.now();
+  const dateStr = new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const safeIconText =
+    typeof item.icon === 'string' &&
+    (item.icon.startsWith('data:') || item.icon.startsWith('/') || item.icon.startsWith('http'))
+      ? '🖼️'
+      : item.icon || '⚔️';
+  const incomingEntry: TradeProtocolEntry = {
+    id: `prot_item_in_${now}_${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: now,
+    dateStr,
+    type: 'transfer_in',
+    description: `📦 Получен предмет: ${safeIconText} ${item.name} от игрока ${fromNick}`,
+    itemSnapshot: { name: item.name, icon: item.icon, quality: item.quality },
+    targetNick: fromNick
+  };
+
+  const existingInv: GameItem[] = Array.isArray(target.inventory) ? target.inventory : [];
+  const existingProt: TradeProtocolEntry[] = Array.isArray(target.trade_protocol)
+    ? target.trade_protocol
+    : [];
+
+  return updatePlayerInDatabase(cleanTo, {
+    inventory: [item, ...existingInv],
+    trade_protocol: [incomingEntry, ...existingProt].slice(0, 40),
+    external_sync_ts: now
+  });
+}
+
+export const transferItemBetweenPlayersInSupabase = transferItemToPlayerInSupabase;
+
+export interface AdminModifyPlayerBalanceOptions {
+  goldDelta?: number;
+  crystalsDelta?: number;
+  expDelta?: number;
+  setGold?: number;
+  setCrystals?: number;
+  setLevel?: number;
+  setExp?: number;
+  addExp?: number;
+  setStatPoints?: number;
+  setStr?: number;
+  setAgi?: number;
+  setVit?: number;
+  setHp?: number;
+  setMaxHp?: number;
+  setEnergy?: number;
+  setMaxEnergy?: number;
+  setHpPotions?: number;
+  setEnPotions?: number;
+  setExpPotions?: number;
+  setBagCapacity?: number;
+  setBonusDmg?: number;
+  setBonusHp?: number;
+  setKillerLicenses?: number;
+  activateKillerLicenseHours?: number;
+  setPyramidCard1?: number;
+  setPyramidCard2?: number;
+  setPyramidCard3?: number;
+  setIsPremium?: boolean;
+  setPremiumUntil?: number;
+  grantVipHours?: number;
+  setExactVipHours?: number;
+  grantVip12h?: boolean;
+  revokeVip?: boolean;
+  setIsAdmin?: number;
+  setRole?: 'admin' | 'mod' | 'regular';
+  removeInventoryItemId?: string;
+  unequipSlot?: string;
+  addInventoryItem?: any;
+  updateInventoryItem?: any;
+  updateEquippedItem?: { slot: string; item: any };
+  equipItemToSlot?: { slot: string; item: any };
+  repairAllItems?: boolean;
+  resetDailyExchangeLimits?: boolean;
+  resetDailyRouletteSpins?: boolean;
+  daily_login_day?: number;
+  daily_login_last_date?: string;
+  resetDailyLoginReward?: boolean;
+  setMobsKilled?: number;
+  addMobsKilled?: number;
+  setTotalGoldCollected?: number;
+  setBanInfo?: PlayerBanInfo | null;
+  setOwnedSkinIds?: string[];
+  setOwnedSkinExpirations?: Record<string, number>;
+  setOwnedSkins?: CharacterSkinTemplate[];
+  setActiveSkinId?: string | null;
+  setAvatar?: string;
+  setNpcCompanion?: any;
+}
+
+export interface AdminModifyPlayerResult {
+  success: boolean;
+  error?: string;
+  updatedPlayer?: RealtimePlayer;
+  rawPlayer?: any;
+}
+
+/**
+ * Allows the Administrator to safely modify any player's balance, level (both up and down), exp, stats, gear, or VIP status in Supabase.
+ */
+export async function adminModifyPlayerBalanceInSupabase(
+  targetNick: string,
+  options: AdminModifyPlayerBalanceOptions
+): Promise<AdminModifyPlayerResult> {
+  const cleanTarget = String(targetNick || '').trim();
+  if (!cleanTarget) return { success: false, error: 'Ник игрока не указан' };
+
+  const rawRow = await findPlayerInSupabase(cleanTarget);
+  if (!rawRow) {
+    return {
+      success: false,
+      error: `Игрок «${cleanTarget}» не найден в базе данных Supabase`
+    };
+  }
+
+  const existing = unpackPlayerRow(rawRow);
+  const oldLvl = Math.max(1, Number(existing.lvl ?? 1));
+
+  const updates: Parameters<typeof updatePlayerInDatabase>[1] = {
+    is_admin_action: true
+  };
+
+  if (options.setGold !== undefined) {
+    updates.gold = Math.max(0, Math.floor(options.setGold));
+  } else if (options.goldDelta !== undefined) {
+    updates.gold = Math.max(0, Math.floor(Number(existing.gold ?? 0) + options.goldDelta));
+  }
+  if (options.setTotalGoldCollected !== undefined) {
+    updates.total_gold_collected = Math.max(0, Math.floor(options.setTotalGoldCollected));
+  } else if (updates.gold !== undefined) {
+    updates.total_gold_collected = Math.max(Number(existing.total_gold_collected ?? existing.gold ?? 0), updates.gold);
+  }
+
+  if (options.setMobsKilled !== undefined) {
+    updates.mobs_killed = Math.max(0, Math.floor(options.setMobsKilled));
+    updates.mob_kills = updates.mobs_killed;
+  } else if (options.addMobsKilled !== undefined) {
+    updates.mobs_killed = Math.max(0, Math.floor(Number(existing.mobs_killed ?? 0) + options.addMobsKilled));
+    updates.mob_kills = updates.mobs_killed;
+  }
+
+  if (options.setCrystals !== undefined) {
+    updates.crystals = Math.max(0, Math.floor(options.setCrystals));
+  } else if (options.crystalsDelta !== undefined) {
+    updates.crystals = Math.max(0, Math.floor(Number(existing.crystals ?? 0) + options.crystalsDelta));
+  }
+
+  if (options.setStr !== undefined) {
+    updates.str = Math.max(1, Math.floor(options.setStr));
+  }
+  if (options.setAgi !== undefined) {
+    updates.agi = Math.max(1, Math.floor(options.setAgi));
+  }
+  if (options.setVit !== undefined) {
+    updates.vit = Math.max(1, Math.floor(options.setVit));
+  }
+  if (options.setStatPoints !== undefined) {
+    updates.stat_points = Math.max(0, Math.floor(options.setStatPoints));
+  }
+  if (options.setHpPotions !== undefined) {
+    updates.hp_potions = Math.max(0, Math.floor(options.setHpPotions));
+  }
+  if (options.setEnPotions !== undefined) {
+    updates.en_potions = Math.max(0, Math.floor(options.setEnPotions));
+  }
+  if (options.setExpPotions !== undefined) {
+    updates.exp_potions = Math.max(0, Math.floor(options.setExpPotions));
+  }
+  if (options.setBagCapacity !== undefined) {
+    updates.bag_capacity = Math.max(20, Math.floor(options.setBagCapacity));
+  }
+  if (options.setBonusDmg !== undefined) {
+    updates.bonus_dmg = Math.max(0, Math.floor(options.setBonusDmg));
+  }
+  if (options.setBonusHp !== undefined) {
+    updates.bonus_hp = Math.max(0, Math.floor(options.setBonusHp));
+  }
+  if (options.setKillerLicenses !== undefined) {
+    (updates as any).killer_licenses = Math.max(0, Math.floor(options.setKillerLicenses));
+    (updates as any).killerLicenses = Math.max(0, Math.floor(options.setKillerLicenses));
+  }
+  if (options.activateKillerLicenseHours !== undefined) {
+    if (options.activateKillerLicenseHours > 0) {
+      const until = Date.now() + Math.round(options.activateKillerLicenseHours * 3600 * 1000);
+      (updates as any).killer_license_until = until;
+      (updates as any).killerLicenseUntil = until;
+    } else {
+      (updates as any).killer_license_until = 0;
+      (updates as any).killerLicenseUntil = 0;
+    }
+  }
+  if (options.setPyramidCard1 !== undefined) {
+    (updates as any).pyramid_card_1 = Math.max(0, Math.floor(options.setPyramidCard1));
+    (updates as any).pyramidCard1 = Math.max(0, Math.floor(options.setPyramidCard1));
+  }
+  if (options.setPyramidCard2 !== undefined) {
+    (updates as any).pyramid_card_2 = Math.max(0, Math.floor(options.setPyramidCard2));
+    (updates as any).pyramidCard2 = Math.max(0, Math.floor(options.setPyramidCard2));
+  }
+  if (options.setPyramidCard3 !== undefined) {
+    (updates as any).pyramid_card_3 = Math.max(0, Math.floor(options.setPyramidCard3));
+    (updates as any).pyramidCard3 = Math.max(0, Math.floor(options.setPyramidCard3));
+  }
+  if (options.setNpcCompanion !== undefined) {
+    (updates as any).npc_companion = options.setNpcCompanion;
+    (updates as any).npcCompanion = options.setNpcCompanion;
+  }
+  if (options.setIsPremium !== undefined) {
+    updates.is_premium = Boolean(options.setIsPremium);
+  }
+  if (options.setPremiumUntil !== undefined) {
+    updates.premium_until = Math.max(0, Math.floor(options.setPremiumUntil));
+  }
+  if (options.setIsAdmin !== undefined || options.setRole !== undefined) {
+    const adminNum =
+      options.setIsAdmin !== undefined
+        ? Number(options.setIsAdmin)
+        : options.setRole === 'admin'
+        ? 1
+        : options.setRole === 'mod'
+        ? 2
+        : 0;
+    const roleStr: 'admin' | 'mod' | 'regular' =
+      options.setRole !== undefined
+        ? options.setRole
+        : adminNum === 1
+        ? 'admin'
+        : adminNum === 2
+        ? 'mod'
+        : 'regular';
+    updates.is_admin = adminNum;
+    (updates as any).admin_level = adminNum;
+    (updates as any).role = roleStr;
+  }
+  if (options.setBanInfo !== undefined) {
+    (updates as any).ban_info = options.setBanInfo;
+    (updates as any).banInfo = options.setBanInfo;
+  }
+  if (options.setOwnedSkinIds !== undefined) {
+    (updates as any).owned_skin_ids = options.setOwnedSkinIds;
+    (updates as any).ownedSkinIds = options.setOwnedSkinIds;
+  }
+  if (options.setOwnedSkinExpirations !== undefined) {
+    (updates as any).owned_skin_expirations = options.setOwnedSkinExpirations;
+    (updates as any).ownedSkinExpirations = options.setOwnedSkinExpirations;
+  }
+  if (options.setOwnedSkins !== undefined) {
+    (updates as any).owned_skins = options.setOwnedSkins;
+    (updates as any).ownedSkins = options.setOwnedSkins;
+    registerPlayerOwnedSkinsInMemory(options.setOwnedSkins);
+  }
+  if (options.setActiveSkinId !== undefined) {
+    (updates as any).active_skin_id = options.setActiveSkinId;
+    (updates as any).activeSkinId = options.setActiveSkinId;
+  }
+  if (options.setAvatar !== undefined) {
+    updates.avatar = options.setAvatar;
+  }
+
+  if (options.removeInventoryItemId) {
+    const curInv = Array.isArray(existing.inventory) ? existing.inventory : [];
+    updates.inventory = curInv.filter((it: any) => it && it.id !== options.removeInventoryItemId);
+  }
+
+  if (options.unequipSlot) {
+    const curEq = { ...(existing.equipped || {}) };
+    const itemToBag = curEq[options.unequipSlot];
+    delete curEq[options.unequipSlot];
+    updates.equipped = curEq;
+    if (itemToBag) {
+      const curInv = Array.isArray(updates.inventory ?? existing.inventory)
+        ? (updates.inventory ?? existing.inventory)
+        : [];
+      updates.inventory = [itemToBag, ...curInv];
+    }
+  }
+
+  if (options.addInventoryItem) {
+    const curInv = Array.isArray(updates.inventory ?? existing.inventory)
+      ? (updates.inventory ?? existing.inventory)
+      : [];
+    updates.inventory = [options.addInventoryItem, ...curInv];
+  }
+
+  if (options.updateInventoryItem && options.updateInventoryItem.id) {
+    const curInv = Array.isArray(updates.inventory ?? existing.inventory)
+      ? (updates.inventory ?? existing.inventory)
+      : [];
+    updates.inventory = curInv.map((it: any) =>
+      it && it.id === options.updateInventoryItem.id ? { ...it, ...options.updateInventoryItem } : it
+    );
+  }
+
+  if (options.updateEquippedItem && options.updateEquippedItem.slot) {
+    const curEq = { ...(updates.equipped ?? existing.equipped ?? {}) };
+    const slotKey = options.updateEquippedItem.slot;
+    if (curEq[slotKey]) {
+      curEq[slotKey] = { ...curEq[slotKey], ...options.updateEquippedItem.item };
+    } else {
+      curEq[slotKey] = options.updateEquippedItem.item;
+    }
+    updates.equipped = curEq;
+  }
+
+  if (options.equipItemToSlot && options.equipItemToSlot.slot && options.equipItemToSlot.item) {
+    const curEq = { ...(updates.equipped ?? existing.equipped ?? {}) };
+    const slotKey = options.equipItemToSlot.slot;
+    const prevEquipped = curEq[slotKey];
+    curEq[slotKey] = options.equipItemToSlot.item;
+    updates.equipped = curEq;
+    if (prevEquipped) {
+      const curInv = Array.isArray(updates.inventory ?? existing.inventory)
+        ? (updates.inventory ?? existing.inventory)
+        : [];
+      updates.inventory = [prevEquipped, ...curInv];
+    }
+  }
+
+  if (options.repairAllItems) {
+    const curEq = { ...(updates.equipped ?? existing.equipped ?? {}) };
+    Object.keys(curEq).forEach((k) => {
+      if (curEq[k]) {
+        const maxD = Math.max(1, Number(curEq[k].maxDurability ?? 10));
+        curEq[k] = { ...curEq[k], durability: maxD, maxDurability: maxD };
+      }
+    });
+    updates.equipped = curEq;
+    const curInv = Array.isArray(updates.inventory ?? existing.inventory)
+      ? (updates.inventory ?? existing.inventory)
+      : [];
+    updates.inventory = curInv.map((it: any) => {
+      if (!it) return it;
+      const maxD = Math.max(1, Number(it.maxDurability ?? 10));
+      return { ...it, durability: maxD, maxDurability: maxD };
+    });
+  }
+
+  if (options.resetDailyExchangeLimits) {
+    updates.daily_crystal_to_gold_count = 0;
+    updates.daily_crystal_to_gold_date = '';
+    updates.daily_gold_to_crystal_count = 0;
+    updates.daily_gold_to_crystal_date = '';
+  }
+
+  if (options.resetDailyRouletteSpins) {
+    updates.last_wheel_spin_time = 0;
+    updates.daily_free_wheel_spins = 0;
+    updates.daily_gold_wheel_spins = 0;
+    updates.daily_crystal_wheel_spins = 0;
+    updates.daily_wheel_spins_date = '';
+  }
+
+  if (options.resetDailyLoginReward) {
+    updates.daily_login_day = 0;
+    updates.daily_login_last_date = '';
+  } else {
+    if (options.daily_login_day !== undefined) updates.daily_login_day = options.daily_login_day;
+    if (options.daily_login_last_date !== undefined) updates.daily_login_last_date = options.daily_login_last_date;
+  }
+
+  // 1. Determine base level and exp before rollover
+  let curLvl =
+    options.setLevel !== undefined && options.setLevel >= 1
+      ? Math.max(1, Math.min(MAX_LEVEL, Math.floor(options.setLevel)))
+      : oldLvl;
+
+  let curExp =
+    options.setExp !== undefined
+      ? Math.max(0, Math.floor(options.setExp))
+      : Math.max(0, Math.floor(Number(existing.exp ?? 0)));
+
+  if (options.setLevel !== undefined && curLvl < oldLvl && options.setExp === Math.floor(Number(existing.exp ?? 0))) {
+    curExp = 0;
+  }
+
+  const expToAdd = Number(options.addExp ?? options.expDelta ?? 0);
+  if (expToAdd !== 0) {
+    curExp = Math.max(0, curExp + Math.floor(expToAdd));
+  }
+
+  // 2. Always roll over level automatically if curExp >= EXP_TABLE[curLvl]
+  while (curLvl < MAX_LEVEL && curExp >= (EXP_TABLE[curLvl] || 9999999)) {
+    const needed = EXP_TABLE[curLvl] || 9999999;
+    curExp -= needed;
+    curLvl += 1;
+  }
+
+  updates.lvl = curLvl;
+  updates.exp = Math.max(0, curExp);
+
+  // 3. Award level-up gold/crystals if level increased and gold/crystals weren't explicitly overridden
+  if (curLvl > oldLvl) {
+    let gainedGold = 0;
+    let gainedCrystals = 0;
+    for (let l = oldLvl + 1; l <= curLvl; l++) {
+      const rw = LEVEL_UP_REWARDS[l];
+      if (rw) {
+        gainedGold += rw.gold;
+        gainedCrystals += rw.crystals;
+      }
+    }
+    if (options.setGold === undefined && options.goldDelta === undefined && gainedGold > 0) {
+      updates.gold = Math.max(0, Number(existing.gold ?? 0)) + gainedGold;
+    }
+    if (options.setCrystals === undefined && options.crystalsDelta === undefined && gainedCrystals > 0) {
+      updates.crystals = Math.max(0, Number(existing.crystals ?? 0)) + gainedCrystals;
+    }
+  }
+
+  // 4. Automatically normalize stats (str, agi, vit, stat_points) in BOTH directions (level up & level down)
+  const rawStr = updates.str !== undefined ? updates.str : Number(existing.str ?? 1);
+  const rawAgi = updates.agi !== undefined ? updates.agi : Number(existing.agi ?? 1);
+  const rawVit = updates.vit !== undefined ? updates.vit : Number(existing.vit ?? 1);
+  const rawSp = updates.stat_points !== undefined ? updates.stat_points : Number(existing.stat_points ?? 0);
+
+  const normStats = normalizeStatsForLevel(curLvl, rawStr, rawAgi, rawVit, rawSp);
+  updates.str = normStats.str;
+  updates.agi = normStats.agi;
+  updates.vit = normStats.vit;
+  updates.stat_points = normStats.statPoints;
+
+  // 5. Unequip any item exceeding curLvl and compute accurate max_hp & max_energy
+  const curEqObj = { ...(updates.equipped ?? existing.equipped ?? {}) };
+  const curInvArr: any[] = Array.isArray(updates.inventory ?? existing.inventory)
+    ? [...(updates.inventory ?? existing.inventory)]
+    : [];
+  let gearHpBonus = 0;
+  let gearEnBonus = 0;
+  let eqChanged = false;
+  Object.keys(curEqObj).forEach((slotKey) => {
+    const it = curEqObj[slotKey];
+    if (!it) return;
+    if (Number(it.lvl || 1) > curLvl) {
+      curInvArr.unshift(it);
+      curEqObj[slotKey] = null;
+      eqChanged = true;
+    } else if (Number(it.durability ?? 1) > 0) {
+      gearHpBonus += Number(it.hp || 0);
+      gearEnBonus += Number(it.energyBonus || 0);
+    }
+  });
+  if (eqChanged) {
+    updates.equipped = curEqObj;
+    updates.inventory = curInvArr;
+  }
+
+  const calcMaxHp = getHeroMaxHpFromVit(normStats.vit) + gearHpBonus + Number(existing.bonus_hp ?? 0);
+  const calcMaxEn = 100 + gearEnBonus;
+
+  updates.max_hp = options.setMaxHp !== undefined ? Math.max(50, Math.floor(options.setMaxHp)) : calcMaxHp;
+  updates.max_energy = options.setMaxEnergy !== undefined ? Math.max(30, Math.floor(options.setMaxEnergy)) : calcMaxEn;
+  updates.hp = options.setHp !== undefined ? Math.max(1, Math.min(updates.max_hp, Math.floor(options.setHp))) : updates.max_hp;
+  updates.energy = options.setEnergy !== undefined ? Math.max(0, Math.min(updates.max_energy, Math.floor(options.setEnergy))) : updates.max_energy;
+
+  if (options.setExactVipHours !== undefined) {
+    if (options.setExactVipHours > 0) {
+      updates.is_premium = true;
+      updates.premium_until = Date.now() + Math.round(options.setExactVipHours * 3600 * 1000);
+    } else {
+      updates.is_premium = false;
+      updates.premium_until = 0;
+    }
+  } else if (options.grantVipHours !== undefined) {
+    if (options.grantVipHours > 0) {
+      const curUntil = Math.max(Date.now(), Number(existing.premium_until ?? 0));
+      updates.is_premium = true;
+      updates.premium_until = curUntil + Math.round(options.grantVipHours * 3600 * 1000);
+    } else if (options.grantVipHours < 0) {
+      const curUntil = Math.max(Date.now(), Number(existing.premium_until ?? 0));
+      const nextUntil = curUntil + Math.round(options.grantVipHours * 3600 * 1000);
+      if (nextUntil > Date.now()) {
+        updates.is_premium = true;
+        updates.premium_until = nextUntil;
+      } else {
+        updates.is_premium = false;
+        updates.premium_until = 0;
+      }
+    } else {
+      updates.is_premium = false;
+      updates.premium_until = 0;
+    }
+  } else if (options.grantVip12h) {
+    const curUntil = Math.max(Date.now(), Number(existing.premium_until ?? 0));
+    updates.is_premium = true;
+    updates.premium_until = curUntil + 12 * 3600 * 1000;
+  } else if (options.revokeVip) {
+    updates.is_premium = false;
+    updates.premium_until = 0;
+  }
+
+  const syncNow = Date.now();
+  updates.external_sync_ts = syncNow;
+  if (updates.lvl !== undefined) {
+    const targetTier = getPyramidTierForLevel(updates.lvl);
+    updates.pyramid_tier = targetTier;
+    updates['пирамидальный_уровень'] = targetTier;
+  }
+
+  const ok = await updatePlayerInDatabase(cleanTarget, updates);
+  if (!ok) {
+    return { success: false, error: 'Не удалось обновить запись в Supabase' };
+  }
+
+  const refreshedRaw = await findPlayerInSupabase(cleanTarget);
+  const refreshed = refreshedRaw ? unpackPlayerRow(refreshedRaw) : { ...existing, ...updates };
+  const finalGold = Number(refreshed?.gold ?? updates.gold ?? existing.gold ?? 0);
+  const finalCrystals = Number(refreshed?.crystals ?? updates.crystals ?? existing.crystals ?? 0);
+  const finalLvl = Number(refreshed?.lvl ?? updates.lvl ?? existing.lvl ?? 1);
+  const finalExp = Number(refreshed?.exp ?? updates.exp ?? existing.exp ?? 0);
+  const finalStatPoints = Number(refreshed?.stat_points ?? updates.stat_points ?? existing.stat_points ?? 0);
+  const finalStr = Number(refreshed?.str ?? updates.str ?? existing.str ?? 5);
+  const finalAgi = Number(refreshed?.agi ?? updates.agi ?? existing.agi ?? 5);
+  const finalVit = Number(refreshed?.vit ?? updates.vit ?? existing.vit ?? 5);
+  const finalHpPotions = Number(refreshed?.hp_potions ?? updates.hp_potions ?? existing.hp_potions ?? 3);
+  const finalEnPotions = Number(refreshed?.en_potions ?? updates.en_potions ?? existing.en_potions ?? 3);
+  const finalPrem = Boolean(refreshed?.is_premium ?? updates.is_premium ?? existing.is_premium);
+  const finalPremUntil = Number(refreshed?.premium_until ?? updates.premium_until ?? existing.premium_until ?? 0);
+  const finalLastSeen = Number(refreshed?.last_seen ?? existing.last_seen ?? 0);
+  const finalIsOnline = isPlayerOnlineByHeartbeat(refreshed?.is_online ?? existing.is_online, finalLastSeen);
+
+  const updatedPlayer: RealtimePlayer = {
+    nick: refreshed?.name || refreshed?.nick || cleanTarget,
+    location: refreshed?.location || existing.location || 'city',
+    pyramidTier: getPyramidTierForLevel(finalLvl),
+    row: refreshed?.row ?? existing.row ?? 9,
+    col: refreshed?.col ?? existing.col ?? 1,
+    hp: Number(refreshed?.hp ?? updates.hp ?? existing.hp ?? 100),
+    maxHp: Number(refreshed?.max_hp ?? updates.max_hp ?? existing.max_hp ?? 100),
+    energy: Number(refreshed?.energy ?? updates.energy ?? existing.energy ?? 100),
+    maxEnergy: Number(refreshed?.max_energy ?? updates.max_energy ?? existing.max_energy ?? 100),
+    lvl: finalLvl,
+    exp: finalExp,
+    statPoints: finalStatPoints,
+    str: finalStr,
+    agi: finalAgi,
+    vit: finalVit,
+    hpPotions: finalHpPotions,
+    enPotions: finalEnPotions,
+    gold: finalGold,
+    crystals: finalCrystals,
+    avatar: refreshed?.avatar || existing.avatar || '🧙‍♂️',
+    isPremium: finalPrem && finalPremUntil > Date.now(),
+    premiumUntil: finalPremUntil,
+    isOnline: finalIsOnline,
+    lastSeen: finalLastSeen,
+    externalSyncTs: syncNow,
+    ownedSkinIds: Array.isArray(refreshed?.ownedSkinIds ?? refreshed?.owned_skin_ids) ? (refreshed?.ownedSkinIds ?? refreshed?.owned_skin_ids) : [],
+    activeSkinId: refreshed?.activeSkinId ?? refreshed?.active_skin_id ?? null,
+    banInfo: refreshed?.banInfo ?? refreshed?.ban_info ?? null,
+    is_admin: Number(refreshed?.is_admin ?? updates.is_admin ?? existing.is_admin ?? 0),
+    isAdmin: Number(refreshed?.is_admin ?? updates.is_admin ?? existing.is_admin ?? 0),
+    role: (refreshed?.role ?? (updates as any).role ?? existing.role ?? 'regular') as RealtimePlayer['role']
+  };
+
+  return { success: true, updatedPlayer, rawPlayer: refreshed };
+}
+
+export const adminModifyPlayerInSupabase = adminModifyPlayerBalanceInSupabase;
+
+export async function applyCompensationBonusToAllPlayers(): Promise<void> {
+  // Disabled in v1.1.55+: never automatically mutate player balances or grant unrequested compensation on app mount/update.
+  return;
+}
+
+/**
+ * Recalculates levels, experience, stats (str, agi, vit, stat_points), HP, Energy, Damage, and Pyramid Tier
+ * for all registered players in Supabase according to the current EXP_TABLE.
+ */
+export async function recalculateAllPlayersByExpTableInSupabase(): Promise<{
+  updatedCount: number;
+  details: string[];
+}> {
+  const details: string[] = [];
+  let updatedCount = 0;
+
+  try {
+    const response = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?select=*`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        apikey: DEFAULT_SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!response.ok) return { updatedCount: 0, details };
+    const rows = await response.json();
+    if (!Array.isArray(rows)) return { updatedCount: 0, details };
+
+    for (const row of rows) {
+      if (isSystemMailRow(row) || isSystemTierRow(row)) continue;
+      const nick = String(row.name || row.nick || '').trim();
+      if (!nick || nick.startsWith('__')) continue;
+
+      let parsed: any = {};
+      if (typeof row.email === 'string' && row.email.trim().startsWith('{')) {
+        try {
+          parsed = JSON.parse(row.email);
+        } catch (e) {}
+      }
+
+      const oldLvl = Math.max(1, Math.min(MAX_LEVEL, Math.floor(Number(parsed.lvl ?? row.lvl ?? 1))));
+      const oldExp = Math.max(0, Math.floor(Number(parsed.exp ?? row.exp ?? 0)));
+      const wasV3Migrated = Boolean(parsed.exp_table_v3_migrated);
+
+      const totalExp = wasV3Migrated ? getTotalAccumulatedExp(oldLvl, oldExp) : oldExp;
+      const { level: newLvl, exp: newExp } = recalculateLevelAndExpFromTotal(totalExp);
+
+      const oldStr = Math.max(1, Math.floor(Number(parsed.str ?? row.str ?? 1)));
+      const oldAgi = Math.max(1, Math.floor(Number(parsed.agi ?? row.agi ?? 1)));
+      const oldVit = Math.max(1, Math.floor(Number(parsed.vit ?? row.vit ?? 1)));
+      const oldSp = Math.max(0, Math.floor(Number(parsed.stat_points ?? row.stat_points ?? 0)));
+
+      const normStats = normalizeStatsForLevel(newLvl, oldStr, oldAgi, oldVit, oldSp);
+
+      const eqObj = parsed.equipped && typeof parsed.equipped === 'object' ? { ...parsed.equipped } : {};
+      const invArr: any[] = Array.isArray(parsed.inventory) ? [...parsed.inventory] : [];
+      let gearHp = 0;
+      let gearEn = 0;
+      let gearDmg = 0;
+
+      Object.keys(eqObj).forEach((slotKey) => {
+        const it = eqObj[slotKey];
+        if (!it) return;
+        if (typeof it.icon === 'string' && it.icon.includes('flame_sword')) {
+          it.icon = '⚔️';
+        }
+        if (Number(it.lvl || 1) > newLvl) {
+          invArr.unshift(it);
+          eqObj[slotKey] = null;
+        } else if (Number(it.durability ?? 1) > 0) {
+          gearHp += Number(it.hp || 0);
+          gearEn += Number(it.energyBonus || 0);
+          gearDmg += Number(it.dmg || 0);
+        }
+      });
+
+      const bonusHp = Math.max(0, Number(parsed.bonus_hp ?? 0));
+      const bonusDmg = Math.max(0, Number(parsed.bonus_dmg ?? 0));
+      const newMaxHp = getHeroMaxHpFromVit(normStats.vit) + gearHp + bonusHp;
+      const newMaxEn = 100 + gearEn;
+      const newDmg = getHeroDamageFromStr(normStats.str) + gearDmg + bonusDmg;
+      const newTier = getPyramidTierForLevel(newLvl);
+
+      const rowGold = Number(row.gold ?? 0);
+      const emailGold = Number(parsed.gold ?? 0);
+      const safeGold = Math.max(0, rowGold > 0 ? rowGold : emailGold);
+
+      const rowCrystals = Number(row.crystals ?? 0);
+      const emailCrystals = Number(parsed.crystals ?? 0);
+      const safeCrystals = Math.max(0, rowCrystals > 0 ? rowCrystals : emailCrystals);
+
+      const curMobs = Math.max(0, Number(parsed.mobs_killed ?? parsed.mob_kills ?? 0));
+      const tracedMobsKilled = Math.max(curMobs, Math.floor(totalExp / 35));
+      const curTotalGold = Math.max(safeGold, Number(parsed.total_gold_collected ?? 0));
+      const tracedTotalGold = Math.max(curTotalGold, Math.floor(totalExp * 0.8));
+
+      const needsUpdate =
+        !wasV3Migrated ||
+        !parsed.gear_v2_migrated ||
+        oldLvl !== newLvl ||
+        oldExp !== newExp ||
+        oldStr !== normStats.str ||
+        oldAgi !== normStats.agi ||
+        oldVit !== normStats.vit ||
+        oldSp !== normStats.statPoints ||
+        Number(parsed.max_hp) !== newMaxHp ||
+        Number(parsed.dmg) !== newDmg ||
+        rowGold !== safeGold ||
+        curMobs !== tracedMobsKilled ||
+        curTotalGold !== tracedTotalGold;
+
+      if (!needsUpdate) continue;
+
+      const updatedJson = {
+        ...parsed,
+        gold: safeGold,
+        crystals: safeCrystals,
+        lvl: newLvl,
+        level: newLvl,
+        exp: newExp,
+        str: normStats.str,
+        agi: normStats.agi,
+        vit: normStats.vit,
+        stat_points: normStats.statPoints,
+        max_hp: newMaxHp,
+        hp: Math.min(newMaxHp, Math.max(1, Number(parsed.hp ?? newMaxHp))),
+        max_energy: newMaxEn,
+        energy: Math.min(newMaxEn, Math.max(0, Number(parsed.energy ?? newMaxEn))),
+        dmg: newDmg,
+        pyramid_tier: newTier,
+        пирамидальный_уровень: newTier,
+        mobs_killed: tracedMobsKilled,
+        mob_kills: tracedMobsKilled,
+        total_gold_collected: tracedTotalGold,
+        equipped: eqObj,
+        inventory: invArr,
+        gear_v2_migrated: true,
+        exp_table_v3_migrated: true,
+        external_sync_ts: Date.now()
+      };
+
+      const filterQuery = row.id !== undefined ? `id=eq.${encodeURIComponent(String(row.id))}` : `name=ilike.${encodeURIComponent(nick)}`;
+      const patchRes = await fetch(`${DEFAULT_SUPABASE_URL}/rest/v1/players?${filterQuery}`, {
+        method: 'PATCH',
+        cache: 'no-store',
+        headers: {
+          apikey: DEFAULT_SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${DEFAULT_SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal'
+        },
+        body: JSON.stringify({
+          email: JSON.stringify(updatedJson),
+          gold: safeGold,
+          crystals: safeCrystals
+        })
+      });
+
+      if (patchRes.ok) {
+        updatedCount += 1;
+        details.push(
+          `${nick}: Ур.${oldLvl}→${newLvl}, Опыт:${newExp}/${EXP_TABLE[newLvl] || 'MAX'}, Мобы:${tracedMobsKilled}, Золото:${tracedTotalGold}`
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase] recalculateAllPlayersByExpTableInSupabase error:', err);
+  }
+
+  return { updatedCount, details };
+}
+
+
+
+
+
