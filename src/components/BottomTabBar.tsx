@@ -27,11 +27,13 @@ export interface BottomTabBarProps {
   onOpenMailModal?: () => void;
   // World Hub
   onOpenPort?: () => void;
+  onOpenOutland?: () => void;
   onOpenFishing?: () => void;
   onOpenWheel?: () => void;
   // Social Hub
   onOpenClans?: () => void;
   onOpenClanPyramid?: () => void;
+  onOpenStadium?: () => void;
   onOpenLeaderboard?: () => void;
   onOpenForum?: () => void;
   onOpenAchievements?: () => void;
@@ -57,10 +59,12 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
   onOpenCharModal,
   onOpenMailModal,
   onOpenPort,
+  onOpenOutland,
   onOpenFishing,
   onOpenWheel,
   onOpenClans,
   onOpenClanPyramid,
+  onOpenStadium,
   onOpenLeaderboard,
   onOpenForum,
   onOpenAchievements,
@@ -149,7 +153,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
 
           {/* 1. WORLD SUBMENU */}
           {activeHubMenu === 'world' && (
-            <div className="relative z-20 grid grid-cols-3 gap-1.5">
+            <div className="relative z-20 grid grid-cols-2 sm:grid-cols-4 gap-1.5">
               {onOpenPort && (
                 <button
                   type="button"
@@ -161,12 +165,27 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
                 >
                   <Game2DWorldIcon size={24} className="mb-0.5" />
                   <span className="text-[9.5px] font-black text-cyan-100 drop-shadow">Порт Нила</span>
-                  <span className="text-[7.5px] text-cyan-300/90">Транспорт & Алтарь</span>
+                  <span className="text-[7.5px] text-cyan-300/90">Карта 10x10 & Заводы</span>
                   {isPortTraveling && (
                     <span className="mt-1 rounded bg-amber-400 px-1 text-[6.5px] font-black text-slate-950 shadow">
                       ПЛЫВЁТ
                     </span>
                   )}
+                </button>
+              )}
+
+              {onOpenOutland && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveHubMenu(null);
+                    onOpenOutland();
+                  }}
+                  className="game-2d-btn flex flex-col items-center justify-center rounded-xl border border-emerald-400/70 bg-gradient-to-b from-emerald-900/90 via-emerald-950 to-slate-950 p-2 text-center shadow-[0_3px_0_#064e3b] hover:border-emerald-300 cursor-pointer"
+                >
+                  <span className="text-xl leading-none mb-1 drop-shadow">🏝️</span>
+                  <span className="text-[9.5px] font-black text-emerald-100 drop-shadow">АУТЛЕНД</span>
+                  <span className="text-[7.5px] text-emerald-300/90">Прибрежная зона 5x5</span>
                 </button>
               )}
 
@@ -181,7 +200,7 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
                 >
                   <Game2DFishingIcon size={24} className="mb-0.5" />
                   <span className="text-[9.5px] font-black text-teal-100 drop-shadow">Рыбалка</span>
-                  <span className="text-[7.5px] text-teal-300/90">50 рыб & Сети</span>
+                  <span className="text-[7.5px] text-teal-300/90">Сдача в Порт (50🪙)</span>
                   {isFishingBuffActive && (
                     <span className="mt-1 rounded bg-purple-600 px-1 text-[6.5px] font-black text-white animate-pulse">
                       БАФФ +25%
@@ -240,6 +259,23 @@ export const BottomTabBar: React.FC<BottomTabBarProps> = ({
                   <div className="min-w-0">
                     <div className="text-[9px] font-black text-red-200">Клановая Битва</div>
                     <div className="text-[7.5px] text-slate-400">Война за Пирамиду</div>
+                  </div>
+                </button>
+              )}
+
+              {onOpenStadium && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveHubMenu(null);
+                    onOpenStadium();
+                  }}
+                  className="game-2d-btn game-2d-btn-slot flex items-center gap-2 rounded-xl border-purple-500/60 p-2 text-left cursor-pointer"
+                >
+                  <span className="text-lg drop-shadow">🏟️</span>
+                  <div className="min-w-0">
+                    <div className="text-[9px] font-black text-purple-200">Стадион</div>
+                    <div className="text-[7.5px] text-slate-400">Тотализатор [5/5]</div>
                   </div>
                 </button>
               )}

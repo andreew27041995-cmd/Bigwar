@@ -17,7 +17,8 @@ import {
   RareBossTimerState,
   WheelWinnerEntry,
   ItemQualityKey,
-  DailyQuest
+  DailyQuest,
+  PortTerminalResourceKey
 } from './types/game';
 import {
   loadGameFromStorage,
@@ -179,9 +180,15 @@ import {
   joinOrUpdateTerritory7x7Slot,
   recordClanPlayerActivity,
   addClanExp,
-  getPlayerClanRankAndPts
+  getPlayerClanRankAndPts,
+  calculatePlayerPortCargo,
+  getPlayerActivePortWorkShift,
+  normalizePortIslandCoord,
+  DEFAULT_PORT_ISLAND_POS,
+  getPortIslandCellMeta
 } from './utils/clanStorage';
 import { ClanRankEpaulette, ClanBadgeMini } from './components/ClanRankEpaulette';
+import { OutlandRaidView, PharosStadiumView } from './components/OutlandAndStadiumViews';
 import { computeDailyRewardStatus, DailyRewardDay, getDailyRewardDayKey } from './utils/dailyReward';
 import {
   ensureDailyQuestsForToday,
@@ -512,8 +519,10 @@ export default function App() {
     }
   ]);
 
-  // Modal controls
-  const [activeModal, setActiveModal] = useState<
+  // Modal controls & global header timer tick
+  const [headerTimerTick, setHeaderTimerTick] = useState<number>(0);
+
+  type AppModalKey =
     | null
     | 'character'
     | 'inventory'
@@ -538,9 +547,13 @@ export default function App() {
     | 'achievements'
     | 'altar'
     | 'port'
+    | 'outland'
+    | 'stadium'
     | 'fishing'
-    | 'battlePass'
-  >(null);
+    | 'battlePass';
+
+  const [activeModal, setActiveModal] = useState<AppModalKey>(null);
+
   const [altarInitialItemId, setAltarInitialItemId] = useState<string | null>(null);
   const [shopInitialCategory, setShopInitialCategory] = useState<'weapon' | 'transport'>('weapon');
   const [characterModalInitialTab, setCharacterModalInitialTab] = useState<'profile' | 'estate' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>('profile');
@@ -553,6 +566,28 @@ export default function App() {
   const activeModalRef = useRef(activeModal);
   activeModalRef.current = activeModal;
   const lastNpcSyncRef = useRef<number>(0);
+
+  // Глобальный тик таймера в шапке и авто-завершение перехода по секторам карты 10x10
+  useEffect(() => {
+    const t = setInterval(() => {
+      setHeaderTimerTick((v) => v + 1);
+      const curH = heroRef.current;
+      if (curH?.portSectorMove && Date.now() >= curH.portSectorMove.endsAt) {
+        const normDest = normalizePortIslandCoord(curH.portSectorMove.toX, curH.portSectorMove.toY);
+        const destMeta = getPortIslandCellMeta(normDest.x, normDest.y);
+        const nextHero: HeroState = {
+          ...curH,
+          portIslandPos: { x: normDest.x, y: normDest.y },
+          portSectorMove: null
+        };
+        heroRef.current = nextHero;
+        setHero(nextHero);
+        saveGameToStorage({ hero: nextHero });
+        showToast(`📍 Вы прибыли в сектор [${normDest.x}/${normDest.y}] — ${destMeta.sectorTitle}!`);
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Shop Catalog, Character Skins & Feature Flags state
   const [shopCatalog, setShopCatalog] = useState<ShopItemTemplate[]>(() => getShopCatalog());
@@ -5133,22 +5168,7 @@ export default function App() {
 
     const itemLvl = Number(item.lvl || 1);
     const needsSteel = itemLvl >= 15;
-    const curPortRes = curHero.portResources || {
-      raw_fish: 0,
-      quartz_sand: 0,
-      iron_ore: 0,
-      gold_nugget: 0,
-      crude_oil: 0,
-      fish_paste: 0,
-      gold_bars: 0,
-      hardened_steel: 0,
-      reinforced_plastic: 0,
-      microchips: 0,
-      combat_ration: 0,
-      combat_modules: 0,
-      tactical_Kevlar: 0,
-      pharaoh_relic: 0
-    };
+    const curPortRes: Partial<Record<PortTerminalResourceKey, number>> = curHero.portResources || {};
 
     if (needsSteel) {
       if ((Number(curPortRes.hardened_steel) || 0) < 1) {
@@ -5276,22 +5296,7 @@ export default function App() {
 
     const neededIronOre = repairableItems.filter((it) => Number(it.lvl || 1) < 15).length;
     const neededSteel = repairableItems.filter((it) => Number(it.lvl || 1) >= 15).length;
-    const curPortRes = curHero.portResources || {
-      raw_fish: 0,
-      quartz_sand: 0,
-      iron_ore: 0,
-      gold_nugget: 0,
-      crude_oil: 0,
-      fish_paste: 0,
-      gold_bars: 0,
-      hardened_steel: 0,
-      reinforced_plastic: 0,
-      microchips: 0,
-      combat_ration: 0,
-      combat_modules: 0,
-      tactical_Kevlar: 0,
-      pharaoh_relic: 0
-    };
+    const curPortRes: Partial<Record<PortTerminalResourceKey, number>> = curHero.portResources || {};
 
     if ((Number(curPortRes.iron_ore) || 0) < neededIronOre) {
       showToast(
@@ -5405,24 +5410,19 @@ export default function App() {
     }
 
     const itemLvl = Number(template.lvl || 1);
-    const reqSteel = itemLvl >= 20 ? 5 : itemLvl >= 15 ? 2 : 0;
-    const reqModules = itemLvl >= 20 ? 2 : 0;
-    const curPortRes = curHero.portResources || {
-      raw_fish: 0,
-      quartz_sand: 0,
-      iron_ore: 0,
-      gold_nugget: 0,
-      crude_oil: 0,
-      fish_paste: 0,
-      gold_bars: 0,
-      hardened_steel: 0,
-      reinforced_plastic: 0,
-      microchips: 0,
-      combat_ration: 0,
-      combat_modules: 0,
-      tactical_Kevlar: 0,
-      pharaoh_relic: 0
-    };
+    const reqSteel = Math.max(
+      0,
+      Number((template as any).requiredSteel ?? (itemLvl >= 20 ? 2 : itemLvl >= 15 ? 2 : itemLvl >= 10 ? 1 : 0))
+    );
+    const reqModules = Math.max(
+      0,
+      Number((template as any).requiredModules ?? (itemLvl >= 20 ? 2 : itemLvl >= 15 ? 1 : 0))
+    );
+    const reqRelics = Math.max(
+      0,
+      Number((template as any).requiredRelics ?? (itemLvl >= 20 ? 1 : 0))
+    );
+    const curPortRes: Partial<Record<PortTerminalResourceKey, number>> = curHero.portResources || {};
 
     if (reqSteel > 0 && (Number(curPortRes.hardened_steel) || 0) < reqSteel) {
       showToast(
@@ -5434,8 +5434,16 @@ export default function App() {
     }
     if (reqModules > 0 && (Number(curPortRes.combat_modules) || 0) < reqModules) {
       showToast(
-        `❌ Для покупки легендарного «${template.name}» требуется ${reqModules} ед. «Боевых модулей» (из Порта)! У вас: ${
+        `❌ Для покупки «${template.name}» требуется ${reqModules} ед. «Боевых модулей» (из Порта)! У вас: ${
           Number(curPortRes.combat_modules) || 0
+        }`
+      );
+      return;
+    }
+    if (reqRelics > 0 && (Number(curPortRes.port_relics) || 0) < reqRelics) {
+      showToast(
+        `❌ Для покупки «${template.name}» требуется ${reqRelics} ед. «Древних Реликвий» (из Порта)! У вас: ${
+          Number(curPortRes.port_relics) || 0
         }`
       );
       return;
@@ -5450,10 +5458,11 @@ export default function App() {
 
     const newItem = createGameItemFromShopItem(template);
     const newGold = Math.max(0, curGold - itemPrice);
-    const nextPortRes = {
+    const nextPortRes: Partial<Record<PortTerminalResourceKey, number>> = {
       ...curPortRes,
       hardened_steel: Math.max(0, (Number(curPortRes.hardened_steel) || 0) - reqSteel),
-      combat_modules: Math.max(0, (Number(curPortRes.combat_modules) || 0) - reqModules)
+      combat_modules: Math.max(0, (Number(curPortRes.combat_modules) || 0) - reqModules),
+      port_relics: Math.max(0, (Number(curPortRes.port_relics) || 0) - reqRelics)
     };
     const nextInv = [newItem, ...curInv];
     const nextHero: HeroState = {
@@ -5485,7 +5494,9 @@ export default function App() {
     showToast(
       `🛒 Куплено: ${formatItemIconForText(template.icon, '🛒')} «${template.name}» (-${itemPrice.toLocaleString('ru-RU')} 🪙${
         reqSteel > 0 ? `, -${reqSteel} Стали` : ''
-      }${reqModules > 0 ? `, -${reqModules} Боевых мод.` : ''})!`
+      }${reqModules > 0 ? `, -${reqModules} Боевых мод.` : ''}${
+        reqRelics > 0 ? `, -${reqRelics} Реликв.` : ''
+      })!`
     );
   };
 
@@ -7696,8 +7707,8 @@ export default function App() {
     }
     const curHero = heroRef.current || hero;
     const todayKey = new Date().toISOString().slice(0, 10);
-    const crystalToGoldReward = Math.max(1, Number(featureFlags.crystalToGoldRate || 1000));
-    const goldToCrystalCost = Math.max(1, Number(featureFlags.goldToCrystalRate || 2000));
+    const crystalToGoldReward = Math.max(1, Number(featureFlags.crystalToGoldRate || 100));
+    const goldToCrystalCost = Math.max(1, Number(featureFlags.goldToCrystalRate || 100));
     const crystalLimitMax = Math.max(1, Number(featureFlags.dailyCrystalToGoldLimit || 3));
     const goldLimitMax = Math.max(1, Number(featureFlags.dailyGoldToCrystalLimit || 3));
 
@@ -7842,22 +7853,7 @@ export default function App() {
     const nextTotalGold = Number(curHero.totalGoldCollected || curHero.gold || 0) + reward.gold;
     const nextExpPotions = Number(curHero.expPotions || 0) + reward.expPotions;
     const rationsToAdd = Number(reward.combatRations || 0);
-    const curPortRes = curHero.portResources || {
-      raw_fish: 0,
-      quartz_sand: 0,
-      iron_ore: 0,
-      gold_nugget: 0,
-      crude_oil: 0,
-      fish_paste: 0,
-      gold_bars: 0,
-      hardened_steel: 0,
-      reinforced_plastic: 0,
-      microchips: 0,
-      combat_ration: 0,
-      combat_modules: 0,
-      tactical_Kevlar: 0,
-      pharaoh_relic: 0
-    };
+    const curPortRes: Partial<Record<PortTerminalResourceKey, number>> = curHero.portResources || {};
     const nextPortRes =
       rationsToAdd > 0
         ? {
@@ -11466,31 +11462,34 @@ export default function App() {
     <div className="flex h-[100dvh] w-full items-center justify-center overflow-hidden bg-[#0b0d10] font-sans text-white select-none">
       {/* Mobile-oriented Game Frame container — fits 100% of mobile viewport without scrolling */}
       <div className="relative flex h-[100dvh] max-h-[820px] w-full max-w-[430px] flex-col overflow-hidden border-x border-slate-700 bg-[#151921] shadow-2xl">
-        {/* Top User & System Bar — compact, responsive layout so left controls and right clock are always 100% visible */}
-        <div className="z-30 flex shrink-0 flex-wrap items-center justify-between gap-1 overflow-visible border-b border-slate-800 bg-slate-950 px-2 py-1.5">
-          <div className="flex flex-wrap items-center gap-1 min-w-0 overflow-visible">
-            {(() => {
-              const headerClan = getPlayerClan(currentUser || hero.nick || '', hero.clanId);
-              const headerRank = getPlayerClanRankAndPts(
-                currentUser || hero.nick || 'RedBlack',
-                headerClan?.id || hero.clanId,
-                hero
-              );
-              return (
-                <button
-                  onClick={() => {
-                    setCharacterModalInitialTab(unreadMailCount > 0 ? 'mail' : 'profile');
-                    setActiveModal('character');
-                  }}
-                  className={`relative flex items-center gap-1 rounded border bg-slate-900 px-1.5 py-0.5 text-[8px] font-bold active:scale-95 shrink-0 ${
-                    isAdmin
-                      ? 'border-red-500/70 text-red-400 hover:border-red-400 shadow-[0_0_6px_rgba(239,68,68,0.25)]'
-                      : isModerator
-                      ? 'border-emerald-500/70 text-emerald-400 hover:border-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.25)]'
-                      : 'border-slate-700 text-amber-300 hover:border-amber-400'
-                  }`}
-                  title={`Профиль: ${currentUser || 'Игрок'} • ${headerRank.rankConfig.title} (${headerRank.pts} PTS)`}
-                >
+        {/* ЕДИНЫЙ СТАТУС-БАР СВЕРХУ (Двухстрочная шапка в строгом стиле Gwars + узкая строка таймера) */}
+        {(() => {
+          void headerTimerTick;
+          const headerClan = getPlayerClan(currentUser || hero.nick || '', hero.clanId);
+          const headerRank = getPlayerClanRankAndPts(
+            currentUser || hero.nick || 'Redblack',
+            headerClan?.id || hero.clanId,
+            hero
+          );
+          const cargoStats = calculatePlayerPortCargo(hero, inventory, equipped);
+          const playerStamina = Math.max(0, Math.min(100, Math.floor(Number(hero.portStamina ?? 100))));
+          const { x: curSecX, y: curSecY } = normalizePortIslandCoord(
+            hero.portIslandPos?.x ?? DEFAULT_PORT_ISLAND_POS.x,
+            hero.portIslandPos?.y ?? DEFAULT_PORT_ISLAND_POS.y
+          );
+          const activeSectorMove =
+            hero.portSectorMove && Date.now() < hero.portSectorMove.endsAt
+              ? hero.portSectorMove
+              : null;
+          const activeWorkShift = getPlayerActivePortWorkShift(currentUser || hero.nick || '');
+          const activeWorkShiftValid =
+            activeWorkShift && Date.now() < activeWorkShift.worker.endsAt ? activeWorkShift : null;
+
+          return (
+            <div className="z-30 shrink-0 border-b-2 border-[#7a6b48] bg-[#1c2319] text-[#f0ebd8] text-[10.5px] select-none">
+              {/* СТРОКА 1: Знак клана, Погон, Ник (Redblack), Сектор ([X/Y]), Админ ([⚙️ Админ]) */}
+              <div className="flex flex-wrap items-center justify-between gap-1 border-b border-[#34422f] px-2 py-1">
+                <div className="flex flex-wrap items-center gap-1.5 min-w-0">
                   {headerClan && (
                     <ClanBadgeMini
                       emblem={headerClan.emblem}
@@ -11499,58 +11498,113 @@ export default function App() {
                     />
                   )}
                   <ClanRankEpaulette rankLevel={headerRank.rankLevel} size="sm" />
-                  <span className="truncate max-w-[85px]">
-                    {currentUser || 'Игрок'} [{hero.level || 1}]
-                  </span>
-                  {(unreadMailCount > 0 || Number(hero.statPoints || 0) > 0) && (
-                    <span className="ml-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full bg-red-600 px-1 text-[7px] font-black text-white animate-bounce shadow-[0_0_8px_#ef4444]">
-                      {unreadMailCount > 0 ? `📩${unreadMailCount}` : `+${hero.statPoints}`}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCharacterModalInitialTab('profile');
+                      setActiveModal('character');
+                    }}
+                    className="font-black text-[#ffd97d] hover:underline truncate max-w-[110px] cursor-pointer"
+                    title={`Профиль: ${currentUser || hero.nick || 'Redblack'} • ${headerRank.rankConfig.title} (${headerRank.pts} PTS)`}
+                  >
+                    {currentUser || hero.nick || 'Redblack'} [{hero.level || 1}]
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveModal('port')}
+                    className="rounded border border-[#6e8564] bg-[#283624] px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-[#c7f2ba] hover:bg-[#33452e] cursor-pointer"
+                    title="Открыть карту острова Порта 10x10"
+                  >
+                    📍 [{curSecX}/{curSecY}]
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveModal(null);
+                      setScreen('city');
+                    }}
+                    className="rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[9px] font-bold text-slate-200 hover:border-amber-400 cursor-pointer"
+                    title="Город и Чат"
+                  >
+                    💬 Город{unreadMailCount > 0 ? ` (${unreadMailCount})` : ''}
+                  </button>
+                  {(isAdmin || isModerator) && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveModal('admin')}
+                      className="rounded border border-red-500/80 bg-red-950 px-1.5 py-0.5 text-[9px] font-black text-red-200 hover:bg-red-900 cursor-pointer"
+                      title="Открыть панель администратора"
+                    >
+                      [⚙️ Админ]
+                    </button>
+                  )}
+                  <div
+                    title={`Серверное время • Supabase Realtime: ${realtimeStatus}`}
+                    className="flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-slate-900 px-1.5 py-0.5 text-[8px] font-extrabold text-amber-300 tabular-nums"
+                  >
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
+                        realtimeStatus === 'SUBSCRIBED'
+                          ? 'bg-emerald-400 animate-pulse'
+                          : 'bg-yellow-400'
+                      }`}
+                    />
+                    <ServerClock />
+                  </div>
+                </div>
+              </div>
+
+              {/* СТРОКА 2: HP, Бодрость, Вес (X/Y ед.), Золото, Кристаллы */}
+              <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 bg-[#151b13] px-2 py-1 text-[9.5px] font-mono">
+                <span className="font-bold text-rose-300" title="Здоровье (HP)">
+                  ❤️ HP: <b>{hero.hp}/{hero.maxHp}</b>
+                </span>
+                <span className="font-bold text-lime-300" title="Бодрость для работы на заводах">
+                  ⚡ Бодр.: <b>{playerStamina}%</b>
+                </span>
+                <span
+                  className={`font-bold ${
+                    cargoStats.isOverloaded ? 'text-red-400 animate-pulse' : 'text-sky-300'
+                  }`}
+                  title="Вес ресурсов в багажнике / Максимальная грузоподъемность"
+                >
+                  🎒 Вес: <b>{cargoStats.usedWeight}/{cargoStats.maxWeight} ед.</b>
+                </span>
+                <span className="font-bold text-amber-300" title="Золото">
+                  🪙 <b>{hero.gold.toLocaleString('ru-RU')}</b>
+                </span>
+                <span className="font-bold text-cyan-300" title="Кристаллы">
+                  💎 <b>{hero.crystals.toLocaleString('ru-RU')}</b>
+                </span>
+              </div>
+
+              {/* УЗКАЯ СТРОКА АКТИВНОГО ТАЙМЕРА (если персонаж в пути по карте 10x10 или работает на заводе) */}
+              {(activeSectorMove || activeWorkShiftValid) && (
+                <div className="flex flex-wrap items-center justify-between gap-2 bg-[#3b2f0c] border-t border-[#8c7123] px-2 py-0.5 text-[10px] text-[#ffe599] font-bold">
+                  {activeSectorMove && (
+                    <span>
+                      🧭 В пути по карте 10x10: [{activeSectorMove.fromX}/{activeSectorMove.fromY}] → [{activeSectorMove.toX}/{activeSectorMove.toY}] • осталось{' '}
+                      <b className="font-mono text-white">
+                        {Math.max(1, Math.ceil((activeSectorMove.endsAt - Date.now()) / 1000))} сек.
+                      </b>
                     </span>
                   )}
-                </button>
-              );
-            })()}
-
-            {isAdmin && (
-              <button
-                onClick={() => setActiveModal('admin')}
-                className="flex items-center gap-0.5 rounded border border-red-500/80 bg-gradient-to-r from-red-950 via-red-900/80 to-red-950 px-1.5 py-0.5 text-[8px] font-extrabold text-red-200 shadow-[0_0_8px_rgba(239,68,68,0.4)] hover:border-red-400 active:scale-95 shrink-0"
-                title="Открыть панель администратора"
-              >
-                <span>🛠️ Админ</span>
-              </button>
-            )}
-
-            {isModerator && (
-              <button
-                onClick={() => setActiveModal('admin')}
-                className="flex items-center gap-0.5 rounded border border-emerald-500/80 bg-gradient-to-r from-emerald-950 via-emerald-900/80 to-emerald-950 px-1.5 py-0.5 text-[8px] font-extrabold text-emerald-200 shadow-[0_0_8px_rgba(16,185,129,0.4)] hover:border-emerald-400 active:scale-95 shrink-0"
-                title="Открыть панель модератора чата"
-              >
-                <span>🛡️ Модер</span>
-              </button>
-            )}
-          </div>
-
-          {/* Realtime Status Dot + Live Server Clock on the right of the top strip (never clipped) */}
-          <div
-            title={`Серверное время • Supabase Realtime: ${realtimeStatus}`}
-            className="ml-auto flex shrink-0 items-center gap-1 rounded border border-amber-500/40 bg-slate-900 px-1.5 py-0.5 text-[8px] font-extrabold text-amber-300 tabular-nums shadow-inner"
-          >
-            <span
-              className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
-                realtimeStatus === 'SUBSCRIBED'
-                  ? 'bg-emerald-400 animate-pulse shadow-[0_0_6px_#34d399]'
-                  : realtimeStatus === 'CONNECTING'
-                  ? 'bg-yellow-400 animate-pulse'
-                  : realtimeStatus === 'CHANNEL_ERROR'
-                  ? 'bg-red-400'
-                  : 'bg-emerald-400'
-              }`}
-            />
-            <ServerClock />
-          </div>
-        </div>
+                  {activeWorkShiftValid && (
+                    <span>
+                      ⚒️ Смена на заводе «{activeWorkShiftValid.sector.name}»: осталось{' '}
+                      <b className="font-mono text-white">
+                        {Math.max(1, Math.ceil((activeWorkShiftValid.worker.endsAt - Date.now()) / 1000))} сек.
+                      </b>
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Interactive Player AI Tactical Advice Card */}
         {activeAiAdviceCard && (
@@ -11745,139 +11799,135 @@ export default function App() {
           )}
         </div>
 
-        {/* 1. TOP 60% SCREEN (CITY OR PYRAMID) */}
-        {(() => {
-          const resolvedHeroAvatar = (() => {
-            if (hero.activeSkinId) {
-              const ownedResolved = resolvePlayerOwnedSkins(
-                hero.ownedSkinIds,
-                hero.ownedSkinExpirations,
-                shopSkins,
-                hero.ownedSkins,
-                hero.activeSkinId,
-                hero.avatar
-              );
-              const activeSkin = ownedResolved.find((s) => s.id === hero.activeSkinId);
-              if (activeSkin && (activeSkin.avatarUrl || activeSkin.icon)) {
-                return activeSkin.avatarUrl || activeSkin.icon;
-              }
-            }
-            return hero.avatar;
-          })();
-          const heroWithResolvedSkin = { ...hero, avatar: resolvedHeroAvatar };
-
-          return screen === 'city' ? (
-            <CityScreen
-              currentUser={currentUser || hero.nick}
-              hero={heroWithResolvedSkin}
-              soundMuted={soundMuted}
-              unreadMailCount={unreadMailCount}
-              lastRegenTickAt={lastRegenTickAtRef.current}
-              onToggleSound={handleToggleSound}
-              onOpenCharModal={() => {
-                setCharacterModalInitialTab('profile');
-                setActiveModal('character');
-              }}
-              onOpenMailModal={() => {
-                setCharacterModalInitialTab('mail');
-                setActiveModal('character');
-              }}
-              onEnterPyramid={handleEnterPyramid}
-              onOpenShop={() => setActiveModal('shop')}
-              onOpenAltar={() => {
-                setAltarInitialItemId(null);
+        {/* ================= ОСНОВНОЙ ИГРОВОЙ ЭКРАН (ГОРОД / ПИРАМИДА РА + НИЖНЯЯ ПАНЕЛЬ + ЧАТ) ================= */}
+        {screen === 'pyramid' ? (
+          <PyramidScreen
+            hero={hero}
+            pyramidTier={pyramidTier}
+            pyramidHall={pyramidHall}
+            maxPlayersPerHall={featureFlags.maxPlayersPerPyramidHall || 25}
+            onSelectPyramidHall={handleSelectPyramidHall}
+            pyramidMap={pyramidMap}
+            playerPos={playerPos}
+            lastMoveTime={lastMoveTime}
+            moveDelay={MOVE_DELAY}
+            respawnTimeLeft={Math.max(
+              0,
+              (featureFlags.bossRespawnIntervalSec || 60) -
+                Math.floor((Date.now() - lastRespawnTime) / 1000)
+            )}
+            activeSack={activeSackAdjacent}
+            damagePopups={damagePopups}
+            rareBossTimers={rareBossTimers}
+            realtimePlayers={effectiveRealtimePlayers}
+            currentUser={currentUser || hero.nick}
+            unreadMailCount={unreadMailCount}
+            onPickUpSack={handlePickUpSack}
+            onBlockClick={handlePyramidBlockClick}
+            onExitToCity={handleExitToCity}
+            onUsePotion={handleUsePotion}
+            onUsePyramidCard={handleUsePyramidCard}
+            onEnterNextTierPortal={handleEnterNextTierPortal}
+            onOpenCharModal={() => {
+              setCharacterModalInitialTab('profile');
+              setActiveModal('character');
+            }}
+          />
+        ) : (
+          <CityScreen
+            currentUser={currentUser || hero.nick}
+            hero={hero}
+            soundMuted={soundMuted}
+            unreadMailCount={unreadMailCount}
+            lastRegenTickAt={lastRegenTickAtRef.current}
+            onToggleSound={handleToggleSound}
+            onOpenCharModal={() => {
+              setCharacterModalInitialTab('profile');
+              setActiveModal('character');
+            }}
+            onOpenMailModal={() => {
+              setCharacterModalInitialTab('mail');
+              setActiveModal('character');
+            }}
+            onEnterPyramid={handleEnterPyramid}
+            onOpenShop={() => {
+              setShopInitialCategory('weapon');
+              setActiveModal('shop');
+            }}
+            onOpenAltar={() => {
+              setAltarInitialItemId(null);
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
                 setActiveModal('altar');
-              }}
-              onOpenDailyReward={() => {
-                setDailyModalInitialTab('login');
-                setActiveModal('dailyReward');
-              }}
-              onOpenDailyQuests={() => {
-                setDailyModalInitialTab('quests');
-                setActiveModal('dailyReward');
-              }}
-              canClaimDailyReward={dailyRewardStatus.canClaimToday}
-              onOpenAchievements={() => setActiveModal('achievements')}
-              claimableAchievementsCount={achievementsSummary.claimableCount}
-              onOpenAuction={() => {
-                if (checkBanRestriction('blockTradeAndAuction', 'Аукцион и торговля')) return;
-                setActiveModal('auction');
-              }}
-              onOpenInventory={() => setActiveModal('inventory')}
-              onOpenWheel={() => {
-                if (checkBanRestriction('blockRoulette', 'Колесо Рулетки')) return;
-                if (featureFlags.rouletteEnabled === false) {
-                  showToast('⛔ Рулетка временно отключена администратором!');
-                  return;
-                }
-                setActiveModal('wheel');
-              }}
-              onOpenPremium={() => setActiveModal('premium')}
-              onOpenBattlePass={() => setActiveModal('battlePass')}
-              onOpenPort={() => setActiveModal('port')}
-              onOpenFishing={() => setActiveModal('fishing')}
-              onOpenCreateItem={() => {
-                if (hero.portTravel?.status === 'in_port') {
-                  setActiveModal('createItem');
-                } else {
-                  setActiveModal('port');
-                }
-              }}
-              onOpenAdmin={() => setActiveModal('admin')}
-              onOpenBank={() => setActiveModal('bank')}
-              onOpenLeaderboard={() => setActiveModal('leaderboard')}
-              onOpenClans={() => {
-                if (checkBanRestriction('blockClans', 'Кланы и клановая база')) return;
-                setActiveModal('clans');
-              }}
-              onOpenClanPyramid={() => {
-                if (checkBanRestriction('blockClanPyramid', 'Клановая Пирамида')) return;
-                setActiveModal('clanPyramid');
-              }}
-              onOpenForum={() => setActiveModal('forum')}
-              onToggleNpcActive={handleToggleNpcActive}
-              onOpenNpcBag={() => {
-                setCharacterModalInitialTab('npcBag');
-                setActiveModal('character');
-              }}
-              onUsePotion={handleUsePotion}
-              isAdmin={isAdmin}
-              isModerator={isModerator}
-              featureFlags={featureFlags}
-            />
-          ) : (
-            <PyramidScreen
-              hero={heroWithResolvedSkin}
-              pyramidTier={pyramidTier}
-              pyramidHall={pyramidHall}
-              maxPlayersPerHall={featureFlags.maxPlayersPerPyramidHall || 25}
-              onSelectPyramidHall={handleSelectPyramidHall}
-              pyramidMap={pyramidMap}
-              playerPos={playerPos}
-              lastMoveTime={lastMoveTime}
-              moveDelay={MOVE_DELAY}
-              respawnTimeLeft={Math.max(0, (featureFlags.bossRespawnIntervalSec || 60) - Math.floor((Date.now() - lastRespawnTime) / 1000))}
-              activeSack={activeSackAdjacent}
-              damagePopups={damagePopups}
-              rareBossTimers={rareBossTimers}
-              realtimePlayers={effectiveRealtimePlayers}
-              currentUser={currentUser || hero.nick}
-              unreadMailCount={unreadMailCount}
-              onPickUpSack={handlePickUpSack}
-              onBlockClick={handlePyramidBlockClick}
-              onExitToCity={handleExitToCity}
-              onUsePotion={handleUsePotion}
-              onUsePyramidCard={handleUsePyramidCard}
-              onEnterNextTierPortal={handleEnterNextTierPortal}
-              onOpenCharModal={() => {
-                setCharacterModalInitialTab(unreadMailCount > 0 ? 'mail' : 'profile');
-                setActiveModal('character');
-              }}
-            />
-          );
-        })()}
+              } else {
+                showToast('⚓ Алтарь Модификации находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
+            }}
+            onOpenDailyReward={() => {
+              setDailyModalInitialTab('login');
+              setActiveModal('dailyReward');
+            }}
+            onOpenDailyQuests={() => {
+              setDailyModalInitialTab('quests');
+              setActiveModal('dailyReward');
+            }}
+            canClaimDailyReward={dailyRewardStatus.canClaimToday}
+            onOpenAchievements={() => setActiveModal('achievements')}
+            claimableAchievementsCount={achievementsSummary.claimableCount}
+            onOpenAuction={() => {
+              if (checkBanRestriction('blockTradeAndAuction', 'Аукцион и торговля')) return;
+              setActiveModal('auction');
+            }}
+            onOpenInventory={() => setActiveModal('inventory')}
+            onOpenWheel={() => {
+              if (checkBanRestriction('blockRoulette', 'Колесо Рулетки')) return;
+              if (featureFlags.rouletteEnabled === false) {
+                showToast('⛔ Рулетка временно отключена администратором!');
+                return;
+              }
+              setActiveModal('wheel');
+            }}
+            onOpenPremium={() => setActiveModal('premium')}
+            onOpenBattlePass={() => setActiveModal('battlePass')}
+            onOpenPort={() => setActiveModal('port')}
+            onOpenOutland={() => setActiveModal('outland')}
+            onOpenFishing={() => setActiveModal('fishing')}
+            onOpenCreateItem={() => {
+              if (hero.portTravel?.status === 'in_port' || isAdmin) {
+                setActiveModal('createItem');
+              } else {
+                showToast('⚓ Кузница «Создать оружие» находится в Порту! Отправляйтесь в Порт на транспорте.');
+                setActiveModal('port');
+              }
+            }}
+            onOpenAdmin={() => setActiveModal('admin')}
+            onOpenBank={() => setActiveModal('bank')}
+            onOpenLeaderboard={() => setActiveModal('leaderboard')}
+            onOpenClans={() => {
+              if (checkBanRestriction('blockClans', 'Кланы и клановая база')) return;
+              setClanModalInitialTab(undefined);
+              setClanModalInitialSectorId(null);
+              setActiveModal('clans');
+            }}
+            onOpenClanPyramid={() => {
+              if (checkBanRestriction('blockClanPyramid', 'Клановая Пирамида')) return;
+              setActiveModal('clanPyramid');
+            }}
+            onOpenStadium={() => setActiveModal('stadium')}
+            onOpenForum={() => setActiveModal('forum')}
+            onToggleNpcActive={handleToggleNpcActive}
+            onOpenNpcBag={() => {
+              setCharacterModalInitialTab('npcBag');
+              setActiveModal('character');
+            }}
+            onUsePotion={handleUsePotion}
+            isAdmin={isAdmin}
+            isModerator={isModerator}
+            featureFlags={featureFlags}
+          />
+        )}
 
-        {/* 2. BOTTOM 40% SCREEN (CHAT, PRIVATE MESSAGES, COMBAT LOG & ONLINE) */}
+        {/* Chat & Online Panel */}
         <ChatAndOnline
           messages={chatMessages}
           friends={friends}
@@ -11890,23 +11940,7 @@ export default function App() {
           heroPyramidTier={pyramidTier}
           currentUser={currentUser || hero.nick}
           heroLevel={hero.level}
-          heroAvatar={(() => {
-            if (hero.activeSkinId) {
-              const ownedResolved = resolvePlayerOwnedSkins(
-                hero.ownedSkinIds,
-                hero.ownedSkinExpirations,
-                shopSkins,
-                hero.ownedSkins,
-                hero.activeSkinId,
-                hero.avatar
-              );
-              const activeSkin = ownedResolved.find((s) => s.id === hero.activeSkinId);
-              if (activeSkin && (activeSkin.avatarUrl || activeSkin.icon)) {
-                return activeSkin.avatarUrl || activeSkin.icon;
-              }
-            }
-            return hero.avatar;
-          })()}
+          heroAvatar={hero.avatar}
           heroIsPremium={Boolean(
             hero.isPremium && hero.premiumUntil && hero.premiumUntil > Date.now()
           )}
@@ -11917,7 +11951,7 @@ export default function App() {
           heroCol={playerPos.col}
           equipped={equipped}
           onOpenCharModal={() => {
-            setCharacterModalInitialTab(unreadMailCount > 0 ? 'mail' : 'profile');
+            setCharacterModalInitialTab('profile');
             setActiveModal('character');
           }}
           onOpenMailModal={() => {
@@ -11944,9 +11978,9 @@ export default function App() {
 
         {/* Game Version & Last Updated Footer Bar */}
         <div className="flex items-center justify-center bg-black/95 border-t border-slate-900 py-0.5 px-2 text-[8.5px] text-slate-400 gap-2 shrink-0">
-          <span>Версия: <strong className="text-amber-400">v1.1.94</strong></span>
+          <span>Версия: <strong className="text-amber-400">v1.1.97</strong></span>
           <span>|</span>
-          <span>Обновлено: <strong className="text-slate-300">12.11.2026</strong></span>
+          <span>Обновлено: <strong className="text-slate-300">13.11.2026</strong></span>
         </div>
 
 
@@ -12795,22 +12829,7 @@ export default function App() {
                 nextBattlePass = bpNetRes.nextState;
               }
 
-              const curPortRes = curHero.portResources || {
-                raw_fish: 0,
-                quartz_sand: 0,
-                iron_ore: 0,
-                gold_nugget: 0,
-                crude_oil: 0,
-                fish_paste: 0,
-                gold_bars: 0,
-                hardened_steel: 0,
-                reinforced_plastic: 0,
-                microchips: 0,
-                combat_ration: 0,
-                combat_modules: 0,
-                tactical_Kevlar: 0,
-                pharaoh_relic: 0
-              };
+              const curPortRes: Partial<Record<PortTerminalResourceKey, number>> = curHero.portResources || {};
               const nextPortRes =
                 portDeliveryMeta && portDeliveryMeta.mode === 'trunk' && portDeliveryMeta.fishCount > 0
                   ? {
@@ -12979,6 +12998,88 @@ export default function App() {
             onUpdateInventory={setInventory}
             showToast={showToast}
           />
+        )}
+
+        {/* Standalone Outland Modal (No Clan header!) */}
+        {activeModal === 'outland' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2">
+            <div className="flex h-[94dvh] max-h-[780px] w-full max-w-[420px] flex-col overflow-hidden rounded border-2 border-[#7a6b48] bg-[#f4f1e8] text-[#1f2937] shadow-2xl">
+              <div className="flex shrink-0 items-center justify-between border-b-2 border-[#7a6b48] bg-[#212b1d] px-3 py-1.5 text-[#f0ebd8]">
+                <span className="text-xs font-black tracking-wide">
+                  🏝️ Прибрежная зона (Outland 12x12)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveModal(null)}
+                  className="rounded border border-[#6e8564] bg-[#2d3b27] px-2 py-0.5 text-[11px] font-black text-[#ffd97d] hover:bg-[#3b4d34] cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                <OutlandRaidView
+                  hero={hero}
+                  pierCoord={hero.portIslandPos || { x: 1, y: 5 }}
+                  onUpdateHero={(patch) => {
+                    const nextHero: HeroState = { ...heroRef.current, ...patch };
+                    heroRef.current = nextHero;
+                    setHero(nextHero);
+                    saveGameToStorage({ hero: nextHero });
+                    if (currentUserRef.current) {
+                      flushPlayerUpdates(currentUserRef.current, {
+                        gold: nextHero.gold,
+                        crystals: nextHero.crystals,
+                        hero: nextHero
+                      });
+                    }
+                  }}
+                  onNotify={showToast}
+                  onBackToMap={() => setActiveModal('port')}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Standalone Pharos Stadium Modal [5/5] */}
+        {activeModal === 'stadium' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2">
+            <div className="flex h-[92dvh] max-h-[760px] w-full max-w-[420px] flex-col overflow-hidden rounded border-2 border-[#7a6b48] bg-[#f4f1e8] text-[#1f2937] shadow-2xl">
+              <div className="flex shrink-0 items-center justify-between border-b-2 border-[#7a6b48] bg-[#212b1d] px-3 py-1.5 text-[#f0ebd8]">
+                <span className="text-xs font-black tracking-wide">
+                  🏟️ Стадион Фароса и Тотализатор [5/5]
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveModal(null)}
+                  className="rounded border border-[#6e8564] bg-[#2d3b27] px-2 py-0.5 text-[11px] font-black text-[#ffd97d] hover:bg-[#3b4d34] cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-2">
+                <PharosStadiumView
+                  hero={hero}
+                  isAdmin={isAdmin}
+                  onUpdateHero={(patch) => {
+                    const nextHero: HeroState = { ...heroRef.current, ...patch };
+                    heroRef.current = nextHero;
+                    setHero(nextHero);
+                    saveGameToStorage({ hero: nextHero });
+                    if (currentUserRef.current) {
+                      flushPlayerUpdates(currentUserRef.current, {
+                        gold: nextHero.gold,
+                        crystals: nextHero.crystals,
+                        hero: nextHero
+                      });
+                    }
+                  }}
+                  onNotify={showToast}
+                  onBackToMap={() => setActiveModal('port')}
+                />
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Stats Modal */}

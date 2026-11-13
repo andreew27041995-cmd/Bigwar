@@ -143,6 +143,7 @@ interface ClanModalProps {
     | 'clansList'
     | 'create';
   initialSectorId?: string | null;
+  embedded?: boolean;
   onClose: () => void;
   onUpdateHero: (updated: Partial<HeroState>) => void;
   onUpdateInventory: (updated: GameItem[]) => void;
@@ -160,6 +161,7 @@ export const ClanModal: React.FC<ClanModalProps> = ({
   isAdmin = false,
   initialTab,
   initialSectorId,
+  embedded = false,
   onClose,
   onUpdateHero,
   onUpdateInventory,
@@ -1523,12 +1525,24 @@ export const ClanModal: React.FC<ClanModalProps> = ({
   const depositableItems = inventory.filter((item) => !item.isClanRented && !item.rent);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-2 backdrop-blur-sm">
-      <div className="flex h-[92vh] max-h-[780px] w-full max-w-[430px] flex-col overflow-hidden rounded-2xl border-2 border-amber-500/70 bg-[#12161f] text-white shadow-[0_0_30px_rgba(245,158,11,0.3)]">
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 w-full flex-col overflow-hidden bg-[#12161f] text-white'
+          : 'fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-2 backdrop-blur-sm'
+      }
+    >
+      <div
+        className={
+          embedded
+            ? 'flex flex-1 min-h-0 w-full flex-col overflow-hidden bg-[#12161f] text-white'
+            : 'flex h-[92vh] max-h-[780px] w-full max-w-[430px] flex-col overflow-hidden rounded-2xl border-2 border-amber-500/70 bg-[#12161f] text-white shadow-[0_0_30px_rgba(245,158,11,0.3)]'
+        }
+      >
         {/* Modal Header */}
-        <div className="flex items-center justify-between border-b border-amber-500/30 bg-gradient-to-r from-slate-950 via-amber-950/40 to-slate-950 px-3 py-2.5 shrink-0">
+        <div className="flex items-center justify-between border-b border-amber-500/30 bg-gradient-to-r from-slate-950 via-amber-950/40 to-slate-950 px-3 py-1.5 shrink-0">
           <div className="flex items-center gap-2">
-            <span className="text-lg">🛡️</span>
+            <span className="text-base">🛡️</span>
             <div>
               <h2 className="text-xs font-black uppercase tracking-wider text-amber-300">
                 {playerClan
@@ -1543,12 +1557,14 @@ export const ClanModal: React.FC<ClanModalProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-xs font-bold text-slate-300 hover:border-red-500 hover:text-red-400"
-          >
-            ✕
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-700 bg-slate-900 text-xs font-bold text-slate-300 hover:border-red-500 hover:text-red-400"
+            >
+              ✕
+            </button>
+          )}
         </div>
 
         {/* Navigation Tabs — 8 чистых вкладок сеткой в 2 ряда (по 4 кнопки в ряд, без горизонтальной прокрутки) */}
@@ -3939,7 +3955,18 @@ export const ClanModal: React.FC<ClanModalProps> = ({
 
           {/* ==================== TAB 3: MEMBERS ==================== */}
           {playerClan && activeTab === 'members' && (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
+              <ClanSyndicateGwarsView
+                clan={playerClan}
+                myNick={myNick}
+                hero={hero}
+                isAdmin={isAdmin}
+                forcedSection="roster_permissions"
+                onUpdateHero={onUpdateHero}
+                showToast={showToast}
+                triggerRefresh={triggerRefresh}
+              />
+
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1.5 text-[10px] text-slate-400 font-bold">
                 <span>
                   Участники клана ({playerClan.members.length}) • 🛡️ Выдача «Знака клана» стоит <strong>1 000 🪙</strong> (дает право на бои 7х7 за объекты Порта)

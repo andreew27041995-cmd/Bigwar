@@ -27,7 +27,7 @@ import { ActiveVipBonusesBlock } from '../ActiveVipBonusesBlock';
 import { CharacterAvatar } from '../CharacterAvatar';
 import { ItemIcon } from '../ItemIcon';
 import { CrystalIcon } from '../CurrencyIcon';
-import { FishingRankMedal, FishingMedalRank } from '../FishingRankMedal';
+import { FishingRankMedal, FishingMedalRank, TournamentShowcaseBlock, TournamentShowcaseModal } from '../FishingRankMedal';
 import { CrystalOrdersMailbox } from './CrystalOrdersMailbox';
 import { NPC_CONFIG, getNpcEffectiveStats, sendNpcBrowserPushNotification } from '../../utils/npcCompanion';
 import {
@@ -74,6 +74,7 @@ interface CharacterModalProps {
   unreadMailCount?: number;
   knownPlayers?: string[];
   fishingMedalRank?: FishingMedalRank | null;
+  embedded?: boolean;
   onSwitchAccount?: (nick: string, pass: string) => Promise<{ success: boolean; error?: string }>;
   onClose: () => void;
   onUnequip: (slot: ItemSlot) => void;
@@ -122,6 +123,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   unreadMailCount = 0,
   knownPlayers = [],
   fishingMedalRank,
+  embedded = false,
   onClose,
   onUnequip,
   onRepairItem,
@@ -156,6 +158,7 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   showToast
 }) => {
   const [activeTab, setActiveTab] = useState<'profile' | 'estate' | 'mail' | 'collection' | 'npcBag' | 'lootHistory' | 'achievements' | 'characters' | 'settings'>(initialTab);
+  const [showTrophyShowcase, setShowTrophyShowcase] = useState(false);
   const [, setEstateTick] = useState(0);
   const [showCreateEstateForm, setShowCreateEstateForm] = useState(false);
   const [selectedEstateTplId, setSelectedEstateTplId] = useState<string>(
@@ -672,13 +675,21 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
   );
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
-      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
-        <span className="text-xs font-bold text-amber-400">👤 Персонаж, Недвижимость и Почта</span>
-        <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
-          ✕
-        </button>
-      </div>
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 flex-col bg-[#12161f] p-2 text-white overflow-hidden'
+          : 'absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white'
+      }
+    >
+      {!embedded && (
+        <div className="flex items-center justify-between border-b border-slate-700 pb-2">
+          <span className="text-xs font-bold text-amber-400">👤 Персонаж, Недвижимость и Почта</span>
+          <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Top Section Tabs: Экипировка vs Недвижимость vs Достижения vs Коллекция vs Почта vs Рюкзак NPC vs Loot History vs Персонажи vs Настройки */}
       <div className="mt-2 grid grid-cols-3 sm:grid-cols-9 gap-1 border-b border-slate-800 pb-2">
@@ -2505,31 +2516,25 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                         {item && (
                           <div className="flex items-center gap-0.5 shrink-0">
                             {Number(item.modificationClass || 0) > 0 && (
-                              <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[7px] font-black text-fuchsia-300 border border-fuchsia-400/60 flex items-center gap-0.5">
-                                <span className="text-amber-400">{'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}</span>
-                                <span>М{item.modificationClass}</span>
+                              <span
+                                className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-fuchsia-400/60"
+                                title={`Модификация: М${item.modificationClass}/10 (+${Number(item.modificationClass) * 5}% к статам)`}
+                              >
+                                ⭐М{item.modificationClass}
                               </span>
                             )}
                             <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7.5px] font-black text-amber-300 border border-amber-500/30">
-                              {item.lvl} ур.
+                              {item.lvl}ур
                             </span>
                           </div>
                         )}
                       </div>
                       {item ? (
                         <div
-                          className="truncate text-[9px] font-extrabold leading-tight mt-0.5 flex items-center gap-1"
+                          className="truncate text-[9px] font-extrabold leading-tight mt-0.5"
                           style={{ color: quality?.color }}
                         >
-                          <span className="truncate">{item.name}</span>
-                          {Number(item.modificationClass || 0) > 0 && (
-                            <span
-                              className="text-amber-400 font-black text-[8px] leading-none shrink-0"
-                              title={`Модификация: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
-                            >
-                              {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
-                            </span>
-                          )}
+                          {item.name}
                         </div>
                       ) : (
                         <div className="text-[8.5px] text-slate-500 italic leading-tight mt-0.5">
@@ -2540,84 +2545,83 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
 
                   </div>
 
-                  {/* Bottom Row: Stats, Durability & Unequip Button */}
+                  {/* Bottom Row: Stats, Durability & Action Buttons (wrapped cleanly with zero overlap) */}
                   {item ? (
-                    <div className="mt-1 pt-1 border-t border-slate-800/80 flex items-center justify-between gap-1">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-none">
-                          {item.dmg > 0 && (
-                            <span className="text-amber-300">+{item.dmg}⚔️</span>
-                          )}
-                          {item.hp > 0 && (
-                            <span className="text-red-300">+{item.hp}❤️</span>
-                          )}
-                          {(item.str ?? 0) > 0 && (
-                            <span className="text-orange-300">+{item.str}💪</span>
-                          )}
-                          {(item.agi ?? 0) > 0 && (
-                            <span className="text-sky-300">+{item.agi}💨Лов</span>
-                          )}
-                          {(item.vit ?? 0) > 0 && (
-                            <span className="text-emerald-300">+{item.vit}🛡️</span>
-                          )}
-                          {(item.dodgeBonus ?? 0) > 0 && (
-                            <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
-                          )}
-                          {(item.energyBonus ?? 0) > 0 && (
-                            <span className="text-cyan-300">+{item.energyBonus}⚡</span>
-                          )}
-                          {(item.goldBonusPct ?? 0) > 0 && (
-                            <span className="text-yellow-300">+{item.goldBonusPct}%🪙</span>
-                          )}
-                          {(item.expBonusPct ?? 0) > 0 && (
-                            <span className="text-purple-300">+{item.expBonusPct}%✨</span>
-                          )}
-                          {(item.travelTimeSec ?? 0) > 0 && (
-                            <span className="text-cyan-200">
-                              ⚓ {Math.max(1, Math.round(Number(item.travelTimeSec) / 60))} мин
-                            </span>
-                          )}
-                        </div>
-                        <div className={`text-[7px] font-semibold mt-0.5 leading-none ${curDur <= 0 ? 'text-red-400 font-black' : 'text-amber-400/90'}`}>
-                          🔧 {curDur}/{maxDur}
-                        </div>
-                        {item.isClanCreated ? (
-                          <div className="mt-0.5 truncate text-[6.8px] font-extrabold text-amber-300" title={`Создано кланом ${item.clanOwnerName || hero.clanName || 'Клан'} и принадлежит клану`}>
-                            🏰 Создано кланом {item.clanOwnerName || hero.clanName || 'Клан'} и принадлежит клану
-                          </div>
-                        ) : (item.isCustomCreated || item.isNamedTransport || item.quality === 'custom') ? (
-                          <div className="mt-0.5 truncate text-[6.8px] font-extrabold text-cyan-300" title={`Принадлежит игроку ${item.ownerNick || item.creatorNick || hero.nick || 'Игрок'}${item.transferable ? ' • Эту вещь можно передать' : ''}`}>
-                            👤 Принадлежит игроку {item.ownerNick || item.creatorNick || hero.nick || 'Игрок'}
-                            {item.transferable ? ' • 🤝 Эту вещь можно передать' : ''}
-                          </div>
-                        ) : null}
+                    <div className="mt-1 pt-1 border-t border-slate-800/80 space-y-1">
+                      <div className="flex flex-wrap gap-x-1 gap-y-0.5 text-[7.5px] font-bold leading-tight">
+                        {item.dmg > 0 && (
+                          <span className="text-amber-300">+{item.dmg}⚔️</span>
+                        )}
+                        {item.hp > 0 && (
+                          <span className="text-red-300">+{item.hp}❤️</span>
+                        )}
+                        {(item.str ?? 0) > 0 && (
+                          <span className="text-orange-300">+{item.str}💪</span>
+                        )}
+                        {(item.agi ?? 0) > 0 && (
+                          <span className="text-sky-300">+{item.agi}💨Лов</span>
+                        )}
+                        {(item.vit ?? 0) > 0 && (
+                          <span className="text-emerald-300">+{item.vit}🛡️</span>
+                        )}
+                        {(item.dodgeBonus ?? 0) > 0 && (
+                          <span className="text-emerald-300">+{item.dodgeBonus}%💨</span>
+                        )}
+                        {(item.energyBonus ?? 0) > 0 && (
+                          <span className="text-cyan-300">+{item.energyBonus}⚡</span>
+                        )}
+                        {(item.goldBonusPct ?? 0) > 0 && (
+                          <span className="text-yellow-300">+{item.goldBonusPct}%🪙</span>
+                        )}
+                        {(item.expBonusPct ?? 0) > 0 && (
+                          <span className="text-purple-300">+{item.expBonusPct}%✨</span>
+                        )}
+                        {(item.travelTimeSec ?? 0) > 0 && (
+                          <span className="text-cyan-200">
+                            ⚓ {Math.max(1, Math.round(Number(item.travelTimeSec) / 60))}м
+                          </span>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        {isDamaged && onRepairItem && (
+                      {item.isClanCreated ? (
+                        <div className="truncate text-[6.8px] font-extrabold text-amber-300" title={`Создано кланом ${item.clanOwnerName || hero.clanName || 'Клан'} и принадлежит клану`}>
+                          🏰 Клан {item.clanOwnerName || hero.clanName || 'Клан'}
+                        </div>
+                      ) : (item.isCustomCreated || item.isNamedTransport || item.quality === 'custom') ? (
+                        <div className="truncate text-[6.8px] font-extrabold text-cyan-300" title={`Принадлежит игроку ${item.ownerNick || item.creatorNick || hero.nick || 'Игрок'}${item.transferable ? ' • Эту вещь можно передать' : ''}`}>
+                          👤 {item.ownerNick || item.creatorNick || hero.nick || 'Игрок'}
+                        </div>
+                      ) : null}
+                      <div className="flex flex-wrap items-center justify-between gap-1 pt-0.5">
+                        <span className={`text-[7px] font-semibold leading-none ${curDur <= 0 ? 'text-red-400 font-black' : 'text-amber-400/90'}`}>
+                          🔧 {curDur}/{maxDur}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {isDamaged && onRepairItem && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onRepairItem(item);
+                              }}
+                              disabled={hero.gold < REPAIR_COST_GOLD}
+                              className="shrink-0 rounded bg-amber-500 px-1 py-0.5 text-[7px] font-black text-slate-950 hover:bg-amber-400 active:scale-95 cursor-pointer disabled:opacity-40"
+                              title={`Отремонтировать за ${REPAIR_COST_GOLD} золота (станет ${maxDur - 1}/${maxDur - 1})`}
+                            >
+                              🔨{REPAIR_COST_GOLD}
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onRepairItem(item);
+                              onUnequip(slot);
                             }}
-                            disabled={hero.gold < REPAIR_COST_GOLD}
-                            className="shrink-0 rounded bg-amber-500 px-1.5 py-0.5 text-[7.5px] font-black text-slate-950 hover:bg-amber-400 active:scale-95 cursor-pointer disabled:opacity-40"
-                            title={`Отремонтировать за ${REPAIR_COST_GOLD} золота (станет ${maxDur - 1}/${maxDur - 1})`}
+                            className="shrink-0 rounded bg-red-950/90 px-1.5 py-0.5 text-[7px] font-extrabold text-red-300 border border-red-500/50 hover:bg-red-800 hover:text-white active:scale-95 cursor-pointer"
+                            title="Снять предмет в сумку"
                           >
-                            🔨 {REPAIR_COST_GOLD}🪙
+                            Снять
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onUnequip(slot);
-                          }}
-                          className="shrink-0 rounded bg-red-950/90 px-1.5 py-0.5 text-[7.5px] font-extrabold text-red-300 border border-red-500/50 hover:bg-red-800 hover:text-white active:scale-95 cursor-pointer"
-                          title="Снять предмет в сумку"
-                        >
-                          Снять
-                        </button>
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -2752,7 +2756,10 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                           hero.fishingState?.fishingMedalRank === 3
                         ? hero.fishingState.fishingMedalRank
                         : null;
-                    if (effectiveMedalRank !== 1 && effectiveMedalRank !== 2 && effectiveMedalRank !== 3) {
+                    const hasValidFishingMedal =
+                      effectiveMedalRank === 1 || effectiveMedalRank === 2 || effectiveMedalRank === 3;
+                    const hasShowcaseMedals = Array.isArray(hero.tournamentMedals) && hero.tournamentMedals.length > 0;
+                    if (!hasValidFishingMedal && !hasShowcaseMedals) {
                       return null;
                     }
                     const fishCount = Math.max(
@@ -2760,13 +2767,21 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
                       Number(hero.fishingState?.totalFishCaught ?? 0)
                     );
                     return (
-                      <div className="pt-0.5">
-                        <FishingRankMedal
-                          rank={effectiveMedalRank}
-                          fishCaught={fishCount}
-                          size="md"
-                          showDetails={true}
-                          className="w-full"
+                      <div className="pt-0.5 space-y-1.5">
+                        {(effectiveMedalRank === 1 || effectiveMedalRank === 2 || effectiveMedalRank === 3) && (
+                          <FishingRankMedal
+                            rank={effectiveMedalRank}
+                            fishCaught={fishCount}
+                            size="md"
+                            showDetails={true}
+                            className="w-full"
+                          />
+                        )}
+                        <TournamentShowcaseBlock
+                          medals={hero.tournamentMedals}
+                          legacyFishingRank={effectiveMedalRank}
+                          legacyFishCaught={fishCount}
+                          onOpenShowcase={() => setShowTrophyShowcase(true)}
                         />
                       </div>
                     );
@@ -4646,6 +4661,22 @@ export const CharacterModal: React.FC<CharacterModalProps> = ({
             </button>
           )}
         </div>
+      )}
+      {showTrophyShowcase && (
+        <TournamentShowcaseModal
+          playerNick={currentUser || hero.nick || 'Герой'}
+          medals={hero.tournamentMedals}
+          legacyFishingRank={
+            fishingMedalRank === 1 || fishingMedalRank === 2 || fishingMedalRank === 3
+              ? fishingMedalRank
+              : hero.fishingState?.fishingMedalRank
+          }
+          legacyFishCaught={Math.max(
+            Number(hero.fishingState?.weeklyFishCaught ?? 0),
+            Number(hero.fishingState?.totalFishCaught ?? 0)
+          )}
+          onClose={() => setShowTrophyShowcase(false)}
+        />
       )}
     </div>
   );

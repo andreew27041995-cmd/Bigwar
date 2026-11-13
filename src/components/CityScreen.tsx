@@ -33,6 +33,7 @@ interface CityScreenProps {
   onOpenShop?: () => void;
   onOpenAltar?: () => void;
   onOpenPort?: () => void;
+  onOpenOutland?: () => void;
   onOpenFishing?: () => void;
   onOpenBattlePass?: () => void;
   onUsePotion: (type: 'hp' | 'en' | 'exp') => void;
@@ -44,6 +45,7 @@ interface CityScreenProps {
   claimableAchievementsCount?: number;
   onOpenClans?: () => void;
   onOpenClanPyramid?: () => void;
+  onOpenStadium?: () => void;
   onOpenForum?: () => void;
   onToggleNpcActive?: () => void;
   onOpenNpcBag?: () => void;
@@ -75,6 +77,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
   onOpenShop,
   onOpenAltar,
   onOpenPort,
+  onOpenOutland,
   onOpenFishing,
   onOpenBattlePass,
   onOpenLeaderboard,
@@ -85,6 +88,7 @@ export const CityScreen: React.FC<CityScreenProps> = ({
   claimableAchievementsCount = 0,
   onOpenClans,
   onOpenClanPyramid,
+  onOpenStadium,
   onOpenForum,
   onToggleNpcActive,
   onOpenNpcBag,
@@ -296,10 +300,12 @@ export const CityScreen: React.FC<CityScreenProps> = ({
           onOpenCharModal={onOpenCharModal}
           onOpenMailModal={onOpenMailModal}
           onOpenPort={onOpenPort || onOpenAltar}
+          onOpenOutland={onOpenOutland}
           onOpenFishing={onOpenFishing}
           onOpenWheel={onOpenWheel}
           onOpenClans={onOpenClans}
           onOpenClanPyramid={onOpenClanPyramid}
+          onOpenStadium={onOpenStadium}
           onOpenLeaderboard={onOpenLeaderboard}
           onOpenForum={onOpenForum}
           onOpenAchievements={onOpenAchievements}

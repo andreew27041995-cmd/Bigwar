@@ -8,6 +8,7 @@ interface BankAndForgeModalProps {
   hero: HeroState;
   equipped?: EquippedGear;
   inventory?: GameItem[];
+  embedded?: boolean;
   onClose: () => void;
   onAddCrystals?: (amount: number, packageName: string, priceUsd: number) => void;
   onExchangeGoldToCrystals: (goldAmount: number, crystalGain: number) => void;
@@ -22,6 +23,7 @@ interface BankAndForgeModalProps {
 
 export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
   hero,
+  embedded = false,
   onClose,
   onAddCrystals,
   onExchangeGoldToCrystals,
@@ -67,8 +69,8 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
     'Для покупки кристаллов выберите нужный пакет и свяжитесь с Администратором в чате или по указанным реквизитам.';
   const bankPaymentUrl = featureFlags?.bankPaymentUrl || '';
 
-  const crystalToGoldRate = Math.max(1, Number(featureFlags?.crystalToGoldRate || 1000));
-  const goldToCrystalRate = Math.max(1, Number(featureFlags?.goldToCrystalRate || 2000));
+  const crystalToGoldRate = Math.max(1, Number(featureFlags?.crystalToGoldRate || 100));
+  const goldToCrystalRate = Math.max(1, Number(featureFlags?.goldToCrystalRate || 100));
   const crystalLimitMax = Math.max(1, Number(featureFlags?.dailyCrystalToGoldLimit || 3));
   const goldLimitMax = Math.max(1, Number(featureFlags?.dailyGoldToCrystalLimit || 3));
   const isCrystalToGoldOpen = featureFlags?.crystalToGoldEnabled !== false;
@@ -79,16 +81,24 @@ export const BankAndForgeModal: React.FC<BankAndForgeModalProps> = ({
     String(hero.nick || '').trim().toLowerCase() === 'redblack';
 
   return (
-    <div className="absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 flex-col bg-[#12161f] p-2 text-white overflow-hidden'
+          : 'absolute inset-0 z-40 flex flex-col bg-slate-950/95 p-3 text-white'
+      }
+    >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-700 pb-2">
-        <span className="text-xs sm:text-sm font-black text-cyan-300 flex items-center gap-1.5">
+      <div className="flex items-center justify-between border-b border-slate-700 pb-1.5">
+        <span className="text-xs font-black text-cyan-300 flex items-center gap-1.5">
           <span>🏦</span>
           <span>Банк Кристаллов и Биржа Валют</span>
         </span>
-        <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
-          ✕
-        </button>
+        {!embedded && (
+          <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Content */}

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import bgImage from '../assets/images/pyramid_city_1792151896034.jpg';
 import { playPyramidDoorSound } from '../utils/audio';
 import { WEATHER_BUFFS_CATALOG } from '../utils/weatherBuffs';
+import { saveWorldWeatherToSupabase, subscribeToGlobalMailAndChat } from '../utils/supabase';
 
 export type CityTimeOfDay = 'morning' | 'day' | 'sunset' | 'night';
 
@@ -32,32 +33,6 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
     return null;
   });
 
-  const handleSetForceTimeOfDay = (next: CityTimeOfDay | null) => {
-    setForceTimeOfDay(next);
-    try {
-      if (next) {
-        localStorage.setItem('bigwar_force_time_of_day', next);
-      } else {
-        localStorage.removeItem('bigwar_force_time_of_day');
-      }
-    } catch {}
-  };
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentHour(new Date().getHours());
-    }, 60000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const timeOfDay: CityTimeOfDay = useMemo(() => {
-    if (forceTimeOfDay) return forceTimeOfDay;
-    if (currentHour >= 5 && currentHour < 8) return 'morning';
-    if (currentHour >= 8 && currentHour < 17) return 'day';
-    if (currentHour >= 17 && currentHour < 20) return 'sunset';
-    return 'night';
-  }, [currentHour, forceTimeOfDay]);
-
   // 2. Sandstorm (Песчаная буря) System
   const [isSandstormActive, setIsSandstormActive] = useState<boolean>(() => {
     try {
@@ -77,14 +52,84 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
     return 0;
   });
 
+  const syncFromStorage = useCallback(() => {
+    const now = Date.now();
+    setCurrentHour(new Date(now).getHours());
+    try {
+      const savedForced = localStorage.getItem('bigwar_force_time_of_day');
+      if (
+        savedForced === 'morning' ||
+        savedForced === 'day' ||
+        savedForced === 'sunset' ||
+        savedForced === 'night'
+      ) {
+        setForceTimeOfDay(savedForced);
+      } else {
+        setForceTimeOfDay(null);
+      }
+
+      const savedStormEnd = Number(localStorage.getItem('bigwar_sandstorm_end') || 0);
+      if (savedStormEnd > now) {
+        setIsSandstormActive(true);
+        setSandstormRemainingSec(Math.max(0, Math.ceil((savedStormEnd - now) / 1000)));
+      } else {
+        setIsSandstormActive(false);
+        setSandstormRemainingSec(0);
+        if (savedStormEnd > 0) {
+          localStorage.removeItem('bigwar_sandstorm_end');
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    syncFromStorage();
+    const timer = setInterval(syncFromStorage, 1000);
+    const onWeatherEvent = () => syncFromStorage();
+    window.addEventListener('bigwar_weather_updated', onWeatherEvent);
+    window.addEventListener('storage', onWeatherEvent);
+
+    const unsubscribe = subscribeToGlobalMailAndChat((state) => {
+      if (state.worldWeather) {
+        syncFromStorage();
+      }
+    });
+
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('bigwar_weather_updated', onWeatherEvent);
+      window.removeEventListener('storage', onWeatherEvent);
+      unsubscribe();
+    };
+  }, [syncFromStorage]);
+
+  const handleSetForceTimeOfDay = (next: CityTimeOfDay | null) => {
+    setForceTimeOfDay(next);
+    try {
+      if (next) {
+        localStorage.setItem('bigwar_force_time_of_day', next);
+      } else {
+        localStorage.removeItem('bigwar_force_time_of_day');
+      }
+    } catch {}
+    saveWorldWeatherToSupabase({ forcedTimeOfDay: next }).catch(() => {});
+  };
+
+  const timeOfDay: CityTimeOfDay = useMemo(() => {
+    if (forceTimeOfDay) return forceTimeOfDay;
+    if (currentHour >= 5 && currentHour < 8) return 'morning';
+    if (currentHour >= 8 && currentHour < 17) return 'day';
+    if (currentHour >= 17 && currentHour < 20) return 'sunset';
+    return 'night';
+  }, [currentHour, forceTimeOfDay]);
+
   const sandstormCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [pyramidClickEffect, setPyramidClickEffect] = useState<boolean>(false);
 
   // Periodic random sandstorm trigger check (5% chance every 10 min)
   useEffect(() => {
     const checkInterval = setInterval(() => {
-      if (!isSandstormActive) {
-        // 5% chance
+      if (!isSandstormActive && isAdmin) {
         if (Math.random() < 0.05) {
           triggerSandstorm(300); // 5 minutes
         }
@@ -92,25 +137,7 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
     }, 600000); // 10 minutes
 
     return () => clearInterval(checkInterval);
-  }, [isSandstormActive]);
-
-  // Sandstorm countdown timer
-  useEffect(() => {
-    if (!isSandstormActive) return;
-    const interval = setInterval(() => {
-      setSandstormRemainingSec((prev) => {
-        if (prev <= 1) {
-          setIsSandstormActive(false);
-          try {
-            localStorage.removeItem('bigwar_sandstorm_end');
-          } catch {}
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isSandstormActive]);
+  }, [isSandstormActive, isAdmin]);
 
   const triggerSandstorm = (durationSec = 300) => {
     const endAt = Date.now() + durationSec * 1000;
@@ -119,6 +146,7 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
     } catch {}
     setIsSandstormActive(true);
     setSandstormRemainingSec(durationSec);
+    saveWorldWeatherToSupabase({ sandstormEndAt: endAt }).catch(() => {});
   };
 
   const stopSandstorm = () => {
@@ -127,6 +155,7 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
     try {
       localStorage.removeItem('bigwar_sandstorm_end');
     } catch {}
+    saveWorldWeatherToSupabase({ sandstormEndAt: 0 }).catch(() => {});
   };
 
   // Sandstorm particle canvas simulation (lightweight 60fps)
@@ -370,16 +399,35 @@ export const CityDynamicBackground: React.FC<CityDynamicBackgroundProps> = ({
             </button>
           </div>
         </div>
-      ) : isSandstormActive ? (
-        /* Read-only subtle status indicator for regular players during natural sandstorm */
-        <div
-          className="pointer-events-none absolute top-[46px] sm:top-[48px] right-2 z-20 flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-950/75 px-2 py-0.5 text-[8px] font-bold text-amber-200 shadow-[0_0_8px_rgba(245,158,11,0.4)]"
-          title={`${WEATHER_BUFFS_CATALOG.sandstorm.title}: ${WEATHER_BUFFS_CATALOG.sandstorm.bonusText}`}
-        >
-          <span>🌪️</span>
-          <span>Буря</span>
+      ) : (
+        /* Read-only subtle status indicator for regular players showing current time of day & active sandstorm */
+        <div className="pointer-events-none absolute top-[52px] sm:top-[54px] right-2 z-20 flex items-center gap-1">
+          {isSandstormActive && (
+            <div
+              className="flex items-center gap-1 rounded-full border border-amber-500/70 bg-amber-950/90 px-2 py-0.5 text-[8px] font-bold text-amber-200 shadow-[0_0_10px_rgba(245,158,11,0.5)] animate-pulse"
+              title={`${WEATHER_BUFFS_CATALOG.sandstorm.title}: ${WEATHER_BUFFS_CATALOG.sandstorm.bonusText}`}
+            >
+              <span>🌪️</span>
+              <span>Буря ({formatTimer(sandstormRemainingSec)})</span>
+            </div>
+          )}
+          <div
+            className="flex items-center gap-1 rounded-full border border-slate-700/75 bg-slate-950/80 px-2 py-0.5 text-[7.5px] font-bold text-slate-200 shadow"
+            title={`${WEATHER_BUFFS_CATALOG[timeOfDay].title}: ${WEATHER_BUFFS_CATALOG[timeOfDay].bonusText}`}
+          >
+            <span>{WEATHER_BUFFS_CATALOG[timeOfDay].icon}</span>
+            <span>
+              {timeOfDay === 'morning'
+                ? 'Утро'
+                : timeOfDay === 'day'
+                ? 'День'
+                : timeOfDay === 'sunset'
+                ? 'Закат'
+                : 'Ночь'}
+            </span>
+          </div>
         </div>
-      ) : null}
+      )}
 
       {/* 4. Interactive Clean Pyramid Zone (Clickable Pyramid background area without artificial wireframe triangle or dots) */}
       <div

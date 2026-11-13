@@ -26,7 +26,12 @@ import {
   getClanTerritories,
   issueClanMemberBadge,
   CLAN_BADGE_COST_GOLD,
-  ClanBaseBuildingKey
+  ClanBaseBuildingKey,
+  getPortAllResourcesCatalog,
+  createClanSupplyOrder,
+  deleteClanSupplyOrder,
+  fulfillClanSupplyOrder,
+  transferClanLeadership
 } from '../../utils/clanStorage';
 import { ClanRankEpaulette, ClanBadgeMini } from '../ClanRankEpaulette';
 
@@ -59,6 +64,7 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
   hero,
   playerNick: playerNickProp,
   myNick,
+  isAdmin = false,
   initialSubTab = 'voentorg_ranks',
   forcedSection,
   onUpdateHero,
@@ -97,6 +103,13 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
   // Поля формы «Дипломатическое действие по #ID»
   const [diplomacyTargetNumInput, setDiplomacyTargetNumInput] = useState<string>('105');
 
+  // Поля формы «Клановые Заказы на Снабжение»
+  const [newOrderResKey, setNewOrderResKey] = useState<PortTerminalResourceKey>('titanium_plate');
+  const [newOrderQty, setNewOrderQty] = useState<number>(5);
+  const [newOrderPrice, setNewOrderPrice] = useState<number>(4800);
+  const [deliverQtyByOrderId, setDeliverQtyByOrderId] = useState<Record<string, number>>({});
+  const [transferLeaderNickInput, setTransferLeaderNickInput] = useState<string>('');
+
   const notify = (msg: string) => {
     setStatusMsg(msg);
     if (onShowToast) onShowToast(msg);
@@ -118,7 +131,9 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
   const actorLower = playerNick.trim().toLowerCase();
   const myMember = clan.members.find((m) => m.nick.trim().toLowerCase() === actorLower);
   const isLeader =
-    clan.leaderNick.trim().toLowerCase() === actorLower || myMember?.role === 'leader';
+    Boolean(isAdmin) ||
+    clan.leaderNick.trim().toLowerCase() === actorLower ||
+    myMember?.role === 'leader';
 
   const canDistributePts = Boolean(isLeader || myMember?.permissions?.canDistributePtsAndTreasury);
   const canManageBase = Boolean(isLeader || myMember?.permissions?.canManageBaseAndDiplomacy);
@@ -767,7 +782,7 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
         </div>
 
         {/* Радар Командного пункта */}
-        <div className="bg-[#e8e3d5] border border-[#b5ad99] p-2">
+        <div className="bg-[#e8e3d5] border border-[#b5ad99] p-2 mb-2">
           <div className="font-bold text-[#1f2d1b] text-[11px] mb-1">
             📡 Радар Командного пункта (Ур. {clan.baseBuildings?.commandPostLevel || 1}): Контролируемые сектора Порта 10x10 ({controlledSectors.length} шт.)
           </div>
@@ -802,6 +817,206 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
                     </td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* БЛОК «КЛАНОВЫЕ ЗАКАЗЫ НА СНАБЖЕНИЕ» (ТАБЛИЧНЫЙ СТИЛЬ GWARS) */}
+        <div className="bg-[#e8e3d5] border border-[#b5ad99] p-2 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="font-bold text-[#1f2d1b] text-[12px]">
+                📦 Клановые Заказы на Снабжение (Казна клана: {(clan.treasuryGold || 0).toLocaleString('ru-RU')} 🪙)
+              </div>
+              <div className="text-[10.5px] text-[#455241]">
+                Любой участник клана или союзник по #ID может сдать ресурсы Порта по заявке клана и мгновенно получить оплату золотом из Казны и <b>+5 личных PTS</b> за каждую единицу ресурса 3-го этапа!
+              </div>
+            </div>
+          </div>
+
+          {/* Форма создания новой заявки для Главы / Офицеров */}
+          {canManageBase && (
+            <div className="bg-white border border-[#9e9682] p-2 flex flex-wrap items-end gap-2 text-[11px]">
+              <div>
+                <div className="text-[10px] font-bold text-[#2b3527]">Ресурс Порта:</div>
+                <select
+                  value={newOrderResKey}
+                  onChange={(e) => {
+                    const rk = e.target.value as PortTerminalResourceKey;
+                    setNewOrderResKey(rk);
+                    const cat = getPortAllResourcesCatalog().find((c) => c.key === rk);
+                    if (cat) setNewOrderPrice(cat.buyPriceGold);
+                  }}
+                  className="bg-[#f9f7f1] border border-[#9e9682] px-1.5 py-0.5 text-[11px] font-bold"
+                >
+                  {getPortAllResourcesCatalog()
+                    .filter((c) => c.key !== 'tavern_meal')
+                    .map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c.icon} {c.name} ({c.category} • рек. {c.buyPriceGold} 🪙)
+                      </option>
+                    ))}
+                </select>
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-[#2b3527]">Кол-во (шт.):</div>
+                <input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={newOrderQty}
+                  onChange={(e) => setNewOrderQty(Math.max(1, Number(e.target.value) || 1))}
+                  className="w-16 bg-[#f9f7f1] border border-[#9e9682] px-1.5 py-0.5 text-[11px] font-mono text-center"
+                />
+              </div>
+              <div>
+                <div className="text-[10px] font-bold text-[#2b3527]">Цена закупки (🪙/шт.):</div>
+                <input
+                  type="number"
+                  min={10}
+                  max={50000}
+                  value={newOrderPrice}
+                  onChange={(e) => setNewOrderPrice(Math.max(10, Number(e.target.value) || 100))}
+                  className="w-24 bg-[#f9f7f1] border border-[#9e9682] px-1.5 py-0.5 text-[11px] font-mono text-center"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const res = createClanSupplyOrder(
+                    clan.id,
+                    playerNick,
+                    newOrderResKey,
+                    newOrderQty,
+                    newOrderPrice
+                  );
+                  if (!res.ok) {
+                    notify(`❌ ${res.error}`);
+                    return;
+                  }
+                  onRefreshClan();
+                  notify(res.message || '📦 Клановый заказ создан!');
+                }}
+                className="bg-[#2e5c25] hover:bg-[#22461b] text-white px-2.5 py-1 text-[11px] font-bold border border-[#183313] cursor-pointer"
+              >
+                [ + Создать заявку на снабжение ]
+              </button>
+            </div>
+          )}
+
+          {/* Таблица активных клановых заказов */}
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border border-[#9e9682] text-[11px] bg-white">
+              <thead>
+                <tr className="bg-[#2b3a26] text-[#e7dfc6]">
+                  <th className="border border-[#495c43] px-2 py-1 text-left">Заказанный ресурс</th>
+                  <th className="border border-[#495c43] px-2 py-1 text-center">Нужно / Сдано</th>
+                  <th className="border border-[#495c43] px-2 py-1 text-right">Оплата из казны</th>
+                  <th className="border border-[#495c43] px-2 py-1 text-center">У вас в рюкзаке</th>
+                  <th className="border border-[#495c43] px-2 py-1 text-right">Сдать ресурс в клан</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(clan.supplyOrders || []).length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="border border-[#ccc5b3] px-2 py-2 text-center text-[#5c6658]">
+                      Активных заказов на снабжение сейчас нет. Глава клана может разместить новый заказ выше.
+                    </td>
+                  </tr>
+                ) : (
+                  (clan.supplyOrders || []).map((ord) => {
+                    const rem = Math.max(0, ord.requestedQty - ord.deliveredQty);
+                    const myHave = Math.max(0, Math.floor(Number(portRes[ord.resourceKey] || 0)));
+                    const ptsPerItem = ord.ptsPerUnit || 5;
+                    const inputQty = deliverQtyByOrderId[ord.id] ?? Math.min(rem, Math.max(1, myHave));
+                    return (
+                      <tr key={ord.id} className="odd:bg-white even:bg-[#f7f4ec]">
+                        <td className="border border-[#ccc5b3] px-2 py-1 font-bold text-[#1f2d1b]">
+                          {ord.resourceIcon} «{ord.resourceName}»{' '}
+                          <span className="text-[10px] font-normal text-[#4b5747]">
+                            (+{ptsPerItem} PTS/шт.)
+                          </span>
+                        </td>
+                        <td className="border border-[#ccc5b3] px-2 py-1 text-center font-mono">
+                          <b>{ord.deliveredQty}</b> / {ord.requestedQty} шт. (ост. {rem})
+                        </td>
+                        <td className="border border-[#ccc5b3] px-2 py-1 text-right font-mono font-bold text-[#5e4612]">
+                          {ord.pricePerUnitGold.toLocaleString('ru-RU')} 🪙/шт.
+                        </td>
+                        <td className="border border-[#ccc5b3] px-2 py-1 text-center font-mono">
+                          <b className={myHave > 0 ? 'text-[#21591a]' : 'text-[#8c2d2d]'}>{myHave} шт.</b>
+                        </td>
+                        <td className="border border-[#ccc5b3] px-2 py-1 text-right whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1">
+                            <input
+                              type="number"
+                              min={1}
+                              max={Math.max(1, rem)}
+                              value={inputQty}
+                              onChange={(e) =>
+                                setDeliverQtyByOrderId((prev) => ({
+                                  ...prev,
+                                  [ord.id]: Math.max(1, Number(e.target.value) || 1)
+                                }))
+                              }
+                              className="w-12 bg-[#f9f7f1] border border-[#9e9682] px-1 py-0.5 text-center font-mono text-[11px]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const res = fulfillClanSupplyOrder(
+                                  clan.id,
+                                  playerNick,
+                                  ord.id,
+                                  inputQty,
+                                  myHave
+                                );
+                                if (!res.ok) {
+                                  notify(`❌ ${res.error}`);
+                                  return;
+                                }
+                                const used = res.deliveredQty || inputQty;
+                                const nextPortRes: Partial<Record<PortTerminalResourceKey, number>> = {
+                                  ...portRes,
+                                  [ord.resourceKey]: Math.max(0, myHave - used)
+                                };
+                                onUpdateHero({
+                                  gold: (hero.gold || 0) + (res.goldEarned || 0),
+                                  portResources: nextPortRes,
+                                  clanPts: (myRankInfo.pts || 0) + (res.ptsAwarded || 0)
+                                });
+                                onRefreshClan();
+                                notify(res.message || '✅ Ресурс сдан в клан!');
+                              }}
+                              className="bg-[#2e5c25] hover:bg-[#22461b] text-white px-2 py-0.5 text-[10.5px] font-bold border border-[#183313] cursor-pointer"
+                            >
+                              [ Сдать ресурс в клан ]
+                            </button>
+                            {canManageBase && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const res = deleteClanSupplyOrder(clan.id, playerNick, ord.id);
+                                  if (!res.ok) {
+                                    notify(`❌ ${res.error}`);
+                                    return;
+                                  }
+                                  onRefreshClan();
+                                  notify(res.message || 'Заказ закрыт.');
+                                }}
+                                title="Закрыть заказ"
+                                className="bg-[#8a2626] hover:bg-[#691919] text-white px-1.5 py-0.5 text-[10px] font-bold border border-[#4a0f0f] cursor-pointer"
+                              >
+                                [x]
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </div>
@@ -1292,9 +1507,51 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
       </div>
 
       {/* ========================================================================
-          РАЗДЕЛ 5: СОСТАВ И ДОЛЖНОСТИ (ГАЛОЧКИ ПРАВ ДЛЯ ГЛАВЫ КЛАНА)
+          РАЗДЕЛ 5: СОСТАВ И ДОЛЖНОСТИ (ГАЛОЧКИ ПРАВ ДЛЯ ГЛАВЫ КЛАНА + ПЕРЕДАЧА КЛАНА)
          ======================================================================== */}
-      <div className={activeSection === 'roster_permissions' ? 'block' : 'hidden'}>
+      <div className={activeSection === 'roster_permissions' ? 'block space-y-2' : 'hidden'}>
+        {/* ПЕРЕДАЧА УПРАВЛЕНИЯ СИНДИКАТОМ (КОРОНЫ ГЛАВЫ) ДРУГОМУ ИГРОКУ */}
+        {isLeader && (
+          <div className="bg-[#f4ebd0] border border-[#b59b52] p-2 text-[11px]">
+            <div className="font-bold text-[#3d2e05] mb-1">
+              👑 Передача управления Синдикатом #{clan.clanNumber || 1} [{clan.tag}] {clan.name} (Текущий Глава: {clan.leaderNick})
+            </div>
+            <div className="text-[10.5px] text-[#4f3d08] mb-1.5">
+              Глава клана может назначить нового Лидера из состава клана кнопкой в таблице ниже ИЛИ передать управление синдикатом любому игроку по его нику:
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <input
+                type="text"
+                value={transferLeaderNickInput}
+                onChange={(e) => setTransferLeaderNickInput(e.target.value)}
+                placeholder="Введите никнейм нового Главы клана..."
+                className="border border-[#8c7332] bg-white px-2 py-0.5 text-[11px] font-bold text-[#1f2d1b] w-60"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const target = transferLeaderNickInput.trim();
+                  if (!target) {
+                    notify('⚠️ Введите никнейм игрока, которому передается корона Главы клана!');
+                    return;
+                  }
+                  const res = transferClanLeadership(clan.id, playerNick, target, Boolean(isAdmin));
+                  if (!res.ok) {
+                    notify(`❌ ${res.error}`);
+                  } else {
+                    setTransferLeaderNickInput('');
+                    onRefreshClan();
+                    notify(res.message || `👑 Управление кланом [${clan.tag}] передано игроку ${target}!`);
+                  }
+                }}
+                className="bg-[#2e5c25] hover:bg-[#23471c] text-white border border-[#193814] px-2.5 py-0.5 text-[11px] font-bold cursor-pointer"
+              >
+                [ 🤝 Передать корону Главы клана ]
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full border-collapse border border-[#9e9682] text-[11px] bg-white">
             <thead>
@@ -1315,7 +1572,7 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
                 <th className="border border-[#495c43] px-1.5 py-1 text-center" title="Управление Базой и Дипломатией">
                   База/Дипл.
                 </th>
-                <th className="border border-[#495c43] px-2 py-1 text-center">Знак клана</th>
+                <th className="border border-[#495c43] px-2 py-1 text-center">Знак клана / Корона</th>
               </tr>
             </thead>
             <tbody>
@@ -1339,6 +1596,11 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
                         <ClanBadgeMini tag={clan.tag} emblem={clan.emblem} size={16} />
                         <ClanRankEpaulette level={rLvl} size="sm" />
                         <span className="font-bold text-[#1f2d1b]">{m.nick}</span>
+                        {memIsLeader && (
+                          <span className="bg-[#fff3cd] border border-[#c8a858] text-[#5c4306] px-1 py-0.2 text-[9.5px] font-bold">
+                            👑 ГЛАВА
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="border border-[#ccc5b3] px-2 py-1 text-center font-mono">
@@ -1402,26 +1664,46 @@ export const ClanSyndicateGwarsView: React.FC<ClanSyndicateGwarsViewProps> = ({
                       />
                     </td>
                     <td className="border border-[#ccc5b3] px-2 py-1 text-center">
-                      {m.hasClanBadge || memIsLeader ? (
-                        <span className="text-[#21591a] font-bold text-[10px]">🛡️ Выдан</span>
-                      ) : isLeader ? (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const res = issueClanMemberBadge(clan.id, playerNick, m.nick, 'treasury');
-                            if (!res.ok) notify(`❌ ${res.error}`);
-                            else {
-                              onRefreshClan();
-                              notify(res.message || 'Знак выдан!');
-                            }
-                          }}
-                          className="bg-[#2e5c25] text-white px-1.5 py-0.5 text-[10px] font-bold cursor-pointer"
-                        >
-                          Выдать ({CLAN_BADGE_COST_GOLD} 🪙)
-                        </button>
-                      ) : (
-                        <span className="text-[#8c2d2d] text-[10px]">Нет знака</span>
-                      )}
+                      <div className="flex flex-wrap items-center justify-center gap-1">
+                        {m.hasClanBadge || memIsLeader ? (
+                          <span className="text-[#21591a] font-bold text-[10px]">🛡️ Выдан</span>
+                        ) : isLeader ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const res = issueClanMemberBadge(clan.id, playerNick, m.nick, 'treasury');
+                              if (!res.ok) notify(`❌ ${res.error}`);
+                              else {
+                                onRefreshClan();
+                                notify(res.message || 'Знак выдан!');
+                              }
+                            }}
+                            className="bg-[#2e5c25] text-white px-1.5 py-0.5 text-[10px] font-bold cursor-pointer"
+                          >
+                            Выдать ({CLAN_BADGE_COST_GOLD} 🪙)
+                          </button>
+                        ) : (
+                          <span className="text-[#8c2d2d] text-[10px]">Нет знака</span>
+                        )}
+
+                        {isLeader && !memIsLeader && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const res = transferClanLeadership(clan.id, playerNick, m.nick, Boolean(isAdmin));
+                              if (!res.ok) notify(`❌ ${res.error}`);
+                              else {
+                                onRefreshClan();
+                                notify(res.message || `👑 Корона Главы передана игроку ${m.nick}!`);
+                              }
+                            }}
+                            className="bg-[#8b6508] hover:bg-[#6e4f05] text-white px-1.5 py-0.5 text-[9.5px] font-bold cursor-pointer"
+                            title={`Передать корону Главы клана игроку ${m.nick}`}
+                          >
+                            👑 Сделать Главой
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );

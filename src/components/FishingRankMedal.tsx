@@ -1,5 +1,5 @@
 import React from 'react';
-import { HeroState } from '../types/game';
+import { HeroState, TournamentMedalEntry, TournamentMedalCategory } from '../types/game';
 import { RealtimePlayer } from '../utils/supabase';
 
 export type FishingMedalRank = 1 | 2 | 3;
@@ -383,3 +383,194 @@ export const FishingRankMedal: React.FC<FishingRankMedalProps> = ({
     </div>
   );
 };
+
+export interface GroupedTournamentMedal {
+  groupKey: string;
+  category: TournamentMedalCategory;
+  rank: 1 | 2 | 3;
+  title: string;
+  count: number;
+  entries: TournamentMedalEntry[];
+}
+
+const TOURNAMENT_CATEGORY_LABELS: Record<
+  TournamentMedalCategory,
+  { icon: string; name: string; accentCls: string }
+> = {
+  fishing: { icon: '🐟', name: 'Рыбалка Нила', accentCls: 'text-sky-300 border-sky-400/50 bg-sky-950/50' },
+  pyramid: { icon: '🔺', name: 'Пирамида Ра', accentCls: 'text-amber-300 border-amber-400/50 bg-amber-950/50' },
+  clan: { icon: '🛡️', name: 'Клановые войны 7×7', accentCls: 'text-emerald-300 border-emerald-400/50 bg-emerald-950/50' },
+  arena: { icon: '🏟️', name: 'Стадион Фароса', accentCls: 'text-purple-300 border-purple-400/50 bg-purple-950/50' }
+};
+
+export function buildGroupedTournamentMedals(
+  medals?: TournamentMedalEntry[] | null,
+  legacyFishingRank?: number | null,
+  legacyFishCaught?: number
+): GroupedTournamentMedal[] {
+  const list: TournamentMedalEntry[] = Array.isArray(medals) ? [...medals] : [];
+  if (
+    (legacyFishingRank === 1 || legacyFishingRank === 2 || legacyFishingRank === 3) &&
+    !list.some((m) => m.category === 'fishing' && m.rank === legacyFishingRank)
+  ) {
+    list.unshift({
+      id: `legacy_fish_${legacyFishingRank}`,
+      category: 'fishing',
+      rank: legacyFishingRank,
+      title: FISHING_MEDAL_META[legacyFishingRank].shortTitle,
+      awardedAt: Date.now(),
+      seasonLabel: legacyFishCaught && legacyFishCaught > 0 ? `Улов: ${legacyFishCaught} рыб` : 'Турнир Рыболовов'
+    });
+  }
+
+  const grouped = new Map<string, GroupedTournamentMedal>();
+  for (const entry of list) {
+    const key = `${entry.category}_${entry.rank}_${entry.title}`;
+    const prev = grouped.get(key);
+    if (prev) {
+      prev.count += 1;
+      prev.entries.push(entry);
+    } else {
+      grouped.set(key, {
+        groupKey: key,
+        category: entry.category,
+        rank: entry.rank,
+        title: entry.title,
+        count: 1,
+        entries: [entry]
+      });
+    }
+  }
+  return Array.from(grouped.values()).sort((a, b) => a.rank - b.rank || b.count - a.count);
+}
+
+export const TournamentShowcaseBlock: React.FC<{
+  medals?: TournamentMedalEntry[] | null;
+  legacyFishingRank?: number | null;
+  legacyFishCaught?: number;
+  onOpenShowcase?: () => void;
+  className?: string;
+}> = ({ medals, legacyFishingRank, legacyFishCaught, onOpenShowcase, className = '' }) => {
+  const grouped = buildGroupedTournamentMedals(medals, legacyFishingRank, legacyFishCaught);
+  if (grouped.length === 0) return null;
+
+  const totalCount = grouped.reduce((acc, g) => acc + g.count, 0);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenShowcase}
+      className={`w-full rounded-xl border border-amber-400/60 bg-gradient-to-r from-[#23180c] via-[#171c29] to-[#23180c] p-2 text-left hover:border-yellow-300 transition-colors cursor-pointer ${className}`}
+      title="Открыть Витрину Трофеев и накопительных медалей"
+    >
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-[9.5px] font-black uppercase tracking-wider text-amber-300">
+          🏆 Витрина Трофеев ({totalCount})
+        </span>
+        <span className="text-[8.5px] font-bold text-amber-200/80 underline">
+          Подробнее ▶
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {grouped.map((g) => {
+          const rankColors =
+            g.rank === 1
+              ? 'border-amber-300 bg-amber-950/75 text-yellow-200'
+              : g.rank === 2
+              ? 'border-slate-300 bg-slate-800/85 text-slate-100'
+              : 'border-orange-400 bg-orange-950/75 text-orange-200';
+          const catMeta = TOURNAMENT_CATEGORY_LABELS[g.category] || TOURNAMENT_CATEGORY_LABELS.fishing;
+          return (
+            <span
+              key={g.groupKey}
+              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[8.5px] font-black ${rankColors}`}
+            >
+              <span>{catMeta.icon}</span>
+              <span>{g.rank === 1 ? '🥇' : g.rank === 2 ? '🥈' : '🥉'}</span>
+              <span className="truncate max-w-[140px]">{g.title}</span>
+              {g.count > 1 && (
+                <span className="rounded bg-amber-400 px-1 text-[8px] font-black text-slate-950">
+                  x{g.count}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </div>
+    </button>
+  );
+};
+
+export const TournamentShowcaseModal: React.FC<{
+  playerNick?: string;
+  medals?: TournamentMedalEntry[] | null;
+  legacyFishingRank?: number | null;
+  legacyFishCaught?: number;
+  onClose: () => void;
+}> = ({ playerNick, medals, legacyFishingRank, legacyFishCaught, onClose }) => {
+  const grouped = buildGroupedTournamentMedals(medals, legacyFishingRank, legacyFishCaught);
+  const totalCount = grouped.reduce((acc, g) => acc + g.count, 0);
+
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80 p-3 backdrop-blur-xs">
+      <div className="w-full max-w-md rounded-2xl border-2 border-amber-400/80 bg-[#111722] text-slate-100 shadow-2xl overflow-hidden">
+        <div className="flex items-center justify-between border-b border-amber-500/40 bg-[#1a2232] px-3.5 py-2.5">
+          <div>
+            <div className="text-xs font-black uppercase tracking-wider text-amber-300">
+              🏆 Витрина Трофеев {playerNick ? `• ${playerNick}` : ''}
+            </div>
+            <div className="text-[10px] text-slate-400">
+              Накопительные медали турниров (Всего наград: {totalCount})
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-7 w-7 rounded-lg border border-slate-600 bg-slate-900 text-xs font-bold text-slate-200 hover:border-red-400 hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="p-3 space-y-2 max-h-[70dvh] overflow-y-auto">
+          {grouped.length === 0 ? (
+            <div className="p-4 text-center text-[11px] text-slate-400 border border-dashed border-slate-700 rounded-xl">
+              Турнирных медалей пока нет. Занимайте призовые 1–3 места в Рыбалке, Пирамиде или Клановых войнах 7×7!
+            </div>
+          ) : (
+            grouped.map((g) => {
+              const catMeta = TOURNAMENT_CATEGORY_LABELS[g.category] || TOURNAMENT_CATEGORY_LABELS.fishing;
+              return (
+                <div
+                  key={g.groupKey}
+                  className="rounded-xl border border-slate-700 bg-slate-900/90 p-2.5 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="text-base">{g.rank === 1 ? '🥇' : g.rank === 2 ? '🥈' : '🥉'}</span>
+                      <span className="text-[11px] font-black text-amber-200 truncate">
+                        {g.title}
+                      </span>
+                    </div>
+                    <span className="rounded-md border border-amber-400/70 bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-black text-amber-300 shrink-0">
+                      [x{g.count}]
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-[9.5px]">
+                    <span className={`rounded border px-1.5 py-0.5 font-bold ${catMeta.accentCls}`}>
+                      {catMeta.icon} {catMeta.name}
+                    </span>
+                    <span className="text-slate-400">
+                      {g.entries[0]?.seasonLabel || `${g.rank} место в турнире`}
+                    </span>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+

@@ -512,40 +512,9 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     }
   };
 
-  // Sell all fish currently in the Keepnet («Продать улов»)
-  const handleSellKeepnetCatch = () => {
-    if (keepnetFishList.length === 0) {
-      setStatusBanner('🪣 Садок пуст! Сначала поймайте рыбу удочкой или сетью.');
-      return;
-    }
-    const soldCount = keepnetFishList.length;
-    const goldEarned = keepnetTotals.gold;
-    const crystalsEarned = keepnetTotals.crystals;
-    const nextState: PlayerFishingState = {
-      ...fishingState,
-      keepnetFish: []
-    };
-    playCoinSound();
-    setStatusBanner(
-      `💰 Вы продали весь улов из садка (${soldCount} рыб): +${goldEarned.toLocaleString('ru-RU')} 🪙${
-        crystalsEarned > 0 ? `, +${crystalsEarned} 💎` : ''
-      }! Садок свободен (0/${keepnetCapacity}).`
-    );
-    commitFishingStateChange(
-      nextState,
-      goldEarned,
-      crystalsEarned,
-      0,
-      0,
-      `💰 [Рыбалка] Продано рыб из садка (${soldCount} шт.): +${goldEarned.toLocaleString('ru-RU')} 🪙${
-        crystalsEarned > 0 ? `, +${crystalsEarned} 💎` : ''
-      }!`
-    );
-  };
-
   const [showFishingSetup, setShowFishingSetup] = useState<boolean>(false);
 
-  // Supply all fish from Keepnet directly to the Port Fish Cannery (80 gold/fish + Production Skill)
+  // Supply all fish from Keepnet directly to the Port Fish Cannery (50 gold/fish + Production Skill)
   const handleSellKeepnetToPortMarket = () => {
     if (keepnetFishList.length === 0) {
       setStatusBanner('🪣 Садок пуст! Сначала поймайте рыбу удочкой или сетью.');
@@ -557,7 +526,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       setStatusBanner(`❌ ${marketRes.message}`);
       return;
     }
-    const totalGold = Math.max(keepnetTotals.gold, count * 80, marketRes.goldEarned);
+    const totalGold = Math.max(count * 50, marketRes.goldEarned || count * 50);
     const crystalsEarned = keepnetTotals.crystals;
     const nextState: PlayerFishingState = {
       ...fishingState,
@@ -565,7 +534,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
     };
     playCoinSound();
     setStatusBanner(
-      `🏭 Сдано ${count} шт. рыбы на Рыбный комбинат в Порту (по 80 🪙/шт.): +${totalGold.toLocaleString('ru-RU')} 🪙${
+      `🏭 Сдано ${count} шт. рыбы на Рыбный комбинат в Порту (по 50 🪙/шт.): +${totalGold.toLocaleString('ru-RU')} 🪙${
         crystalsEarned > 0 ? `, +${crystalsEarned} 💎` : ''
       } и +Навык Производства!`
     );
@@ -575,7 +544,7 @@ export const FishingModal: React.FC<FishingModalProps> = ({
       crystalsEarned,
       0,
       0,
-      `🏭 [Порт • Рыбный комбинат] Сдано ${count} шт. рыбы (80 🪙/шт.): +${totalGold.toLocaleString('ru-RU')} 🪙${
+      `🏭 [Порт • Рыбный комбинат] Сдано ${count} шт. рыбы (50 🪙/шт.): +${totalGold.toLocaleString('ru-RU')} 🪙${
         crystalsEarned > 0 ? `, +${crystalsEarned} 💎` : ''
       } (+Навык Производства)!`,
       undefined,
@@ -2391,27 +2360,6 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   <strong className={isKeepnetFull ? 'text-red-400' : 'text-amber-300'}>
                     {keepnetFishList.length}/{keepnetCapacity}
                   </strong>
-                  <button
-                    type="button"
-                    onClick={handleSellKeepnetCatch}
-                    disabled={keepnetFishList.length === 0}
-                    title={
-                      keepnetFishList.length > 0
-                        ? `Продать весь садок (+${keepnetTotals.gold} 🪙${
-                            keepnetTotals.crystals > 0 ? ` +${keepnetTotals.crystals} 💎` : ''
-                          })`
-                        : 'Садок пуст'
-                    }
-                    className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[8px] font-black transition-all cursor-pointer ${
-                      keepnetFishList.length > 0
-                        ? 'border border-amber-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 hover:brightness-110 active:scale-95 shadow-xs'
-                        : 'border border-amber-900/50 bg-[#140d06] text-slate-500 opacity-60 cursor-not-allowed'
-                    }`}
-                  >
-                    <span>🪙</span>
-                    <span>Продать всё</span>
-                    {keepnetFishList.length > 0 && <span>(+{keepnetTotals.gold}🪙)</span>}
-                  </button>
                 </span>
                 <span>·</span>
                 <span>
@@ -2851,10 +2799,10 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                     isKeepnetFull ? (
                       <button
                         type="button"
-                        onClick={handleSellKeepnetCatch}
-                        className="w-full rounded-xl border-2 border-yellow-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 px-2 py-2.5 text-[10.5px] font-black uppercase tracking-wide text-slate-950 shadow-[0_4px_16px_rgba(245,158,11,0.5),inset_0_1px_0_#fff] hover:brightness-110 active:scale-[0.98] cursor-pointer"
+                        onClick={handleSellKeepnetToPortMarket}
+                        className="w-full rounded-xl border-2 border-cyan-300 bg-gradient-to-b from-cyan-500 via-teal-600 to-teal-800 px-2 py-2.5 text-[10.5px] font-black uppercase tracking-wide text-white shadow-[0_4px_16px_rgba(20,184,166,0.45),inset_0_1px_0_rgba(255,255,255,0.4)] hover:brightness-110 active:scale-[0.98] cursor-pointer"
                       >
-                        🪣 Продать улов (+{keepnetTotals.gold}🪙)
+                        🏭 Сдать в Порт (+{keepnetFishList.length * 50}🪙)
                       </button>
                     ) : (
                       <button
@@ -3021,36 +2969,19 @@ export const FishingModal: React.FC<FishingModalProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-1.5 pt-0.5">
                     <button
                       type="button"
-                      onClick={handleSellKeepnetCatch}
-                      disabled={keepnetFishList.length === 0}
-                      className={`flex-1 min-w-[105px] rounded-lg px-2 py-1.5 text-[9px] font-black transition-all cursor-pointer text-center ${
-                        keepnetFishList.length > 0
-                          ? 'border-2 border-amber-200 bg-gradient-to-b from-yellow-300 via-amber-400 to-amber-600 text-slate-950 shadow-[0_2px_10px_rgba(245,158,11,0.45)] hover:brightness-110 active:scale-95'
-                          : 'border border-amber-900/40 bg-[#140d07] text-slate-500 opacity-60 cursor-not-allowed'
-                      }`}
-                    >
-                      💰 Продать
-                      {keepnetFishList.length > 0
-                        ? ` (+${keepnetTotals.gold}🪙${
-                            keepnetTotals.crystals > 0 ? ` +${keepnetTotals.crystals}💎` : ''
-                          })`
-                        : ''}
-                    </button>
-                    <button
-                      type="button"
                       onClick={handleSellKeepnetToPortMarket}
                       disabled={keepnetFishList.length === 0}
-                      title="Сдать рыбу на Рыбный комбинат в Порту по повышенной цене завода (80 золота за 1 ед. + навык Производства)"
-                      className={`flex-1 min-w-[125px] rounded-lg px-2 py-1.5 text-[9px] font-black transition-all cursor-pointer text-center ${
+                      title="Сдать рыбу на Рыбный комбинат в Порту (50 золота за 1 ед. + навык Производства)"
+                      className={`flex-1 min-w-[140px] rounded-lg px-2 py-1.5 text-[9.5px] font-black transition-all cursor-pointer text-center ${
                         keepnetFishList.length > 0
-                          ? 'border border-cyan-400/70 bg-gradient-to-b from-cyan-600 to-teal-800 text-white shadow-sm hover:brightness-110 active:scale-95'
+                          ? 'border border-cyan-400/80 bg-gradient-to-b from-cyan-600 to-teal-800 text-white shadow-sm hover:brightness-110 active:scale-95'
                           : 'border border-slate-800 bg-[#140d07] text-slate-500 opacity-60 cursor-not-allowed'
                       }`}
                     >
                       🏭 Сдать в Порт
                       {keepnetFishList.length > 0
-                        ? ` (+${Math.max(keepnetTotals.gold, keepnetFishList.length * 80)}🪙)`
-                        : ' (80🪙/шт)'}
+                        ? ` (+${(keepnetFishList.length * 50).toLocaleString('ru-RU')}🪙)`
+                        : ' (50🪙/шт)'}
                     </button>
                     <button
                       type="button"

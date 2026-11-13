@@ -19,6 +19,7 @@ import {
 import { ItemIcon } from '../ItemIcon';
 import { GoldCoinIcon, CrystalIcon } from '../CurrencyIcon';
 import { ClanTerritoryWarsView } from './ClanMechanicsSubViews';
+import { OutlandRaidView, PharosStadiumView } from '../OutlandAndStadiumViews';
 import {
   getPlayerClan,
   getClanTerritories,
@@ -38,7 +39,11 @@ import {
   distributeGoldToAllPortEstates,
   autoBalanceAllPortEstatesPrices,
   fulfillPharaohStateOrder,
-  autoSupplyFactoryFromTerminal
+  autoSupplyFactoryFromTerminal,
+  getPortFacilityLevelConfig,
+  upgradePortFactoryLevel,
+  getPortLaborExchangeList,
+  getPortTradeSummaryList
 } from '../../utils/clanStorage';
 
 interface PortModalProps {
@@ -62,6 +67,7 @@ interface PortModalProps {
   onUpdateInventory?: (updated: GameItem[]) => void;
   showToast?: (msg: string) => void;
   onClose: () => void;
+  embedded?: boolean;
 }
 
 export const PortModal: React.FC<PortModalProps> = ({
@@ -84,12 +90,14 @@ export const PortModal: React.FC<PortModalProps> = ({
   onUpdateHero,
   onUpdateInventory,
   showToast,
-  onClose
+  onClose,
+  embedded = false
 }) => {
   const handleOpenTransportShop = onOpenTransportShop || onOpenShopTransport || (() => {});
   const handleOpenForge = onOpenCreateItem || onOpenForgeWeapon || (() => {});
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [portTab, setPortTab] = useState<'productions' | 'tycoon' | 'terminal' | 'shipyard'>('productions');
+  const [portTab, setPortTab] = useState<'productions' | 'tycoon' | 'terminal' | 'outland' | 'stadium' | 'shipyard'>('productions');
+  const [terminalSubTab, setTerminalSubTab] = useState<'terminal' | 'labor' | 'trade_summary'>('terminal');
   const [selectedManageSectorId, setSelectedManageSectorId] = useState<string | null>(null);
   const [massDepositGoldStr, setMassDepositGoldStr] = useState<string>('15000');
   const [, setRefreshTick] = useState(0);
@@ -99,13 +107,22 @@ export const PortModal: React.FC<PortModalProps> = ({
     gold_nugget: 10,
     quartz_sand: 10,
     crude_oil: 10,
+    flax_fiber: 10,
+    natural_saltpeter: 10,
+    raw_cotton_fiber: 10,
     fish_semifinished: 10,
     alchemy_reagents: 10,
     gold_ingots: 10,
     hardened_steel: 5,
+    armor_fabric: 5,
+    gunpowder: 5,
     combat_ration: 5,
     combat_modules: 5,
     port_relics: 1,
+    titanium_plate: 1,
+    assault_charge: 1,
+    ceremonial_amulet: 1,
+    oasis_herb: 10,
     power_kw: 10,
     tavern_meal: 1
   });
@@ -435,101 +452,139 @@ export const PortModal: React.FC<PortModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2.5 backdrop-blur-md select-none">
+    <div
+      className={
+        embedded
+          ? 'w-full select-none'
+          : 'fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2.5 backdrop-blur-md select-none'
+      }
+    >
       <div
-        className="relative flex max-h-[94dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border-2 border-cyan-500/80 text-slate-100 shadow-[0_0_50px_rgba(6,182,212,0.35)]"
-        style={{
-          background:
-            'radial-gradient(circle at 50% 25%, rgba(14, 116, 144, 0.38) 0%, rgba(15, 23, 42, 0.96) 60%, rgba(3, 7, 18, 1) 100%)'
-        }}
+        className={
+          embedded
+            ? 'relative flex w-full flex-col overflow-hidden border border-slate-700 bg-slate-950 text-slate-100'
+            : 'relative flex max-h-[94dvh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border-2 border-cyan-500/80 text-slate-100 shadow-[0_0_50px_rgba(6,182,212,0.35)]'
+        }
+        style={
+          embedded
+            ? undefined
+            : {
+                background:
+                  'radial-gradient(circle at 50% 25%, rgba(14, 116, 144, 0.38) 0%, rgba(15, 23, 42, 0.96) 60%, rgba(3, 7, 18, 1) 100%)'
+              }
+        }
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-cyan-500/40 bg-slate-950/90 px-3.5 py-2.5 shrink-0">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-400/70 bg-cyan-950/80 text-xl shadow-[0_0_12px_rgba(34,211,238,0.5)]">
-              ⚓
-            </span>
-            <div className="min-w-0">
-              <h2 className="truncate font-serif text-sm sm:text-base font-black uppercase tracking-wider text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]">
-                Порт Древнего Нила • Недвижимость и Торговый терминал
-              </h2>
-              <p className="truncate text-[10px] text-cyan-100/75">
-                Карта 10х10 (Gwars) • 12 заводов и 12 ресурсов • Торговый терминал (20 000 ед.)
-              </p>
+        {/* Header (only shown when not embedded or as a compact bar) */}
+        {!embedded && (
+          <div className="flex items-center justify-between border-b border-cyan-500/40 bg-slate-950/90 px-3.5 py-2.5 shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-cyan-400/70 bg-cyan-950/80 text-xl shadow-[0_0_12px_rgba(34,211,238,0.5)]">
+                ⚓
+              </span>
+              <div className="min-w-0">
+                <h2 className="truncate font-serif text-sm sm:text-base font-black uppercase tracking-wider text-cyan-300 drop-shadow-[0_0_8px_rgba(34,211,238,0.6)]">
+                  Порт Древнего Нила • Карта 10x10, Прибрежная зона и Стадион
+                </h2>
+                <p className="truncate text-[10px] text-cyan-100/75">
+                  Карта 10х10 (Gwars) • 22 объекта и 20 ресурсов • Прибрежная зона 12x12 • Стадион Фароса [5/5]
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/90 px-2 py-1 text-[10px] font-black">
+                <span className="inline-flex items-center gap-1 text-amber-300">
+                  <GoldCoinIcon size="sm" />
+                  <span>{hero.gold.toLocaleString('ru-RU')}</span>
+                </span>
+                <span className="inline-flex items-center gap-1 text-cyan-300">
+                  <CrystalIcon size="sm" />
+                  <span>{hero.crystals.toLocaleString('ru-RU')}</span>
+                </span>
+              </div>
+              <button
+                onClick={onClose}
+                className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-500/60 bg-rose-950/70 text-xs font-bold text-rose-200 hover:bg-rose-800 active:scale-95 cursor-pointer"
+                title="Закрыть окно Порта"
+              >
+                ✕
+              </button>
             </div>
           </div>
+        )}
 
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden sm:flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900/90 px-2 py-1 text-[10px] font-black">
-              <span className="inline-flex items-center gap-1 text-amber-300">
-                <GoldCoinIcon size="sm" />
-                <span>{hero.gold.toLocaleString('ru-RU')}</span>
-              </span>
-              <span className="inline-flex items-center gap-1 text-cyan-300">
-                <CrystalIcon size="sm" />
-                <span>{hero.crystals.toLocaleString('ru-RU')}</span>
-              </span>
-            </div>
-            <button
-              onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-lg border border-rose-500/60 bg-rose-950/70 text-xs font-bold text-rose-200 hover:bg-rose-800 active:scale-95 cursor-pointer"
-              title="Закрыть окно Порта"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
-        {/* Верхняя панель Порта (4 чистые вкладки по ТЗ) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 border-b border-slate-700 bg-slate-950 px-2.5 py-1.5 shrink-0">
+        {/* Верхняя панель Порта и Острова 10x10 */}
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-1 border-b border-slate-700 bg-slate-950 px-2 py-1.5 shrink-0">
           <button
             type="button"
             onClick={() => setPortTab('productions')}
-            className={`border py-1.5 px-2 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
               portTab === 'productions'
                 ? 'border-amber-400 bg-amber-500 text-slate-950'
                 : 'border-slate-700 bg-slate-900 text-slate-200 hover:bg-slate-800 hover:text-amber-200'
             }`}
           >
-            [ 🗺️ Карта 10x10 и Сектор ]
+            [ 🗺️ Карта 10x10 ]
           </button>
           <button
             type="button"
             onClick={() => setPortTab('tycoon')}
-            className={`border py-1.5 px-2 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
               portTab === 'tycoon'
                 ? 'border-amber-400 bg-amber-500 text-slate-950'
                 : 'border-slate-700 bg-slate-900 text-amber-300 hover:bg-slate-800 hover:text-amber-200'
             }`}
           >
-            [ 🏢 Моя Недвижимость ]
+            [ 🏢 Недвижимость ]
           </button>
           <button
             type="button"
             onClick={() => setPortTab('terminal')}
-            className={`border py-1.5 px-2 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
               portTab === 'terminal'
                 ? 'border-emerald-400 bg-emerald-500 text-slate-950'
                 : 'border-slate-700 bg-slate-900 text-emerald-300 hover:bg-slate-800 hover:text-emerald-200'
             }`}
           >
-            [ ⚖️ Торговый Терминал и Биржа ]
+            [ ⚖️ Терминал и Биржа ]
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortTab('outland')}
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+              portTab === 'outland'
+                ? 'border-teal-400 bg-teal-500 text-slate-950'
+                : 'border-slate-700 bg-slate-900 text-teal-300 hover:bg-slate-800 hover:text-teal-200'
+            }`}
+          >
+            [ 🏝️ АУТЛЕНД ]
+          </button>
+          <button
+            type="button"
+            onClick={() => setPortTab('stadium')}
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+              portTab === 'stadium'
+                ? 'border-purple-400 bg-purple-500 text-slate-950'
+                : 'border-slate-700 bg-slate-900 text-purple-300 hover:bg-slate-800 hover:text-purple-200'
+            }`}
+          >
+            [ 🏟️ Стадион [5/5] ]
           </button>
           <button
             type="button"
             onClick={() => setPortTab('shipyard')}
-            className={`border py-1.5 px-2 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
+            className={`border py-1.5 px-1.5 text-[10px] sm:text-[11px] font-bold transition-colors cursor-pointer ${
               portTab === 'shipyard'
                 ? 'border-cyan-400 bg-cyan-500 text-slate-950'
                 : 'border-slate-700 bg-slate-900 text-cyan-300 hover:bg-slate-800 hover:text-cyan-200'
             }`}
           >
-            [ ⚓ Верфь, Кузница и Алтарь ]
+            [ ⚓ Верфь и Алтарь ]
           </button>
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className={embedded ? 'p-2 space-y-2.5' : 'flex-1 overflow-y-auto p-3 space-y-3'}>
           {portTab === 'productions' ? (
             <ClanTerritoryWarsView
               clan={getPlayerClan((currentUser || hero.nick || 'Игрок').trim(), hero.clanId)}
@@ -546,6 +601,22 @@ export const PortModal: React.FC<PortModalProps> = ({
               showToast={showToast || (() => {})}
               triggerRefresh={() => setRefreshTick((v) => v + 1)}
               requestConfirm={(_title, _message, onConfirm) => onConfirm()}
+            />
+          ) : portTab === 'outland' ? (
+            <OutlandRaidView
+              hero={hero}
+              pierCoord={hero.portIslandPos || { x: 1, y: 5 }}
+              onUpdateHero={onUpdateHero || (() => {})}
+              onNotify={showToast}
+              onBackToMap={() => setPortTab('productions')}
+            />
+          ) : portTab === 'stadium' ? (
+            <PharosStadiumView
+              hero={hero}
+              isAdmin={hero.role === 'admin' || hero.is_admin === 1}
+              onUpdateHero={onUpdateHero || (() => {})}
+              onNotify={showToast}
+              onBackToMap={() => setPortTab('productions')}
             />
           ) : portTab === 'tycoon' ? (
             (() => {
@@ -717,11 +788,13 @@ export const PortModal: React.FC<PortModalProps> = ({
                           }
 
                           const isOutFull = (p.relicStock ?? 0) >= (p.maxRelicStock ?? 70);
+                          const lvlCfg = getPortFacilityLevelConfig(p.facilityLevel);
+                          const nextLvlCfg = lvlCfg.level < 5 ? getPortFacilityLevelConfig(lvlCfg.level + 1) : null;
 
                           return (
                             <tr key={s.id} className="border-b border-slate-800 bg-slate-950 hover:bg-slate-900/60">
                               <td className="py-1.5 px-2 border-r border-slate-800">
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-wrap">
                                   <span className="inline-flex h-[18px] w-[18px] min-w-[18px] min-h-[18px] max-w-[18px] max-h-[18px] shrink-0 items-center justify-center overflow-hidden border border-slate-700 bg-slate-900">
                                     <ItemIcon
                                       icon={s.ownerClanEmblem || '👑'}
@@ -734,6 +807,9 @@ export const PortModal: React.FC<PortModalProps> = ({
                                     [{s.mapX || 7}/{s.mapY || 6}]
                                   </span>
                                   <strong className="text-white">{s.name}</strong>
+                                  <span className="border border-amber-500/50 bg-amber-950/50 px-1 py-0.2 font-mono text-[9.5px] font-bold text-amber-200">
+                                    Ур.{lvlCfg.level}/5 (x{lvlCfg.outputMultiplier})
+                                  </span>
                                 </div>
                               </td>
 
@@ -779,6 +855,40 @@ export const PortModal: React.FC<PortModalProps> = ({
 
                               <td className="py-1.5 px-2 text-right whitespace-nowrap">
                                 <div className="inline-flex flex-wrap items-center justify-end gap-1">
+                                  {nextLvlCfg && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const bagMap: Record<string, number> = { ...(hero.portResources || {}) };
+                                        const upRes = upgradePortFactoryLevel(
+                                          s.id,
+                                          effectiveOwnerNick,
+                                          hero.gold || 0,
+                                          bagMap
+                                        );
+                                        if (!upRes.ok) {
+                                          if (showToast) showToast(`⚠️ ${upRes.error}`);
+                                          return;
+                                        }
+                                        if (onUpdateHero) {
+                                          const nextPortRes = { ...(hero.portResources || {}) };
+                                          for (const req of upRes.consumedResources || []) {
+                                            nextPortRes[req.key] = Math.max(0, Number(nextPortRes[req.key] || 0) - req.qty);
+                                          }
+                                          onUpdateHero({
+                                            gold: Math.max(0, (hero.gold || 0) - (upRes.paidFromHeroGold || 0)),
+                                            portResources: nextPortRes
+                                          });
+                                        }
+                                        if (showToast && upRes.message) showToast(upRes.message);
+                                        setRefreshTick((v) => v + 1);
+                                      }}
+                                      title={`Расширить до Ур. ${nextLvlCfg.level} (${nextLvlCfg.upgradeCostGold.toLocaleString('ru-RU')} 🪙 + ресурсы)`}
+                                      className="border border-amber-400 bg-amber-950/70 hover:bg-amber-900 px-1.5 py-0.5 text-[9.5px] font-bold text-amber-200 cursor-pointer"
+                                    >
+                                      [ ⬆️ Ур.{lvlCfg.level}→{nextLvlCfg.level} ]
+                                    </button>
+                                  )}
                                   {p.relicStock > 0 && (
                                     <button
                                       type="button"
@@ -846,6 +956,226 @@ export const PortModal: React.FC<PortModalProps> = ({
               );
             })()
           ) : portTab === 'terminal' ? (
+            <div className="space-y-2.5">
+              {/* 3 ПЕРЕКЛЮЧАТЕЛЯ ВНУТРИ РАЗДЕЛА «ТОРГОВЫЙ ТЕРМИНАЛ И БИРЖА» (СТРОГИЙ ТАБЛИЧНЫЙ СТИЛЬ GWARS) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 border border-slate-700 bg-slate-950 p-1">
+                <button
+                  type="button"
+                  onClick={() => setTerminalSubTab('terminal')}
+                  className={`border py-1.5 px-2 text-[10.5px] font-bold cursor-pointer ${
+                    terminalSubTab === 'terminal'
+                      ? 'border-emerald-400 bg-emerald-500 text-slate-950'
+                      : 'border-slate-800 bg-slate-900 text-emerald-300 hover:bg-slate-800'
+                  }`}
+                >
+                  [ ⚖️ Торговый Терминал ]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTerminalSubTab('labor')}
+                  className={`border py-1.5 px-2 text-[10.5px] font-bold cursor-pointer ${
+                    terminalSubTab === 'labor'
+                      ? 'border-amber-400 bg-amber-500 text-slate-950'
+                      : 'border-slate-800 bg-slate-900 text-amber-300 hover:bg-slate-800'
+                  }`}
+                >
+                  [ 🔨 Биржа Труда (Лучшие зарплаты) ]
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTerminalSubTab('trade_summary')}
+                  className={`border py-1.5 px-2 text-[10.5px] font-bold cursor-pointer ${
+                    terminalSubTab === 'trade_summary'
+                      ? 'border-cyan-400 bg-cyan-500 text-slate-950'
+                      : 'border-slate-800 bg-slate-900 text-cyan-300 hover:bg-slate-800'
+                  }`}
+                >
+                  [ 📦 Сводка Торговли (Где купить / Куда сдать) ]
+                </button>
+              </div>
+
+              {terminalSubTab === 'labor' ? (
+                (() => {
+                  const laborRows = getPortLaborExchangeList();
+                  return (
+                    <div className="border border-slate-700 bg-slate-950 p-2.5 space-y-2 text-[11px] text-slate-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1.5">
+                        <div>
+                          <strong className="text-amber-300 uppercase">
+                            🔨 Биржа Труда Острова — Вакансии на всех 20 предприятиях
+                          </strong>
+                          <div className="text-[10px] text-slate-400">
+                            Сортировка по готовности к смене и лучшей почасовой ставке. Выберите завод и перейдите к сектору для начала 2-часовой смены.
+                          </div>
+                        </div>
+                        <span className="font-mono text-[10.5px] text-emerald-300">
+                          Готовы к найму: <strong>{laborRows.filter((r) => r.canWorkNow).length}</strong> / {laborRows.length}
+                        </span>
+                      </div>
+
+                      <div className="overflow-x-auto border border-slate-700">
+                        <table className="w-full border-collapse text-left text-[11px]">
+                          <thead>
+                            <tr className="border-b border-slate-700 bg-slate-900 text-slate-300">
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">Сектор [X/Y]</th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">
+                                Название завода (Владелец)
+                              </th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700 text-center">
+                                Свободно мест
+                              </th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700 text-right">
+                                Зарплата 🪙/ч
+                              </th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">Статус цеха</th>
+                              <th className="py-1.5 px-2 font-bold text-right">Действие</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {laborRows.map((r) => (
+                              <tr key={r.sectorId} className="border-b border-slate-800 bg-slate-950 hover:bg-slate-900/70">
+                                <td className="py-1.5 px-2 border-r border-slate-800 font-mono font-bold text-amber-300">
+                                  [{r.mapX}/{r.mapY}]
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800">
+                                  <strong className="text-white">{r.sectorName}</strong>{' '}
+                                  <span className="text-cyan-300 font-mono text-[10px]">[Ур.{r.facilityLevel}]</span>{' '}
+                                  <span className="text-slate-400 text-[10px]">
+                                    (Владелец: <strong className="text-amber-200">{r.ownerNick}</strong> [{r.ownerClanTag}])
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800 text-center font-mono">
+                                  <strong className={r.freePlaces > 0 ? 'text-emerald-300' : 'text-rose-400'}>
+                                    {r.freePlaces}
+                                  </strong>{' '}
+                                  <span className="text-slate-400">
+                                    (занято {r.activeWorkersCount}/{r.maxWorkers})
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800 text-right font-mono font-bold text-amber-300">
+                                  {r.wagePerHourGold.toLocaleString('ru-RU')} 🪙/ч
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800 text-[10px]">
+                                  <span className={r.canWorkNow ? 'text-emerald-400 font-bold' : 'text-rose-400'}>
+                                    {r.canWorkNow ? '🟢 ' : '🔴 '}
+                                    {r.statusNote}
+                                  </span>{' '}
+                                  <span className="text-slate-500 font-mono">
+                                    (касса: {r.facilityBalanceGold.toLocaleString('ru-RU')} 🪙)
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedManageSectorId(r.sectorId);
+                                      setPortTab('productions');
+                                    }}
+                                    className="border border-amber-400/80 bg-slate-900 hover:bg-amber-950/60 px-2 py-0.5 text-[10px] font-bold text-amber-200 cursor-pointer"
+                                  >
+                                    [ Перейти к сектору ]
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : terminalSubTab === 'trade_summary' ? (
+                (() => {
+                  const tradeRows = getPortTradeSummaryList();
+                  return (
+                    <div className="border border-slate-700 bg-slate-950 p-2.5 space-y-2 text-[11px] text-slate-200">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-1.5">
+                        <div>
+                          <strong className="text-cyan-300 uppercase">
+                            📦 Сводка Торговли Острова (Где купить продукцию / Куда сдать сырье)
+                          </strong>
+                          <div className="text-[10px] text-slate-400">
+                            Полная таблица всех 20 производств Порта с текущими запасами готовой продукции и ценами скупки входящего сырья.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto border border-slate-700">
+                        <table className="w-full border-collapse text-left text-[11px]">
+                          <thead>
+                            <tr className="border-b border-slate-700 bg-slate-900 text-slate-300">
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">Сектор / Объект</th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">
+                                Продает со склада (Цена продажи)
+                              </th>
+                              <th className="py-1.5 px-2 font-bold border-r border-slate-700">
+                                Скупает сырье и энергию (Цена скупки)
+                              </th>
+                              <th className="py-1.5 px-2 font-bold text-right">Переход</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {tradeRows.map((tr) => (
+                              <tr key={tr.sectorId} className="border-b border-slate-800 bg-slate-950 hover:bg-slate-900/70">
+                                <td className="py-1.5 px-2 border-r border-slate-800">
+                                  <span className="font-mono font-bold text-amber-300">
+                                    [{tr.mapX}/{tr.mapY}]
+                                  </span>{' '}
+                                  <strong className="text-white">{tr.sectorName}</strong>{' '}
+                                  <span className="text-cyan-300 font-mono text-[9.5px]">[Ур.{tr.facilityLevel}]</span>
+                                  <div className="text-[9.5px] text-slate-400">Владелец: {tr.ownerNick}</div>
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800 font-mono">
+                                  <div>
+                                    <span>{tr.outputIcon}</span>{' '}
+                                    <strong className="text-amber-200">{tr.outputName}</strong>:{' '}
+                                    <strong className="text-white">
+                                      {tr.outputStock}/{tr.maxOutputStock}
+                                    </strong>{' '}
+                                    шт.
+                                  </div>
+                                  <div className="text-amber-300 font-bold">
+                                    Цена: {tr.sellPriceGold.toLocaleString('ru-RU')} 🪙/шт.
+                                  </div>
+                                </td>
+                                <td className="py-1.5 px-2 border-r border-slate-800 text-[10px] font-mono">
+                                  {tr.buyingNeeds.length === 0 ? (
+                                    <span className="text-slate-500">Добыча 1-го этапа (сырье не требуется)</span>
+                                  ) : (
+                                    <div className="space-y-0.5">
+                                      {tr.buyingNeeds.map((bn, bIdx) => (
+                                        <div key={`${tr.sectorId}_bn_${bIdx}`}>
+                                          <span className="text-slate-200">{bn.resourceName}:</span>{' '}
+                                          <span className="text-slate-400">
+                                            {bn.currentStock}/{bn.maxStock}
+                                          </span>{' '}
+                                          — <strong className="text-emerald-300">{bn.buyPriceGold} 🪙</strong>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedManageSectorId(tr.sectorId);
+                                      setPortTab('productions');
+                                    }}
+                                    className="border border-cyan-400/70 bg-slate-900 hover:bg-cyan-950/60 px-2 py-0.5 text-[10px] font-bold text-cyan-200 cursor-pointer"
+                                  >
+                                    [ Открыть ]
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()
+              ) : (
             <div className="space-y-3">
               {/* Шапка Торгового терминала Порта */}
               <div className="rounded-2xl border-2 border-emerald-500/70 bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-950 p-3.5 shadow-lg space-y-2.5">
@@ -858,7 +1188,7 @@ export const PortModal: React.FC<PortModalProps> = ({
                       </span>
                     </div>
                     <p className="text-[10px] text-slate-300 mt-0.5 leading-relaxed">
-                      На Торговом терминале продаются и покупаются (по 20 000 ед.) только <strong>8 ресурсов 1-го и 2-го этапов</strong> (Сырая рыба, Железная руда, Золотой самородок, Кварцевый песок, Сырая нефть, Рыбный паштет, Золотые слитки, Алхимический реагент). Продукция 3-го этапа продается только со складов заводов!
+                      На Торговом терминале продаются и покупаются (по 20 000 ед.) <strong>12 ресурсов 1-го и 2-го этапов</strong> (включая Волокно Льна, Природную Селитру, Броневую Ткань и Оружейный Порох). Продукция 3-го этапа (включая Титановые Бронепластины и Штурмовые Заряды) продается только со складов заводов!
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -907,7 +1237,7 @@ export const PortModal: React.FC<PortModalProps> = ({
                           : `Выход: ${f.production?.outputProductName || 'Добыча'}`;
                       return (
                         <option key={f.id} value={f.id}>
-                          [{f.mapX || 7}/{f.mapY || 6}] [{f.ownerClanTag || 'RB'}] {f.name} ({reqLabel})
+                          [{f.mapX || 7}/{f.mapY || 6}] [{f.ownerClanTag || 'ТЕСТ'}] {f.name} ({reqLabel})
                         </option>
                       );
                     })}
@@ -915,7 +1245,7 @@ export const PortModal: React.FC<PortModalProps> = ({
                 </div>
               </div>
 
-              {/* Карточки ресурсов Торгового терминала (8 ресурсов 1-го и 2-го этапов по 20 000 ед.) */}
+              {/* Карточки ресурсов Торгового терминала (12 ресурсов 1-го и 2-го этапов по 20 000 ед.) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {terminalCatalogItems.map((item) => {
                   const stockInTerminal = Math.max(
@@ -1094,6 +1424,8 @@ export const PortModal: React.FC<PortModalProps> = ({
                   );
                 })}
               </div>
+            </div>
+              )}
             </div>
           ) : (
             <>

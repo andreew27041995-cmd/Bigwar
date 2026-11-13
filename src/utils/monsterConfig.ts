@@ -22,8 +22,8 @@ export interface MonsterConfig {
 }
 
 export const DEFAULT_MONSTERS: MonsterConfig[] = [
-  // ==================== ПИРАМИДА 1 (1–5 уровень персонажа) ====================
-  // Босс — ХП 500, урон 80, опыт 15, 20 золота
+  // ==================== ПИРАМИДА 1 (1–5 уровень персонажа: 30–60 золота) ====================
+  // Босс 5 ур. — ХП 500, урон 80, опыт 15, 60 золота
   {
     id: 't1_boss_imhotep',
     name: '👑 Жрец Имхотеп (Босс)',
@@ -36,13 +36,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: true,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 20,
-    goldMax: 20,
+    goldMin: 55,
+    goldMax: 60,
     expReward: 15,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 2 ур. — ХП 100, урон 20, опыт 5, 6 золота
+  // Монстр 2 ур. — ХП 100, урон 20, опыт 5, 30–40 золота
   {
     id: 't1_mob_scorpion_2',
     name: '🦂 Песчаный Скорпион',
@@ -55,8 +55,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 6,
-    goldMax: 6,
+    goldMin: 30,
+    goldMax: 40,
     expReward: 5,
     crystalsReward: 0,
     enabled: true
@@ -73,13 +73,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 6,
-    goldMax: 6,
+    goldMin: 30,
+    goldMax: 40,
     expReward: 5,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 4 ур. — ХП 150, урон 30, опыт 10, 7 золота
+  // Монстр 4 ур. — ХП 150, урон 30, опыт 10, 42–55 золота
   {
     id: 't1_mob_viper_4',
     name: '🐍 Пустынная Гадюка',
@@ -92,8 +92,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 7,
-    goldMax: 7,
+    goldMin: 42,
+    goldMax: 55,
     expReward: 10,
     crystalsReward: 0,
     enabled: true
@@ -110,15 +110,15 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 7,
-    goldMax: 7,
+    goldMin: 42,
+    goldMax: 55,
     expReward: 10,
     crystalsReward: 0,
     enabled: true
   },
 
-  // ==================== ПИРАМИДА 2 (5–10 уровень персонажа) ====================
-  // Босс — ХП 1000, урон 150, опыт 250, 200 золота
+  // ==================== ПИРАМИДА 2 (5–10 уровень персонажа: 60–200 золота) ====================
+  // Босс 10 ур. — ХП 1000, урон 150, опыт 250, 200 золота
   {
     id: 't2_boss_anubis',
     name: '🐺 Великий Анубис (Босс)',
@@ -131,13 +131,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: true,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 200,
+    goldMin: 180,
     goldMax: 200,
     expReward: 250,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 5 ур. — ХП 400, урон 40, опыт 35, 15 золота
+  // Монстр 5 ур. — ХП 400, урон 40, опыт 35, 80–110 золота
   {
     id: 't2_mob_jackal_5',
     name: '🐺 Шакал Анубиса',
@@ -150,8 +150,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 15,
-    goldMax: 15,
+    goldMin: 80,
+    goldMax: 110,
     expReward: 35,
     crystalsReward: 0,
     enabled: true
@@ -168,13 +168,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 15,
-    goldMax: 15,
+    goldMin: 80,
+    goldMax: 110,
     expReward: 35,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 8 ур. — ХП 650, урон 50, опыт 45, 20 золота
+  // Монстр 8 ур. — ХП 650, урон 50, опыт 45, 110–145 золота
   {
     id: 't2_mob_guardian_8',
     name: '🗿 Гранитный Страж Гробницы',
@@ -187,8 +187,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 20,
-    goldMax: 20,
+    goldMin: 110,
+    goldMax: 145,
     expReward: 45,
     crystalsReward: 0,
     enabled: true
@@ -205,15 +205,15 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 20,
-    goldMax: 20,
+    goldMin: 110,
+    goldMax: 145,
     expReward: 45,
     crystalsReward: 0,
     enabled: true
   },
 
-  // ==================== ПИРАМИДА 3 (10–20 уровень персонажа) ====================
-  // Босс — ХП 2000, урон 250, опыт 200, 200 золота
+  // ==================== ПИРАМИДА 3 (10–20 уровень персонажа: 150–500 золота) ====================
+  // Босс 20 ур. — ХП 2000, урон 250, опыт 200, 350–500 золота
   {
     id: 't3_boss_apophis',
     name: '🐉 Божественный Фараон Рамзес (Босс)',
@@ -226,13 +226,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: true,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 200,
-    goldMax: 200,
+    goldMin: 350,
+    goldMax: 500,
     expReward: 200,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 10 ур. — ХП 800, урон 70, опыт 60, 25 золота
+  // Монстр 10 ур. — ХП 800, урон 70, опыт 60, 145–190 золота
   {
     id: 't3_mob_demon_10',
     name: '💀 Песчаный Демон Дуата',
@@ -245,8 +245,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 25,
-    goldMax: 25,
+    goldMin: 145,
+    goldMax: 190,
     expReward: 60,
     crystalsReward: 0,
     enabled: true
@@ -263,13 +263,13 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 100,
     dropChance: 0,
-    goldMin: 25,
-    goldMax: 25,
+    goldMin: 145,
+    goldMax: 190,
     expReward: 60,
     crystalsReward: 0,
     enabled: true
   },
-  // Монстр 15 ур. — ХП 1000, урон 100, опыт 100, 30 золота
+  // Монстр 15 ур. — ХП 1000, урон 100, опыт 100, 220–320 золота
   {
     id: 't3_mob_sphinx_15',
     name: '🦁 Крылатый Сфинкс Вечности',
@@ -282,8 +282,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 30,
-    goldMax: 30,
+    goldMin: 220,
+    goldMax: 320,
     expReward: 100,
     crystalsReward: 0,
     enabled: true
@@ -300,8 +300,8 @@ export const DEFAULT_MONSTERS: MonsterConfig[] = [
     isBoss: false,
     spawnWeight: 90,
     dropChance: 0,
-    goldMin: 30,
-    goldMax: 30,
+    goldMin: 220,
+    goldMax: 320,
     expReward: 100,
     crystalsReward: 0,
     enabled: true
@@ -316,9 +316,16 @@ function mergeWithDefaults(loaded: MonsterConfig[]): MonsterConfig[] {
   DEFAULT_MONSTERS.forEach((d) => map.set(d.id, { ...d }));
   loaded.forEach((item) => {
     if (item && item.id) {
-      // Only merge if it exists in v2 defaults or is an explicit custom monster
       if (map.has(item.id) || item.isCustom) {
-        map.set(item.id, { ...map.get(item.id), ...item });
+        const def = map.get(item.id);
+        const migratedGoldMin = def && Number(item.goldMin || 0) < def.goldMin ? def.goldMin : item.goldMin;
+        const migratedGoldMax = def && Number(item.goldMax || 0) < def.goldMax ? def.goldMax : item.goldMax;
+        map.set(item.id, {
+          ...def,
+          ...item,
+          goldMin: migratedGoldMin,
+          goldMax: migratedGoldMax
+        });
       }
     }
   });

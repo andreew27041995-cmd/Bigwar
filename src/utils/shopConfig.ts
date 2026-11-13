@@ -86,6 +86,7 @@ export interface ShopCatalogItem {
   price: number;
   requiredSteel?: number;
   requiredModules?: number;
+  requiredRelics?: number;
   maxDurability: number;
   hp: number;
   dmg: number;
@@ -300,8 +301,8 @@ export const DEFAULT_FEATURE_FLAGS: GlobalFeatureFlags = {
   bankPaymentUrl: '',
   bankPaymentInstructions: 'Покупка кристаллов происходит только через Администратора игры. Выберите нужный пакет, нажмите «Заказать», сверьте ник своего персонажа и напишите Администратору для оплаты и зачисления.',
   bankPackages: DEFAULT_BANK_PACKAGES.map((p) => ({ ...p })),
-  crystalToGoldRate: 1000,
-  goldToCrystalRate: 2000,
+  crystalToGoldRate: 100,
+  goldToCrystalRate: 100,
   dailyCrystalToGoldLimit: 3,
   dailyGoldToCrystalLimit: 3,
   crystalToGoldEnabled: true,
@@ -399,9 +400,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '⚔️',
     quality: 'legendary',
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 30,
     hp: 350,
     dmg: 150,
@@ -419,7 +421,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/swords/new_sword_lvl2.png',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 450,
+    price: 600,
     maxDurability: 12,
     hp: 25,
     dmg: 12,
@@ -429,7 +431,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 2 ур. (+20 здоровья, +10 урона), 300 золота, прочность 10/10
+  // 2 ур. (+20 здоровья, +10 урона), 500 золота, прочность 10/10
   {
     id: 'shop_weapon_2',
     name: 'Бронзовый Хопеш Новичка',
@@ -437,7 +439,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '🗡️',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 20,
     dmg: 10,
@@ -447,7 +449,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 4 ур. (+50 здоровья, +30 урона), 800 золота, прочность 10/10
+  // 4 ур. (+50 здоровья, +30 урона), 1 200 золота, прочность 10/10
   {
     id: 'shop_weapon_4',
     name: 'Клинок Песчаной Бури',
@@ -455,7 +457,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '⚔️',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 50,
     dmg: 30,
@@ -465,7 +467,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 5 ур. (+75 здоровья, +35 урона), 2 500 золота, прочность 15/15
+  // 5 ур. (+75 здоровья, +35 урона), 3 500 золота, прочность 15/15
   {
     id: 'shop_weapon_5',
     name: 'Секира Стража Гробницы',
@@ -473,7 +475,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '🪓',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 75,
     dmg: 35,
@@ -483,7 +485,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 8 ур. (+85 здоровья, +40 урона), 6 500 золота, прочность 15/15
+  // 8 ур. (+85 здоровья, +40 урона), 8 000 золота, прочность 15/15
   {
     id: 'shop_weapon_8',
     name: 'Золотой Клинок Анубиса',
@@ -491,7 +493,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '⚔️',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 85,
     dmg: 40,
@@ -501,7 +503,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 10 ур. (+100 здоровья, +50 урона), 12 000 золота, прочность 17/17
+  // 10 ур. (+100 здоровья, +50 урона), 24 000 золота + 1 ед. Закаленной стали, прочность 17/17
   {
     id: 'shop_weapon_10',
     name: 'Скипетр Владыки Пустыни',
@@ -509,7 +511,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '🔱',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 100,
     dmg: 50,
@@ -519,7 +522,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 15 ур. (+150 здоровья, +75 урона), 35 000 золота + 2 ед. Закаленной стали, прочность 20/20
+  // 15 ур. (+150 здоровья, +75 урона), 55 000 золота + 2 ед. Закаленной стали + 1 Боевой модуль, прочность 20/20
   {
     id: 'shop_weapon_15',
     name: 'Огненный Меч Бога Хора',
@@ -527,8 +530,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '🔥',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 150,
     dmg: 75,
@@ -538,7 +542,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     expBonusPct: 0,
     enabled: true
   },
-  // 20 ур. (+250 здоровья, +100 урона), 100 000 золота + 5 Стали + 2 Боевых модуля, прочность 25/25
+  // 20 ур. (+250 здоровья, +100 урона), 135 000 золота + 2 Стали + 2 Модуля + 1 Реликвия, прочность 25/25
   {
     id: 'shop_weapon_20',
     name: 'Божественный Клинок Фараона Ра',
@@ -546,9 +550,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '⚡',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 250,
     dmg: 100,
@@ -567,7 +572,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl2.png',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 25,
     dmg: 0,
@@ -584,7 +589,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl4.png',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 30,
     dmg: 0,
@@ -601,7 +606,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl5.png',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 50,
     dmg: 0,
@@ -618,7 +623,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl8.png',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 70,
     dmg: 0,
@@ -635,7 +640,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl10.png',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 100,
     dmg: 0,
@@ -652,8 +658,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl15.png',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 150,
     dmg: 0,
@@ -670,9 +677,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/armor/armor_lvl20.png',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 200,
     dmg: 0,
@@ -691,7 +699,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -708,7 +716,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -725,7 +733,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -742,7 +750,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -759,7 +767,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 0,
     dmg: 0,
@@ -776,8 +785,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 0,
     dmg: 0,
@@ -794,9 +804,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '👖',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 0,
     dmg: 0,
@@ -815,7 +826,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl2.png',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -832,7 +843,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl4.png',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -849,7 +860,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl5.png',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -866,7 +877,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl8.png',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -883,7 +894,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl10.png',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 0,
     dmg: 0,
@@ -900,8 +912,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl15.png',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 0,
     dmg: 0,
@@ -918,9 +931,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/boots/boots_lvl20.png',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 0,
     dmg: 0,
@@ -939,7 +953,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl2.png',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -956,7 +970,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl4.png',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -973,7 +987,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl5.png',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -990,7 +1004,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl8.png',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -1007,7 +1021,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl10.png',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 0,
     dmg: 0,
@@ -1024,8 +1039,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl15.png',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 0,
     dmg: 0,
@@ -1042,9 +1058,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '/assets/gloves/gloves_lvl20.png',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 0,
     dmg: 0,
@@ -1063,7 +1080,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(2),
     lvl: 2,
-    price: 300,
+    price: 500,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -1080,7 +1097,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(4),
     lvl: 4,
-    price: 800,
+    price: 1200,
     maxDurability: 10,
     hp: 0,
     dmg: 0,
@@ -1097,7 +1114,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(5),
     lvl: 5,
-    price: 2500,
+    price: 3500,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -1114,7 +1131,7 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(8),
     lvl: 8,
-    price: 6500,
+    price: 8000,
     maxDurability: 15,
     hp: 0,
     dmg: 0,
@@ -1131,7 +1148,8 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(10),
     lvl: 10,
-    price: 12000,
+    price: 24000,
+    requiredSteel: 1,
     maxDurability: 17,
     hp: 0,
     dmg: 0,
@@ -1148,8 +1166,9 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(15),
     lvl: 15,
-    price: 35000,
+    price: 55000,
     requiredSteel: 2,
+    requiredModules: 1,
     maxDurability: 20,
     hp: 0,
     dmg: 0,
@@ -1166,9 +1185,10 @@ export const DEFAULT_SHOP_CATALOG: ShopCatalogItem[] = [
     icon: '💍',
     quality: getQualityForLvl(20),
     lvl: 20,
-    price: 100000,
-    requiredSteel: 5,
+    price: 135000,
+    requiredSteel: 2,
     requiredModules: 2,
+    requiredRelics: 1,
     maxDurability: 25,
     hp: 0,
     dmg: 0,
@@ -1427,15 +1447,20 @@ function mergeCatalogWithDefaults(loaded: ShopCatalogItem[]): ShopCatalogItem[] 
     if (item && item.id) {
       const defItem = map.get(item.id);
       const merged: ShopCatalogItem = { ...defItem, ...item };
-      // Авто-миграция старых цен (<= 300 золота) на новый экономический баланс (300 - 100 000 золота + ресурсы Порта)
-      if (defItem && Number(merged.price || 0) <= 300 && Number(defItem.price || 0) >= 300) {
+      // Авто-миграция старых цен на жесткий баланс v1.1.97 (от Банка Кристаллов 1 💎 = 100 🪙)
+      if (defItem && Number(merged.price || 0) < Number(defItem.price || 0)) {
         merged.price = defItem.price;
       }
-      if (defItem && defItem.requiredSteel !== undefined && merged.requiredSteel === undefined) {
-        merged.requiredSteel = defItem.requiredSteel;
-      }
-      if (defItem && defItem.requiredModules !== undefined && merged.requiredModules === undefined) {
-        merged.requiredModules = defItem.requiredModules;
+      if (defItem) {
+        if (defItem.requiredSteel !== undefined) {
+          merged.requiredSteel = defItem.requiredSteel;
+        }
+        if (defItem.requiredModules !== undefined) {
+          merged.requiredModules = defItem.requiredModules;
+        }
+        if (defItem.requiredRelics !== undefined) {
+          merged.requiredRelics = defItem.requiredRelics;
+        }
       }
       if (merged.id === 'shop_weapon_20' || (typeof merged.icon === 'string' && merged.icon.includes('flame_sword'))) {
         merged.icon = '⚔️';
@@ -1626,6 +1651,16 @@ export function resolvePlayerOwnedSkins(
 function migrateTransportsCatalogIfNeeded(flagsObj: any): boolean {
   if (!flagsObj || typeof flagsObj !== 'object') return false;
   let changed = false;
+  if (!flagsObj.bankRatesMigratedV1197) {
+    if (Number(flagsObj.crystalToGoldRate || 1000) >= 500) {
+      flagsObj.crystalToGoldRate = 100;
+    }
+    if (Number(flagsObj.goldToCrystalRate || 2000) >= 500) {
+      flagsObj.goldToCrystalRate = 100;
+    }
+    flagsObj.bankRatesMigratedV1197 = true;
+    changed = true;
+  }
   if (Number(flagsObj.namedTransportCostCrystals || 0) < 10000) {
     flagsObj.namedTransportCostCrystals = 10000;
     flagsObj.namedTransportBaseTimeSec = 60;

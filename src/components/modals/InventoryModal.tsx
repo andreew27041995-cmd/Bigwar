@@ -21,6 +21,7 @@ interface InventoryModalProps {
   hero: HeroState;
   equipped?: EquippedGear;
   inventory?: GameItem[];
+  embedded?: boolean;
   onClose: () => void;
   onUsePotion?: (type: 'hp' | 'en' | 'exp') => void;
   onEquipItem?: (id: string) => void;
@@ -43,6 +44,7 @@ interface InventoryModalProps {
 export const InventoryModal: React.FC<InventoryModalProps> = ({
   hero,
   inventory: propInventory,
+  embedded = false,
   onClose,
   onUsePotion,
   onEquipItem,
@@ -260,7 +262,13 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white">
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 flex-col bg-[#12161f] p-2 text-white overflow-hidden'
+          : 'absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white'
+      }
+    >
       {itemToSell && (() => {
         const sellRefund = getItemSellRefund(itemToSell);
         const q = getQualityConfig(itemToSell.quality || 'common');
@@ -475,9 +483,11 @@ export const InventoryModal: React.FC<InventoryModalProps> = ({
                 🤖 Рюкзак NPC
               </button>
             )}
-            <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
-              ✕
-            </button>
+            {!embedded && (
+              <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
+                ✕
+              </button>
+            )}
           </div>
         </div>
         <div className="text-[10px] text-slate-400 flex flex-wrap items-center gap-x-2 gap-y-0.5">

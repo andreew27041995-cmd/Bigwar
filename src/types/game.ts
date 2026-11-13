@@ -28,6 +28,9 @@ export interface ShopItemTemplate {
   quality: ItemQualityKey;
   lvl: number;
   price: number;
+  requiredSteel?: number;
+  requiredModules?: number;
+  requiredRelics?: number;
   maxDurability: number;
   hp: number;
   dmg: number;
@@ -528,6 +531,9 @@ export interface ClanTerritory7x7BattleState {
   winnerClanTag?: string | null;
   winnerClanEmblem?: string | null;
   summaryText?: string;
+  /** Признак активированного «Штурмового Заряда» (дает атакующим +25% урона в 1-м раунде и отключает 50% защиты Форпоста) */
+  assaultChargeActive?: boolean;
+  assaultChargeActivatedBy?: string;
 }
 
 export interface ClanTerritoryWarScoreEntry {
@@ -554,15 +560,37 @@ export type PortTerminalResourceKey =
   | 'gold_nugget'
   | 'quartz_sand'
   | 'crude_oil'
+  | 'flax_fiber'
+  | 'natural_saltpeter'
+  | 'raw_cotton_fiber'
   | 'fish_semifinished'
   | 'alchemy_reagents'
   | 'gold_ingots'
+  | 'armor_fabric'
+  | 'gunpowder'
   | 'hardened_steel'
   | 'combat_ration'
   | 'combat_modules'
   | 'port_relics'
+  | 'titanium_plate'
+  | 'assault_charge'
+  | 'ceremonial_amulet'
+  | 'oasis_herb'
   | 'power_kw'
   | 'tavern_meal';
+
+export interface ClanSupplyOrderEntry {
+  id: string;
+  resourceKey: PortTerminalResourceKey;
+  resourceName: string;
+  resourceIcon: string;
+  requestedQty: number;
+  deliveredQty: number;
+  pricePerUnitGold: number;
+  ptsPerUnit: number;
+  createdByNick: string;
+  createdAt: number;
+}
 
 export interface PortWorkProtocolEntry {
   id: string;
@@ -591,7 +619,8 @@ export interface PortDealProtocolEntry {
     | 'owner_deposit'
     | 'owner_withdraw'
     | 'buy_product'
-    | 'sell_resource';
+    | 'sell_resource'
+    | 'owner_transfer';
   text?: string;
   goldDelta?: number;
   resourceName?: string;
@@ -904,9 +933,11 @@ export interface Clan {
   baseBuildings?: ClanBaseBuildingsState;
   /** Дипломатия синдиката: Союзы (до 2 кланов), заявки и Войны */
   diplomacy?: ClanDiplomacyEntry[];
-  /** Общий нераспределенный пул PTS клана от удержания недвижимости (+10 PTS/ч за объект) */
+  /** Общий нераспределенный пул PTS клана от удержания недвижимости (+10 PTS/ч за объект +25 PTS/ч за доминирующий сектор) */
   unassignedPtsPool?: number;
   lastEstatePtsTickAt?: number;
+  /** Клановые Заказы на Снабжение ресурсами Порта (оплата золотом из казны + личные PTS) */
+  supplyOrders?: ClanSupplyOrderEntry[];
   isNpcSyndicate?: boolean;
 }
 
@@ -969,8 +1000,23 @@ export interface ClanPyramidState {
   }[];
 }
 
+export type TournamentMedalCategory = 'fishing' | 'pyramid' | 'clan' | 'arena';
+
+export interface TournamentMedalEntry {
+  id: string;
+  category: TournamentMedalCategory;
+  rank: 1 | 2 | 3;
+  title: string;
+  tournamentName?: string;
+  awardedAt: number;
+  dateStr?: string;
+  seasonLabel?: string;
+  bonusLabel?: string;
+}
+
 export interface HeroState {
   nick?: string;
+  tournamentMedals?: TournamentMedalEntry[];
   clanId?: string;
   clanTag?: string;
   clanName?: string;

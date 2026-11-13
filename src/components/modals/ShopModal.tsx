@@ -42,6 +42,7 @@ interface ShopModalProps {
   shopSkins?: CharacterSkinTemplate[];
   featureFlags?: GameFeatureFlags;
   initialCategory?: ShopTabId;
+  embedded?: boolean;
   onBuyItem: (template: ShopItemTemplate) => void;
   onBuyTransport?: (template: TransportTemplate) => void;
   onSelectTransport?: (transportId: string) => void;
@@ -81,6 +82,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
   shopSkins,
   featureFlags,
   initialCategory = 'weapon',
+  embedded = false,
   onBuyItem,
   onBuyTransport,
   onSelectTransport,
@@ -167,30 +169,21 @@ export const ShopModal: React.FC<ShopModalProps> = ({
           .sort((a, b) => Number(a.lvl || 1) - Number(b.lvl || 1) || Number(a.price || 0) - Number(b.price || 0));
 
   return (
-    <div className="absolute inset-0 bg-slate-950/95 z-50 flex flex-col p-3 overflow-hidden text-white">
-      <div className="flex flex-wrap justify-between items-center gap-2 mb-2.5 pb-2 border-b border-yellow-600/30">
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 flex-col bg-[#12161f] p-2 overflow-hidden text-white'
+          : 'absolute inset-0 bg-slate-950/95 z-50 flex flex-col p-3 overflow-hidden text-white'
+      }
+    >
+      <div className="flex flex-wrap justify-between items-center gap-2 mb-2 pb-1.5 border-b border-yellow-600/30">
         <div>
-          <h2 className="text-base font-bold text-amber-400 flex items-center gap-2">
+          <h2 className="text-xs sm:text-sm font-bold text-amber-400 flex items-center gap-2">
             🛒 Магазин экипировки, транспорта, эликсиров и скинов
           </h2>
-          <p className="text-[10px] text-slate-400 flex items-center gap-1.5 flex-wrap mt-0.5">
-            <span>
-              Сумка: <span className="text-white font-bold">{bagItems.length}/{bagCapacity}</span>
-            </span>
-            <span>·</span>
-            <span className="inline-flex items-center gap-1">
-              Золото: <span className="text-yellow-400 font-bold">{heroGold.toLocaleString()}</span>
-              <GoldCoinIcon size="xs" />
-            </span>
-            <span>·</span>
-            <span className="inline-flex items-center gap-1">
-              Кристаллы: <span className="text-cyan-300 font-bold">{heroCrystals}</span>
-              <CrystalIcon size="xs" />
-            </span>
-          </p>
         </div>
         <div className="flex items-center gap-1.5 flex-wrap">
-          {onOpenAuction && (
+          {onOpenAuction && !embedded && (
             <button
               type="button"
               onClick={onOpenAuction}
@@ -200,7 +193,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               🏛️ Аукцион
             </button>
           )}
-          {onOpenPort && (
+          {onOpenPort && !embedded && (
             <button
               type="button"
               onClick={onOpenPort}
@@ -210,12 +203,14 @@ export const ShopModal: React.FC<ShopModalProps> = ({
               ⚓ В Порт
             </button>
           )}
-          <button
-            onClick={onClose}
-            className="text-red-400 hover:text-red-300 text-lg font-bold px-2"
-          >
-            ✕
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="text-red-400 hover:text-red-300 text-lg font-bold px-2"
+            >
+              ✕
+            </button>
+          )}
         </div>
       </div>
 
@@ -1442,16 +1437,24 @@ export const ShopModal: React.FC<ShopModalProps> = ({
             const itemPrice = Math.max(0, Number(item.price || 0));
             const reqSteel = Math.max(
               0,
-              Number((item as any).requiredSteel ?? (itemLvl >= 20 ? 5 : itemLvl >= 15 ? 2 : 0))
+              Number((item as any).requiredSteel ?? (itemLvl >= 20 ? 2 : itemLvl >= 15 ? 2 : itemLvl >= 10 ? 1 : 0))
             );
             const reqModules = Math.max(
               0,
-              Number((item as any).requiredModules ?? (itemLvl >= 20 ? 2 : 0))
+              Number((item as any).requiredModules ?? (itemLvl >= 20 ? 2 : itemLvl >= 15 ? 1 : 0))
+            );
+            const reqRelics = Math.max(
+              0,
+              Number((item as any).requiredRelics ?? (itemLvl >= 20 ? 1 : 0))
             );
             const playerSteel = Math.max(0, Number(hero.portResources?.hardened_steel || 0));
             const playerModules = Math.max(0, Number(hero.portResources?.combat_modules || 0));
+            const playerRelics = Math.max(0, Number(hero.portResources?.port_relics || 0));
             const hasGoldForItem = heroGold >= itemPrice;
-            const hasResourcesForItem = playerSteel >= reqSteel && playerModules >= reqModules;
+            const hasResourcesForItem =
+              playerSteel >= reqSteel &&
+              playerModules >= reqModules &&
+              playerRelics >= reqRelics;
             const canAfford = hasGoldForItem && hasResourcesForItem;
             const meetsLevel = heroLvl >= itemLvl;
             const resolvedQuality =
@@ -1604,7 +1607,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                       </span>
                     </div>
 
-                    {(reqSteel > 0 || reqModules > 0) && (
+                    {(reqSteel > 0 || reqModules > 0 || reqRelics > 0) && (
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[9px]">
                         <span className="text-slate-400 font-bold">Ресурсы Порта для покупки:</span>
                         {reqSteel > 0 && (
@@ -1629,6 +1632,17 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                             ⚙️ Боевые модули: {playerModules}/{reqModules} шт.
                           </span>
                         )}
+                        {reqRelics > 0 && (
+                          <span
+                            className={`rounded border px-1.5 py-0.5 font-extrabold ${
+                              playerRelics >= reqRelics
+                                ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-300'
+                                : 'border-red-500/50 bg-red-950/60 text-red-300'
+                            }`}
+                          >
+                            🏺 Древняя Реликвия: {playerRelics}/{reqRelics} шт.
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1638,9 +1652,11 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                   <div className="text-xs font-black text-yellow-400">
                     {itemPrice.toLocaleString('ru-RU')} 🪙
                   </div>
-                  {reqSteel > 0 && (
+                  {(reqSteel > 0 || reqModules > 0 || reqRelics > 0) && (
                     <div className="text-[8.5px] font-bold text-cyan-300 text-right leading-tight">
-                      + {reqSteel} Стали{reqModules > 0 ? ` + ${reqModules} Модуля` : ''}
+                      +{reqSteel > 0 ? ` ${reqSteel} Стали` : ''}
+                      {reqModules > 0 ? ` + ${reqModules} Мод.` : ''}
+                      {reqRelics > 0 ? ` + ${reqRelics} Реликв.` : ''}
                     </div>
                   )}
                   <button
@@ -1662,6 +1678,7 @@ export const ShopModal: React.FC<ShopModalProps> = ({
                         if (item.expBonusPct > 0) bonusList.push(`✨ +${item.expBonusPct}% к опыту`);
                         if (reqSteel > 0) bonusList.push(`🔩 -${reqSteel} Закаленной стали`);
                         if (reqModules > 0) bonusList.push(`⚙️ -${reqModules} Боевых модулей`);
+                        if (reqRelics > 0) bonusList.push(`🏺 -${reqRelics} Древняя Реликвия`);
                         bonusList.push(`🔧 Прочность: ${item.maxDurability}/${item.maxDurability}`);
                         setPendingPurchase({
                           title: item.name,

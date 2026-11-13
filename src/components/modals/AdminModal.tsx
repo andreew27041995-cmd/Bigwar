@@ -8172,7 +8172,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         <input
                           type="number"
                           min={1}
-                          value={featureFlags.crystalToGoldRate ?? 1000}
+                          value={featureFlags.crystalToGoldRate ?? 100}
                           onChange={(e) => {
                             const val = Math.max(1, parseInt(e.target.value) || 1);
                             setFeatureFlags((prev) => ({ ...prev, crystalToGoldRate: val }));
@@ -8225,7 +8225,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                         <input
                           type="number"
                           min={1}
-                          value={featureFlags.goldToCrystalRate ?? 2000}
+                          value={featureFlags.goldToCrystalRate ?? 100}
                           onChange={(e) => {
                             const val = Math.max(1, parseInt(e.target.value) || 1);
                             setFeatureFlags((prev) => ({ ...prev, goldToCrystalRate: val }));
@@ -8276,14 +8276,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       onClick={() => {
                         setFeatureFlags((prev) => ({
                           ...prev,
-                          crystalToGoldRate: 1000,
-                          goldToCrystalRate: 2000,
+                          crystalToGoldRate: 100,
+                          goldToCrystalRate: 100,
                           dailyCrystalToGoldLimit: 3,
                           dailyGoldToCrystalLimit: 3,
                           crystalToGoldEnabled: true,
                           goldToCrystalEnabled: true
                         }));
-                        showToast('Курсы сброшены к стандартным: 1 💎 = 1000 🪙, 2000 🪙 = 1 💎, лимит 3/день');
+                        showToast('Курсы сброшены к стандартным: 1 💎 = 100 🪙, 100 🪙 = 1 💎, лимит 3/день');
                       }}
                       className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-[10px] font-bold text-slate-300 hover:bg-slate-700"
                     >

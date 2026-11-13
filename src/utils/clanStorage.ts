@@ -36,7 +36,8 @@ import {
   ClanMemberPermissions,
   ClanSyndicateRankConfig,
   ClanBaseBuildingsState,
-  ClanDiplomacyEntry
+  ClanDiplomacyEntry,
+  ClanSupplyOrderEntry
 } from '../types/game';
 import { EXP_TABLE } from './gameData';
 import { getSupabaseClient } from './supabase';
@@ -357,6 +358,7 @@ function normalizeClanRecord(c: Clan): Clan {
     lastEstatePtsTickAt: Number(c.lastEstatePtsTickAt || Date.now()),
     baseBuildings: defaultBase,
     diplomacy: Array.isArray(c.diplomacy) ? c.diplomacy : [],
+    supplyOrders: Array.isArray(c.supplyOrders) ? c.supplyOrders : [],
     elixirs: {
       hp: Math.max(0, Math.floor(Number(c.elixirs?.hp) || 0)),
       en: Math.max(0, Math.floor(Number(c.elixirs?.en) || 0)),
@@ -755,10 +757,8 @@ function ensureClanNumbersAndNpcSyndicates(): void {
     }
   }
 
-  // 2. Ensure every clan has a unique clanNumber (#ID), prioritizing #1 for the player's clan
-  const usedNumbers = new Set<number>();
-  // First pass: find player's primary clan (non-NPC or led by RedBlack)
-  const primaryPlayerClan =
+  // 2. Ensure every clan has a unique clanNumber (#ID), prioritizing #1 [ТЕСТ] Тест for Redblack
+  let primaryPlayerClan =
     inMemoryClans.find(
       (c) =>
         !c.isNpcSyndicate &&
@@ -766,6 +766,61 @@ function ensureClanNumbersAndNpcSyndicates(): void {
           c.members?.some((m) => m.nick.trim().toLowerCase() === 'redblack'))
     ) || inMemoryClans.find((c) => !c.isNpcSyndicate);
 
+  if (!primaryPlayerClan) {
+    const defaultRedblackClan: Clan = normalizeClanRecord({
+      id: 'clan_1_test',
+      clanNumber: 1,
+      name: 'Тест',
+      tag: 'ТЕСТ',
+      emblem: '👑',
+      description: 'Главный синдикат острова Порта под командованием Redblack',
+      agendaText:
+        'Бойцы синдиката! Держим оборону всех 20 объектов недвижимости в Порту, снабжаем заводы сырьем и копим PTS на новые погоны в Военторге!',
+      leaderNick: 'Redblack',
+      level: 5,
+      exp: 45000,
+      influencePoints: 2500,
+      treasuryGold: 250000,
+      treasuryCrystals: 500,
+      unassignedPtsPool: 5000,
+      createdAt: Date.now() - 86400000 * 30,
+      isOpen: true,
+      joinMinLvl: 1,
+      isNpcSyndicate: false,
+      baseBuildings: {
+        infirmaryLevel: 2,
+        commandPostLevel: 2,
+        outpostLevel: 2,
+        powerStationLevel: 2,
+        powerChargeUnits: 250,
+        maxPowerChargeUnits: 300,
+        lastPowerTickAt: Date.now()
+      },
+      members: [
+        {
+          nick: 'Redblack',
+          role: 'leader',
+          lvl: 20,
+          avatar: '👑',
+          joinedAt: Date.now() - 86400000 * 30,
+          contributionExp: 25000,
+          contributionInfluence: 1000,
+          clanPts: 25000,
+          rankLevel: 10,
+          hasClanBadge: true,
+          isOnline: true,
+          lastSeen: Date.now()
+        }
+      ],
+      storage: [],
+      logs: []
+    });
+    inMemoryClans.unshift(defaultRedblackClan);
+    primaryPlayerClan = defaultRedblackClan;
+    mutated = true;
+  }
+
+  const usedNumbers = new Set<number>();
   if (primaryPlayerClan && (!primaryPlayerClan.clanNumber || primaryPlayerClan.clanNumber <= 0)) {
     primaryPlayerClan.clanNumber = 1;
     mutated = true;
@@ -788,6 +843,49 @@ function ensureClanNumbersAndNpcSyndicates(): void {
         'Бойцы синдиката! Держим оборону объектов недвижимости в Порту, снабжаем заводы сырьем и копим PTS на новые погоны в Военторге!';
       mutated = true;
     }
+  }
+
+  // Seed default supply orders for primaryPlayerClan if empty
+  if (primaryPlayerClan && (!primaryPlayerClan.supplyOrders || primaryPlayerClan.supplyOrders.length === 0)) {
+    primaryPlayerClan.supplyOrders = [
+      {
+        id: 'sup_init_assault',
+        resourceKey: 'assault_charge',
+        resourceName: 'Штурмовой Заряд',
+        resourceIcon: '💣',
+        requestedQty: 10,
+        deliveredQty: 0,
+        pricePerUnitGold: 6600,
+        ptsPerUnit: 5,
+        createdByNick: primaryPlayerClan.leaderNick || 'Redblack',
+        createdAt: Date.now()
+      },
+      {
+        id: 'sup_init_titanium',
+        resourceKey: 'titanium_plate',
+        resourceName: 'Титановая Бронепластина',
+        resourceIcon: '🛡️',
+        requestedQty: 15,
+        deliveredQty: 0,
+        pricePerUnitGold: 4700,
+        ptsPerUnit: 5,
+        createdByNick: primaryPlayerClan.leaderNick || 'Redblack',
+        createdAt: Date.now()
+      },
+      {
+        id: 'sup_init_power',
+        resourceKey: 'power_kw',
+        resourceName: 'Мощность (кВт)',
+        resourceIcon: '⚡',
+        requestedQty: 100,
+        deliveredQty: 0,
+        pricePerUnitGold: 75,
+        ptsPerUnit: 1,
+        createdByNick: primaryPlayerClan.leaderNick || 'Redblack',
+        createdAt: Date.now()
+      }
+    ];
+    mutated = true;
   }
 
   // 3. Seed an initial incoming alliance request from #501 [NILE] to player's clan if player's clan has no diplomacy entries yet
@@ -1635,26 +1733,44 @@ export function transferClanLeadership(
   currentLeaderNick: string,
   targetMemberNick: string,
   isAdmin = false
-): { ok: boolean; clan?: Clan; newLeaderNick?: string; error?: string } {
+): { ok: boolean; clan?: Clan; newLeaderNick?: string; message?: string; error?: string } {
   initClanStorage();
   const clan = inMemoryClans.find((c) => c.id === clanId);
   if (!clan) return { ok: false, error: 'Клан не найден.' };
 
   const cleanActor = currentLeaderNick.trim().toLowerCase();
-  const cleanTarget = targetMemberNick.trim().toLowerCase();
+  const rawTarget = targetMemberNick.trim();
+  const cleanTarget = rawTarget.toLowerCase();
+  if (!rawTarget) {
+    return { ok: false, error: 'Введите никнейм нового Главы клана!' };
+  }
   const isLeader = clan.leaderNick.trim().toLowerCase() === cleanActor;
 
   if (!isAdmin && !isLeader) {
-    return { ok: false, error: 'Передать управление кланом может только действующий глава клана!' };
+    return { ok: false, error: 'Передать управление кланом может только действующий глава клана или Администратор!' };
   }
 
   if (cleanTarget === clan.leaderNick.trim().toLowerCase()) {
     return { ok: false, error: 'Этот игрок уже является главой клана.' };
   }
 
-  const targetMember = clan.members.find((m) => m.nick.trim().toLowerCase() === cleanTarget);
+  let targetMember = clan.members.find((m) => m.nick.trim().toLowerCase() === cleanTarget);
   if (!targetMember) {
-    return { ok: false, error: 'Передать клан можно только игроку, который состоит в вашем клане!' };
+    targetMember = {
+      nick: rawTarget,
+      role: 'leader',
+      lvl: 10,
+      avatar: '👑',
+      joinedAt: Date.now(),
+      contributionExp: 0,
+      contributionInfluence: 0,
+      clanPts: 0,
+      rankLevel: 1,
+      hasClanBadge: true,
+      isOnline: true,
+      lastSeen: Date.now()
+    };
+    clan.members.push(targetMember);
   }
 
   const oldLeaderNick = clan.leaderNick;
@@ -1662,21 +1778,23 @@ export function transferClanLeadership(
   clan.members.forEach((m) => {
     if (m.nick.trim().toLowerCase() === cleanTarget) {
       m.role = 'leader';
+      m.hasClanBadge = true;
     } else if (m.role === 'leader') {
       m.role = 'officer';
     }
   });
 
+  const msg = `Передал управление синдикатом #${clan.clanNumber || 1} [${clan.tag}] и корону Главы игроку ${targetMember.nick} (прежний глава: ${oldLeaderNick})`;
   addClanLogEntry(
     clan,
-    currentLeaderNick,
+    currentLeaderNick || 'Администратор',
     'transfer_leader',
-    `Передал управление кланом и титул Главы игроку ${targetMember.nick} (прежний глава: ${oldLeaderNick})`,
+    msg,
     '👑'
   );
 
   saveClansToSupabase();
-  return { ok: true, clan, newLeaderNick: targetMember.nick };
+  return { ok: true, clan, newLeaderNick: targetMember.nick, message: `👑 ${msg}` };
 }
 
 export function addClanExp(
@@ -3247,7 +3365,7 @@ export const PORT_MERGED_MAX_RELIC_STOCK = 140;
 export const PORT_FISH_PER_RELIC = 5; // За 1 час потребляет 5 рыбин -> 1 реликвия
 export const PORT_RELIC_PRICE_FISH_MULT = 4; // Стоимость 1 реликвии = стоимость 4 рыбин на рынке
 export const PORT_DEFAULT_FISH_MARKET_PRICE = 50; // 50 золота за 1 рыбу -> 200 золота за 1 реликвию
-export const PORT_WORKER_GOLD_PER_HOUR = 250; // +250 золота за каждый час работы
+export const PORT_WORKER_GOLD_PER_HOUR = 300; // +250 золота за каждый час работы
 export const PORT_MAX_SHIFT_HOURS = 2; // Максимум 2 часа за подход
 export const CLAN_BADGE_COST_GOLD = 1000; // Стоимость выдачи Знака клана: 1 000 золота
 
@@ -3285,44 +3403,44 @@ export const DEFAULT_PORT_ALL_RESOURCES_CATALOG: PortTerminalResourceMeta[] = [
     name: 'Сырая рыба',
     icon: '🐟',
     category: 'Этап 1: Сырье',
-    buyPriceGold: 75,
-    sellPriceGold: 55,
+    buyPriceGold: 90,
+    sellPriceGold: 50,
     weight: 1,
     isTerminalTradable: true,
-    description: 'Добывается на Рыбном причале (5 ед./ч по 65 🪙). Скупается Рыбным комбинатом по 80 🪙/ед. (5 ед. → Рыбный паштет).'
+    description: 'Сдается с Рыбалки на Рыбный комбинат Порта по 50 🪙/шт. Продажа заводам 2-го этапа по 90 🪙/ед. (5 ед. → Рыбный паштет).'
   },
   {
     key: 'quartz_sand',
     name: 'Кварцевый песок',
     icon: '⏳',
     category: 'Этап 1: Сырье',
-    buyPriceGold: 75,
+    buyPriceGold: 95,
     sellPriceGold: 55,
     weight: 1,
     isTerminalTradable: true,
-    description: 'Добывается в Песчаном карьере (5 ед./ч по 65 🪙). Скупается Алхимической лабораторией по 80 🪙/ед. (3 песка + 2 нефти → Алхимический реагент).'
+    description: 'Добывается в Песчаном карьере (с/с 60 🪙, продажа 90 🪙). Скупается Алхимической лабораторией по 95 🪙/ед.'
   },
   {
     key: 'iron_ore',
     name: 'Железная руда',
     icon: '⛏️',
     category: 'Этап 1: Сырье',
-    buyPriceGold: 90,
+    buyPriceGold: 110,
     sellPriceGold: 65,
     weight: 1,
     isTerminalTradable: true,
-    description: 'Добывается в Железном руднике (4 ед./ч по 80 🪙). Скупается Сталелитейным цехом по 95 🪙/ед. (4 руды + 1 реагент → Закаленная сталь).'
+    description: 'Добывается в Железном руднике (с/с 75 🪙, продажа 100 🪙). Скупается Сталелитейным цехом по 110 🪙/ед.'
   },
   {
     key: 'gold_nugget',
     name: 'Золотой самородок',
     icon: '🪨',
     category: 'Этап 1: Сырье',
-    buyPriceGold: 120,
-    sellPriceGold: 90,
+    buyPriceGold: 130,
+    sellPriceGold: 80,
     weight: 1,
     isTerminalTradable: true,
-    description: 'Добывается в Золотой шахте (3 ед./ч по 105 🪙). Скупается Плавильным заводом по 130 🪙/ед. (3 самородка → Золотые слитки).'
+    description: 'Добывается в Золотой шахте (с/с 80 🪙, продажа 120 🪙). Скупается Плавильным заводом по 130 🪙/ед.'
   },
   {
     key: 'crude_oil',
@@ -3330,32 +3448,76 @@ export const DEFAULT_PORT_ALL_RESOURCES_CATALOG: PortTerminalResourceMeta[] = [
     icon: '🛢️',
     category: 'Этап 1: Сырье',
     buyPriceGold: 120,
-    sellPriceGold: 90,
+    sellPriceGold: 75,
     weight: 1,
     isTerminalTradable: true,
-    description: 'Добывается на Нефтяной вышке (3 ед./ч по 105 🪙). Скупается Алхимической лабораторией и Электростанцией по 130 🪙/ед.'
+    description: 'Добывается на Нефтяной вышке (с/с 75 🪙, продажа 115 🪙). Скупается Алхимической лабораторией, Пороховым Заводом и Электростанцией по 120 🪙/ед.'
+  },
+  {
+    key: 'flax_fiber',
+    name: 'Волокно Льна',
+    icon: '🌿',
+    category: 'Этап 1: Сырье',
+    buyPriceGold: 95,
+    sellPriceGold: 60,
+    weight: 1,
+    isTerminalTradable: true,
+    description: 'Добывается на Плантации Льна и Папируса (с/с 60 🪙, продажа 90 🪙). Скупается Ткацкой Мануфактурой по 95 🪙/ед.'
+  },
+  {
+    key: 'natural_saltpeter',
+    name: 'Природная Селитра',
+    icon: '🧂',
+    category: 'Этап 1: Сырье',
+    buyPriceGold: 115,
+    sellPriceGold: 70,
+    weight: 1,
+    isTerminalTradable: true,
+    description: 'Добывается в Селитровом Карьере (с/с 75 🪙, продажа 105 🪙). Скупается Пороховым Заводом по 115 🪙/ед.'
+  },
+  {
+    key: 'raw_cotton_fiber',
+    name: 'Сырое Волокно',
+    icon: '🧵',
+    category: 'Этап 1: Сырье',
+    buyPriceGold: 90,
+    sellPriceGold: 55,
+    weight: 1,
+    isTerminalTradable: true,
+    description: 'Добывается на Плантации Хлопка и Красителей [2/8] и в Аутленде (с/с 60 🪙, продажа завода 90 🪙).'
+  },
+  {
+    key: 'oasis_herb',
+    name: 'Трава Оазиса',
+    icon: '🌿',
+    category: 'Этап 1: Редкое сырье (Outland)',
+    buyPriceGold: 150,
+    sellPriceGold: 120,
+    weight: 1,
+    isTerminalTradable: true,
+    description: 'Редкое растение из Прибрежной зоны (Outland). Сдается в Алхимическую Лабораторию и Терминал Порта по 120 🪙!'
   },
   {
     key: 'fish_semifinished',
     name: 'Рыбный паштет',
     icon: '🥫',
     category: 'Этап 2: Полуфабрикат',
-    buyPriceGold: 800,
-    sellPriceGold: 620,
+    buyPriceGold: 900,
+    sellPriceGold: 750,
     weight: 2,
     isTerminalTradable: true,
-    description: 'Выпускается Рыбным комбинатом (1 ед./ч по 750 🪙). Скупается Полевым Продкомбинатом, Мастерской Реликвий и Портовой Таверной по 820 🪙/ед.'
+    description: 'Выпускается Рыбным комбинатом (себестоимость ~750 🪙, цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.).'
   },
   {
     key: 'gold_ingots',
     name: 'Золотые слитки',
     icon: '🪙',
     category: 'Этап 2: Полуфабрикат',
-    buyPriceGold: 820,
-    sellPriceGold: 640,
+    buyPriceGold: 900,
+    sellPriceGold: 750,
     weight: 2,
     isTerminalTradable: true,
-    description: 'Выпускаются Плавильным заводом (1 ед./ч по 750 🪙). Скупаются Оружейной Мануфактурой и Мастерской Реликвий по 830 🪙/ед.'
+    description: 'Выпускаются Плавильным заводом (себестоимость ~750 🪙, цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.).'
   },
   {
     key: 'alchemy_reagents',
@@ -3363,43 +3525,65 @@ export const DEFAULT_PORT_ALL_RESOURCES_CATALOG: PortTerminalResourceMeta[] = [
     icon: '🧪',
     category: 'Этап 2: Полуфабрикат',
     buyPriceGold: 900,
-    sellPriceGold: 700,
+    sellPriceGold: 750,
     weight: 2,
     isTerminalTradable: true,
-    description: 'Выпускается Алхимической лабораторией (1 ед./ч по 860 🪙). Скупается мануфактурами 3-го этапа по 920 🪙/ед.'
+    description: 'Выпускается Алхимической лабораторией (себестоимость ~750 🪙, цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.).'
+  },
+  {
+    key: 'armor_fabric',
+    name: 'Броневая Ткань',
+    icon: '🧶',
+    category: 'Этап 2: Полуфабрикат',
+    buyPriceGold: 900,
+    sellPriceGold: 750,
+    weight: 2,
+    isTerminalTradable: true,
+    description: 'Выпускается Ткацкой Мануфактурой (себестоимость ~750 🪙, цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.).'
+  },
+  {
+    key: 'gunpowder',
+    name: 'Оружейный Порох',
+    icon: '🧨',
+    category: 'Этап 2: Полуфабрикат',
+    buyPriceGold: 900,
+    sellPriceGold: 750,
+    weight: 2,
+    isTerminalTradable: true,
+    description: 'Выпускается Пороховым Заводом (себестоимость ~750 🪙, цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.).'
   },
   {
     key: 'hardened_steel',
     name: 'Закаленная сталь',
     icon: '🔩',
     category: 'Этап 3: Продукция',
-    buyPriceGold: 1850,
-    sellPriceGold: 1750,
+    buyPriceGold: 2500,
+    sellPriceGold: 2000,
     weight: 5,
     isTerminalTradable: false,
-    description: 'Выпускается Сталелитейным цехом (1 ед./ч по 1 750 🪙). Скупается Оружейной Мануфактурой (1 850 🪙) и требуется для ремонта зданий.'
+    description: 'Выпускается Сталелитейным цехом (себестоимость 2 000 🪙 → продажа 2 500 🪙, чистая прибыль владельца: +500 🪙/ед.).'
   },
   {
     key: 'combat_ration',
     name: 'Боевой стимулятор',
     icon: '💉',
     category: 'Этап 3: Продукция',
-    buyPriceGold: 3100,
-    sellPriceGold: 2900,
+    buyPriceGold: 2800,
+    sellPriceGold: 2200,
     weight: 5,
     isTerminalTradable: false,
-    description: 'Выпускается Полевым Продкомбинатом (1 ед./ч по 3 100 🪙). Вес: 5 ед.'
+    description: 'Выпускается Полевым Продкомбинатом (себестоимость 2 200 🪙 → продажа 2 800 🪙, чистая прибыль владельца: +600 🪙/ед.).'
   },
   {
     key: 'combat_modules',
     name: 'Боевые модули',
     icon: '⚙️',
     category: 'Этап 3: Продукция',
-    buyPriceGold: 3250,
-    sellPriceGold: 3000,
+    buyPriceGold: 3500,
+    sellPriceGold: 2800,
     weight: 5,
     isTerminalTradable: false,
-    description: 'Выпускаются Оружейной Мануфактурой (1 ед./ч по 3 250 🪙). Вес: 5 ед.'
+    description: 'Выпускаются Оружейной Мануфактурой (себестоимость 2 800 🪙 → продажа 3 500 🪙, чистая прибыль владельца: +700 🪙/ед.).'
   },
   {
     key: 'port_relics',
@@ -3407,10 +3591,43 @@ export const DEFAULT_PORT_ALL_RESOURCES_CATALOG: PortTerminalResourceMeta[] = [
     icon: '🏺',
     category: 'Этап 3: Продукция',
     buyPriceGold: 5000,
-    sellPriceGold: 4500,
+    sellPriceGold: 4200,
     weight: 5,
     isTerminalTradable: false,
-    description: 'Выпускается Мастерской Реликвий (1 ед./ч по 5 000 🪙). Используется на Алтаре модификации. Вес: 5 ед.'
+    description: 'Выпускается Мастерской Реликвий (себестоимость 4 200 🪙 → продажа 5 000 🪙, чистая прибыль владельца: +800 🪙/ед.).'
+  },
+  {
+    key: 'titanium_plate',
+    name: 'Титановая Бронепластина',
+    icon: '🛡️',
+    category: 'Этап 3: Продукция',
+    buyPriceGold: 4500,
+    sellPriceGold: 3800,
+    weight: 5,
+    isTerminalTradable: false,
+    description: 'Выпускается Фабрикой Спецзащиты (себестоимость 3 800 🪙 → продажа 4 500 🪙, чистая прибыль владельца: +700 🪙/ед.).'
+  },
+  {
+    key: 'assault_charge',
+    name: 'Штурмовой Заряд',
+    icon: '💣',
+    category: 'Этап 3: Продукция',
+    buyPriceGold: 4900,
+    sellPriceGold: 4100,
+    weight: 5,
+    isTerminalTradable: false,
+    description: 'Выпускается Цехом Осадных Боеприпасов (себестоимость 4 100 🪙 → продажа 4 900 🪙, чистая прибыль владельца: +800 🪙/ед.).'
+  },
+  {
+    key: 'ceremonial_amulet',
+    name: 'Церемониальный Амулет',
+    icon: '📿',
+    category: 'Этап 3: Продукция',
+    buyPriceGold: 2500,
+    sellPriceGold: 2000,
+    weight: 5,
+    isTerminalTradable: false,
+    description: 'Выпускается Ювелирной Мастерской Фараона [9/3] (себестоимость 2 000 🪙 → продажа 2 500 🪙, чистая прибыль владельца: +500 🪙/ед.).'
   },
   {
     key: 'power_kw',
@@ -3421,7 +3638,7 @@ export const DEFAULT_PORT_ALL_RESOURCES_CATALOG: PortTerminalResourceMeta[] = [
     sellPriceGold: 70,
     weight: 0,
     isTerminalTradable: false,
-    description: 'Вырабатывается Электростанцией (10 ед./ч по 70 🪙, себестоимость 51 🪙). Вес = 0. Скупается заводами 2–3 этапов по 75 🪙/ед.'
+    description: 'Вырабатывается Электростанцией (10 ед./ч по 70 🪙, себестоимость 54 🪙). Вес = 0. Скупается заводами 2–3 этапов по 70–75 🪙/ед.'
   },
   {
     key: 'tavern_meal',
@@ -3482,15 +3699,23 @@ export function getPortResourceWeight(key?: PortTerminalResourceKey): number {
     case 'iron_ore':
     case 'gold_nugget':
     case 'crude_oil':
+    case 'flax_fiber':
+    case 'natural_saltpeter':
+    case 'raw_cotton_fiber':
       return 1;
     case 'fish_semifinished':
     case 'gold_ingots':
     case 'alchemy_reagents':
+    case 'armor_fabric':
+    case 'gunpowder':
       return 2;
     case 'hardened_steel':
     case 'combat_ration':
     case 'combat_modules':
     case 'port_relics':
+    case 'titanium_plate':
+    case 'assault_charge':
+    case 'ceremonial_amulet':
       return 5;
     default:
       return 1;
@@ -5518,13 +5743,22 @@ let inMemoryPortTerminal: PortTradingTerminalState = {
     gold_nugget: PORT_TERMINAL_INITIAL_STOCK,
     quartz_sand: PORT_TERMINAL_INITIAL_STOCK,
     crude_oil: PORT_TERMINAL_INITIAL_STOCK,
+    flax_fiber: PORT_TERMINAL_INITIAL_STOCK,
+    natural_saltpeter: PORT_TERMINAL_INITIAL_STOCK,
+    raw_cotton_fiber: PORT_TERMINAL_INITIAL_STOCK,
+    oasis_herb: PORT_TERMINAL_INITIAL_STOCK,
     fish_semifinished: PORT_TERMINAL_INITIAL_STOCK,
     alchemy_reagents: PORT_TERMINAL_INITIAL_STOCK,
     gold_ingots: PORT_TERMINAL_INITIAL_STOCK,
+    armor_fabric: PORT_TERMINAL_INITIAL_STOCK,
+    gunpowder: PORT_TERMINAL_INITIAL_STOCK,
     hardened_steel: 0,
     combat_ration: 0,
     combat_modules: 0,
     port_relics: 0,
+    titanium_plate: 0,
+    assault_charge: 0,
+    ceremonial_amulet: 0,
     power_kw: 0,
     tavern_meal: 0
   },
@@ -5547,6 +5781,19 @@ function loadPortTradingTerminal(): PortTradingTerminalState {
             gold_nugget: Math.max(0, Math.floor(Number(parsed.stocks.gold_nugget ?? PORT_TERMINAL_INITIAL_STOCK))),
             quartz_sand: Math.max(0, Math.floor(Number(parsed.stocks.quartz_sand ?? PORT_TERMINAL_INITIAL_STOCK))),
             crude_oil: Math.max(0, Math.floor(Number(parsed.stocks.crude_oil ?? PORT_TERMINAL_INITIAL_STOCK))),
+            flax_fiber: Math.max(0, Math.floor(Number(parsed.stocks.flax_fiber ?? PORT_TERMINAL_INITIAL_STOCK))),
+            natural_saltpeter: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.natural_saltpeter ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            raw_cotton_fiber: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.raw_cotton_fiber ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            oasis_herb: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.oasis_herb ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
             fish_semifinished: Math.max(
               0,
               Math.floor(Number(parsed.stocks.fish_semifinished ?? PORT_TERMINAL_INITIAL_STOCK))
@@ -5559,10 +5806,21 @@ function loadPortTradingTerminal(): PortTradingTerminalState {
               0,
               Math.floor(Number(parsed.stocks.gold_ingots ?? PORT_TERMINAL_INITIAL_STOCK))
             ),
+            armor_fabric: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.armor_fabric ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
+            gunpowder: Math.max(
+              0,
+              Math.floor(Number(parsed.stocks.gunpowder ?? PORT_TERMINAL_INITIAL_STOCK))
+            ),
             hardened_steel: 0,
             combat_ration: 0,
             combat_modules: 0,
             port_relics: 0,
+            titanium_plate: 0,
+            assault_charge: 0,
+            ceremonial_amulet: 0,
             power_kw: 0,
             tavern_meal: 0
           },
@@ -5634,7 +5892,7 @@ export function getPortRelicMarketPrice(): number {
   return 5000;
 }
 
-export const DEFAULT_PORT_ESTATE_OWNER_NICK = 'RedBlack';
+export const DEFAULT_PORT_ESTATE_OWNER_NICK = 'Redblack';
 
 function createDefaultPortProduction(
   factoryType: string,
@@ -5702,13 +5960,13 @@ function createDefaultPortProduction(
     input1ResourceKey: hasInput1 ? (config?.input1ResourceKey || 'raw_fish') : undefined,
     input1ResourceName: hasInput1 ? (config?.input1ResourceName || 'Сырая рыба') : undefined,
     input1ResourceIcon: hasInput1 ? (config?.input1ResourceIcon || '🐟') : undefined,
-    input1Stock: hasInput1 ? (config?.input1Stock ?? 24) : undefined,
+    input1Stock: hasInput1 ? (config?.input1Stock ?? 30) : undefined,
     maxInput1Stock: hasInput1 ? PORT_BASE_MAX_FISH_STOCK : undefined,
     input1RequiredPerCycle: hasInput1 ? (config?.input1RequiredPerCycle ?? 5) : undefined,
     input2ResourceKey: hasInput2 ? config?.input2ResourceKey : undefined,
     input2ResourceName: hasInput2 ? config?.input2ResourceName : undefined,
     input2ResourceIcon: hasInput2 ? config?.input2ResourceIcon : undefined,
-    input2Stock: hasInput2 ? (config?.input2Stock ?? 20) : undefined,
+    input2Stock: hasInput2 ? (config?.input2Stock ?? 24) : undefined,
     maxInput2Stock: hasInput2 ? PORT_BASE_MAX_FISH_STOCK : undefined,
     input2RequiredPerCycle: hasInput2 ? (config?.input2RequiredPerCycle ?? 2) : undefined,
     input2BuyPriceGold: hasInput2 ? (config?.input2BuyPriceGold ?? 130) : undefined,
@@ -5726,8 +5984,8 @@ function createDefaultPortProduction(
     linkedSectorId,
     intermediateResourceName,
     facilityLevel: 1,
-    facilityBalanceGold: 15000,
-    workerWageGold: PORT_WORKER_GOLD_PER_HOUR,
+    facilityBalanceGold: 25000,
+    workerWageGold: (config as any)?.workerWageGold ?? PORT_WORKER_GOLD_PER_HOUR,
     rawBuyPriceGold: config?.rawBuyPriceGold ?? (isDual ? 830 : 80),
     productSellPriceGold: config?.productSellPriceGold ?? (tier === 1 ? 65 : tier === 2 ? 750 : 5000),
     isMerged: false,
@@ -5742,10 +6000,10 @@ function createDefaultPortProduction(
     workers: [],
     passiveGoldEarned: 2500,
     totalRelicsCrafted: initialRelics,
-    powerStock: config?.powerStock ?? (defaultPowerReq > 0 ? 45 : 0),
+    powerStock: config?.powerStock ?? (defaultPowerReq > 0 ? 50 : 0),
     maxPowerStock: 200,
     powerRequiredPerCycle: defaultPowerReq,
-    powerBuyPriceGold: config?.powerBuyPriceGold ?? 75,
+    powerBuyPriceGold: config?.powerBuyPriceGold ?? 70,
     buildingDurability: 100,
     maxBuildingDurability: 100,
     lastDurabilityDecayAt: Date.now(),
@@ -5793,11 +6051,11 @@ export interface PortEstateTemplate {
 }
 
 export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
-  // ЭТАП 1: ДОБЫВАЮЩИЕ ПРЕДПРИЯТИЯ (Вход: только 1 рабочий час = 250 🪙)
+  // ЭТАП 1: ДОБЫВАЮЩИЕ ПРЕДПРИЯТИЯ (Вход: 1 рабочий час = 300 🪙, продажа заводам 2-го этапа по 90–130 🪙)
   {
     id: 'tpl_fish_pier',
     name: 'Рыбный причал',
-    categoryLabel: 'Этап 1 (Добыча): Сырая рыба (5 ед./ч, продажа: 65 🪙)',
+    categoryLabel: 'Этап 1 (Добыча): Сырая рыба (5 ед./ч, продажа: 90 🪙)',
     factoryType: 'fish_pier_extraction',
     productionTier: 1,
     productionStage: 'extraction',
@@ -5805,17 +6063,17 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     outputProductName: 'Сырая рыба',
     outputProductIcon: '🐟',
     outputRatePerHour: 5,
-    productSellPriceGold: 65,
+    productSellPriceGold: 90,
     intermediateResourceName: 'Сырая рыба',
     bonusType: 'fishing_gold',
     bonusValue: 6,
     bonusLabel: '+6% к золоту на рыбалке',
-    description: 'Этап 1 (Добыча): выход — Сырая рыба (5 ед./ч). Себестоимость: 50 🪙, продажа: 65 🪙/ед. (Прибыль: +75 🪙/ч).'
+    description: 'Этап 1 (Добыча): выход — Сырая рыба (5 ед./ч). Закупка у рыбаков: 50 🪙, продажа заводам 2-го этапа: 90 🪙/ед.'
   },
   {
     id: 'tpl_sand_quarry',
     name: 'Песчаный карьер',
-    categoryLabel: 'Этап 1 (Добыча): Кварцевый песок (5 ед./ч, продажа: 65 🪙)',
+    categoryLabel: 'Этап 1 (Добыча): Кварцевый песок (5 ед./ч, продажа: 90 🪙)',
     factoryType: 'sand_quarry_extraction',
     productionTier: 1,
     productionStage: 'extraction',
@@ -5823,17 +6081,17 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     outputProductName: 'Кварцевый песок',
     outputProductIcon: '⏳',
     outputRatePerHour: 5,
-    productSellPriceGold: 65,
+    productSellPriceGold: 90,
     intermediateResourceName: 'Кварцевый песок',
     bonusType: 'pyramid_exp',
     bonusValue: 6,
     bonusLabel: '+6% к опыту в боях',
-    description: 'Этап 1 (Добыча): выход — Кварцевый песок (5 ед./ч). Себестоимость: 50 🪙, продажа: 65 🪙/ед. (Прибыль: +75 🪙/ч).'
+    description: 'Этап 1 (Добыча): выход — Кварцевый песок (5 ед./ч). Себестоимость: 60 🪙, продажа заводам 2-го этапа: 90 🪙/ед.'
   },
   {
     id: 'tpl_nile_mine',
     name: 'Железный рудник',
-    categoryLabel: 'Этап 1 (Добыча): Железная руда (4 ед./ч, продажа: 80 🪙)',
+    categoryLabel: 'Этап 1 (Добыча): Железная руда (4 ед./ч, продажа: 105 🪙)',
     factoryType: 'nile_mine_extraction',
     productionTier: 1,
     productionStage: 'extraction',
@@ -5841,17 +6099,17 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     outputProductName: 'Железная руда',
     outputProductIcon: '⛏️',
     outputRatePerHour: 4,
-    productSellPriceGold: 80,
+    productSellPriceGold: 105,
     intermediateResourceName: 'Железная руда',
     bonusType: 'pyramid_gold',
     bonusValue: 6,
     bonusLabel: '+6% к золоту в Пирамидах',
-    description: 'Этап 1 (Добыча): выход — Железная руда (4 ед./ч). Себестоимость: 62.5 🪙, продажа: 80 🪙/ед. (Прибыль: +70 🪙/ч).'
+    description: 'Этап 1 (Добыча): выход — Железная руда (4 ед./ч). Себестоимость: 75 🪙, продажа заводам 2-го этапа: 105 🪙/ед.'
   },
   {
     id: 'tpl_gold_mine_raw',
     name: 'Золотая шахта',
-    categoryLabel: 'Этап 1 (Добыча): Золотой самородок (3 ед./ч, продажа: 105 🪙)',
+    categoryLabel: 'Этап 1 (Добыча): Золотой самородок (3 ед./ч, продажа: 130 🪙)',
     factoryType: 'gold_mine_extraction',
     productionTier: 1,
     productionStage: 'extraction',
@@ -5859,17 +6117,17 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     outputProductName: 'Золотой самородок',
     outputProductIcon: '🪨',
     outputRatePerHour: 3,
-    productSellPriceGold: 105,
+    productSellPriceGold: 130,
     intermediateResourceName: 'Золотой самородок',
     bonusType: 'pyramid_gold',
     bonusValue: 7,
     bonusLabel: '+7% к золоту в Пирамидах',
-    description: 'Этап 1 (Добыча): выход — Золотой самородок (3 ед./ч). Себестоимость: 83.3 🪙, продажа: 105 🪙/ед. (Прибыль: +65 🪙/ч).'
+    description: 'Этап 1 (Добыча): выход — Золотой самородок (3 ед./ч). Себестоимость: 100 🪙, продажа заводам 2-го этапа: 130 🪙/ед.'
   },
   {
     id: 'tpl_oil_rig_oasis',
     name: 'Нефтяная вышка',
-    categoryLabel: 'Этап 1 (Добыча): Сырая нефть (3 ед./ч, продажа: 105 🪙)',
+    categoryLabel: 'Этап 1 (Добыча): Сырая нефть (3 ед./ч, продажа: 120 🪙)',
     factoryType: 'oil_rig_extraction',
     productionTier: 1,
     productionStage: 'extraction',
@@ -5877,19 +6135,73 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     outputProductName: 'Сырая нефть',
     outputProductIcon: '🛢️',
     outputRatePerHour: 3,
-    productSellPriceGold: 105,
+    productSellPriceGold: 120,
     intermediateResourceName: 'Сырая нефть',
     bonusType: 'pyramid_exp',
     bonusValue: 7,
     bonusLabel: '+7% к опыту в боях',
-    description: 'Этап 1 (Добыча): выход — Сырая нефть (3 ед./ч). Себестоимость: 83.3 🪙, продажа: 105 🪙/ед. (Прибыль: +65 🪙/ч).'
+    description: 'Этап 1 (Добыча): выход — Сырая нефть (3 ед./ч). Себестоимость: 100 🪙, продажа заводам 2-го этапа: 120 🪙/ед.'
+  },
+  {
+    id: 'tpl_flax_plantation',
+    name: 'Плантация Льна и Папируса',
+    categoryLabel: 'Этап 1 (Добыча, Объект №15): Волокно Льна (5 ед./ч, продажа: 90 🪙)',
+    factoryType: 'flax_plantation_extraction',
+    productionTier: 1,
+    productionStage: 'extraction',
+    outputResourceKey: 'flax_fiber',
+    outputProductName: 'Волокно Льна',
+    outputProductIcon: '🌿',
+    outputRatePerHour: 5,
+    productSellPriceGold: 90,
+    intermediateResourceName: 'Волокно Льна',
+    bonusType: 'fishing_gold',
+    bonusValue: 7,
+    bonusLabel: '+7% к золоту на рыбалке',
+    description: 'Объект №15 (Добыча): выход — Волокно Льна (5 ед./ч). Себестоимость: 60 🪙, продажа заводам 2-го этапа: 90 🪙/ед.'
+  },
+  {
+    id: 'tpl_saltpeter_quarry',
+    name: 'Селитровый Карьер',
+    categoryLabel: 'Этап 1 (Добыча, Объект №16): Природная Селитра (4 ед./ч, продажа: 105 🪙)',
+    factoryType: 'saltpeter_quarry_extraction',
+    productionTier: 1,
+    productionStage: 'extraction',
+    outputResourceKey: 'natural_saltpeter',
+    outputProductName: 'Природная Селитра',
+    outputProductIcon: '🧂',
+    outputRatePerHour: 4,
+    productSellPriceGold: 105,
+    intermediateResourceName: 'Природная Селитра',
+    bonusType: 'combat_dmg',
+    bonusValue: 6,
+    bonusLabel: '+6% к боевому урону',
+    description: 'Объект №16 (Добыча): выход — Природная Селитра (4 ед./ч). Себестоимость: 75 🪙, продажа заводам 2-го этапа: 105 🪙/ед.'
+  },
+  {
+    id: 'tpl_cotton_plantation',
+    name: 'Плантация Хлопка и Красителей',
+    categoryLabel: 'Этап 1 (Добыча, Сектор [2/8]): Сырое Волокно (5 ед./ч, с/с: 60 🪙, продажа: 90 🪙)',
+    factoryType: 'cotton_plantation_extraction',
+    productionTier: 1,
+    productionStage: 'extraction',
+    outputResourceKey: 'raw_cotton_fiber',
+    outputProductName: 'Сырое Волокно',
+    outputProductIcon: '🧵',
+    outputRatePerHour: 5,
+    productSellPriceGold: 90,
+    intermediateResourceName: 'Сырое Волокно',
+    bonusType: 'fishing_gold',
+    bonusValue: 8,
+    bonusLabel: '+8% к золоту на рыбалке',
+    description: 'Плантация Хлопка и Красителей (Сектор [2/8]): производит ресурс «Сырое Волокно» (вес 1 ед., 5 ед./ч). Себестоимость: 60 🪙, продажа завода: 90 🪙/ед.'
   },
 
-  // ЭТАП 2: ПЕРВИЧНЫЕ ЗАВОДЫ (Переработка сырья в полуфабрикаты)
+  // ЭТАП 2: ПЕРВИЧНЫЕ ЗАВОДЫ (Себестоимость ~750 🪙 → цена продажи 900 🪙, чистая прибыль владельца Redblack: +150 🪙/ед.)
   {
     id: 'tpl_fish_plant',
     name: 'Рыбный комбинат',
-    categoryLabel: 'Этап 2 (Заводы): Сырая рыба (5 ед. по 80 🪙) → Рыбный паштет (1 ед./ч по 750 🪙)',
+    categoryLabel: 'Этап 2 (Заводы): Сырая рыба (5 ед. по 75 🪙) → Рыбный паштет (1 ед./ч по 900 🪙)',
     factoryType: 'solar_relic_foundry',
     productionTier: 2,
     productionStage: 'raw_processing',
@@ -5897,22 +6209,22 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceName: 'Сырая рыба',
     input1ResourceIcon: '🐟',
     input1RequiredPerCycle: 5,
-    rawBuyPriceGold: 80,
+    rawBuyPriceGold: 75,
     outputResourceKey: 'fish_semifinished',
     outputProductName: 'Рыбный паштет',
     outputProductIcon: '🥫',
     outputRatePerHour: 1,
-    productSellPriceGold: 750,
+    productSellPriceGold: 900,
     intermediateResourceName: 'Рыбный паштет',
     bonusType: 'fishing_gold',
     bonusValue: 8,
     bonusLabel: '+8% к золоту на рыбалке',
-    description: 'Этап 2 (Первичный завод): скупает Сырую рыбу (5 ед./ч по 80 🪙). Себестоимость: 650 🪙, продажа: 750 🪙/ед. (Прибыль: +100 🪙/ч).'
+    description: 'Этап 2 (Первичный завод): скупает Сырую рыбу (у рыбаков по 50 🪙, с причалов по 75 🪙). Себестоимость: ~750 🪙, продажа: 900 🪙/ед. (Чистая прибыль: +150 🪙/ч).'
   },
   {
     id: 'tpl_gold_smelter',
     name: 'Плавильный завод',
-    categoryLabel: 'Этап 2 (Заводы): Золотой самородок (3 ед. по 130 🪙) → Золотые слитки (1 ед./ч по 750 🪙)',
+    categoryLabel: 'Этап 2 (Заводы): Золотой самородок (3 ед. по 125 🪙) → Золотые слитки (1 ед./ч по 900 🪙)',
     factoryType: 'gold_smelter_dock',
     productionTier: 2,
     productionStage: 'raw_processing',
@@ -5920,22 +6232,22 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceName: 'Золотой самородок',
     input1ResourceIcon: '🪨',
     input1RequiredPerCycle: 3,
-    rawBuyPriceGold: 130,
+    rawBuyPriceGold: 125,
     outputResourceKey: 'gold_ingots',
     outputProductName: 'Золотые слитки',
     outputProductIcon: '🪙',
     outputRatePerHour: 1,
-    productSellPriceGold: 750,
+    productSellPriceGold: 900,
     intermediateResourceName: 'Золотые слитки',
     bonusType: 'pyramid_gold',
     bonusValue: 10,
     bonusLabel: '+10% к золоту в Пирамидах',
-    description: 'Этап 2 (Первичный завод): скупает Золотой самородок (3 ед./ч по 130 🪙). Себестоимость: 640 🪙, продажа: 750 🪙/ед. (Прибыль: +110 🪙/ч).'
+    description: 'Этап 2 (Первичный завод): скупает Золотой самородок (3 ед./ч по 125 🪙). Себестоимость: ~750 🪙, продажа: 900 🪙/ед. (Чистая прибыль: +150 🪙/ч).'
   },
   {
     id: 'tpl_alchemy_lab',
     name: 'Алхимическая лаборатория',
-    categoryLabel: 'Этап 2 (Заводы): Кварцевый песок (3 по 80 🪙) + Сырая нефть (2 по 130 🪙) → Алхимический реагент (860 🪙)',
+    categoryLabel: 'Этап 2 (Заводы): Кварцевый песок (2 по 90 🪙) + Сырая нефть (2 по 100 🪙) → Алхимический реагент (900 🪙)',
     factoryType: 'alchemy_beacon',
     productionTier: 2,
     productionStage: 'raw_processing',
@@ -5943,30 +6255,82 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceKey: 'quartz_sand',
     input1ResourceName: 'Кварцевый песок',
     input1ResourceIcon: '⏳',
-    input1RequiredPerCycle: 3,
-    rawBuyPriceGold: 80,
+    input1RequiredPerCycle: 2,
+    rawBuyPriceGold: 90,
     input2ResourceKey: 'crude_oil',
     input2ResourceName: 'Сырая нефть',
     input2ResourceIcon: '🛢️',
     input2RequiredPerCycle: 2,
-    input2BuyPriceGold: 130,
+    input2BuyPriceGold: 100,
     outputResourceKey: 'alchemy_reagents',
     outputProductName: 'Алхимический реагент',
     outputProductIcon: '🧪',
     outputRatePerHour: 1,
-    productSellPriceGold: 860,
+    productSellPriceGold: 900,
     intermediateResourceName: 'Алхимический реагент',
     bonusType: 'pyramid_exp',
     bonusValue: 10,
     bonusLabel: '+10% к опыту в боях',
-    description: 'Этап 2 (Первичный завод): вход — Песок (3 по 80 🪙) + Нефть (2 по 130 🪙). Себестоимость: 750 🪙, продажа: 860 🪙/ед. (Прибыль: +110 🪙/ч).'
+    description: 'Этап 2 (Первичный завод): также скупает «Траву Оазиса» из Аутленда по 120 🪙! Себестоимость реагента: ~750 🪙, продажа: 900 🪙/ед. (Чистая прибыль: +150 🪙/ч).'
+  },
+  {
+    id: 'tpl_weaving_mill',
+    name: 'Ткацкая Мануфактура',
+    categoryLabel: 'Этап 2 (Объект №17): Волокно Льна (4 по 95 🪙) → Броневая Ткань (1 ед./ч по 900 🪙)',
+    factoryType: 'weaving_mill_factory',
+    productionTier: 2,
+    productionStage: 'raw_processing',
+    input1ResourceKey: 'flax_fiber',
+    input1ResourceName: 'Волокно Льна',
+    input1ResourceIcon: '🌿',
+    input1RequiredPerCycle: 4,
+    rawBuyPriceGold: 95,
+    outputResourceKey: 'armor_fabric',
+    outputProductName: 'Броневая Ткань',
+    outputProductIcon: '🧶',
+    outputRatePerHour: 1,
+    productSellPriceGold: 900,
+    intermediateResourceName: 'Броневая Ткань',
+    bonusType: 'max_hp',
+    bonusValue: 8,
+    bonusLabel: '+8% к макс. здоровью',
+    description: 'Объект №17 (Первичный завод): вход — Волокно Льна (4 по 95 🪙) + 1 кВт (70 🪙) + Рабочий (300 🪙). Себестоимость: 750 🪙, продажа: 900 🪙/ед. (Прибыль: +150 🪙).'
+  },
+  {
+    id: 'tpl_gunpowder_plant',
+    name: 'Пороховой Завод',
+    categoryLabel: 'Этап 2 (Объект №18): Селитра (3 по 90 🪙) + Нефть (1 по 110 🪙) → Оружейный Порох (900 🪙)',
+    factoryType: 'gunpowder_plant_factory',
+    productionTier: 2,
+    productionStage: 'raw_processing',
+    requiresDualInput: true,
+    input1ResourceKey: 'natural_saltpeter',
+    input1ResourceName: 'Природная Селитра',
+    input1ResourceIcon: '🧂',
+    input1RequiredPerCycle: 3,
+    rawBuyPriceGold: 90,
+    input2ResourceKey: 'crude_oil',
+    input2ResourceName: 'Сырая нефть',
+    input2ResourceIcon: '🛢️',
+    input2RequiredPerCycle: 1,
+    input2BuyPriceGold: 110,
+    outputResourceKey: 'gunpowder',
+    outputProductName: 'Оружейный Порох',
+    outputProductIcon: '🧨',
+    outputRatePerHour: 1,
+    productSellPriceGold: 900,
+    intermediateResourceName: 'Оружейный Порох',
+    bonusType: 'combat_dmg',
+    bonusValue: 8,
+    bonusLabel: '+8% к боевому урону',
+    description: 'Объект №18 (Первичный завод): вход — Селитра (3 по 90 🪙) + Нефть (1 по 110 🪙) + 1 кВт (70 🪙) + Рабочий (300 🪙). Себестоимость: 750 🪙, продажа: 900 🪙/ед. (Прибыль: +150 🪙).'
   },
 
-  // ЭТАП 3: ВЫСОКОТЕХНОЛОГИЧНЫЕ МАНУФАКТУРЫ (Крафт из 2–3 ресурсов)
+  // ЭТАП 3: ВОЕНПРОМ И ВЫСОКОТЕХНОЛОГИЧНЫЕ МАНУФАКТУРЫ (Себестоимость 2 000–4 200 🪙 → продажа 2 500–5 000 🪙, прибыль +500..+800 🪙)
   {
     id: 'tpl_steel_combat_modules',
     name: 'Сталелитейный цех',
-    categoryLabel: 'Этап 3 (Мануфактура): Железная руда (4 по 95 🪙) + Реагент (1 по 920 🪙) → Закаленная сталь (1 750 🪙)',
+    categoryLabel: 'Этап 3 (Мануфактура): Железная руда (6 по 110 🪙) + Реагент (1 по 900 🪙) → Закаленная сталь (2 500 🪙)',
     factoryType: 'steel_foundry',
     productionTier: 3,
     productionStage: 'dual_advanced',
@@ -5974,28 +6338,28 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceKey: 'iron_ore',
     input1ResourceName: 'Железная руда',
     input1ResourceIcon: '⛏️',
-    input1RequiredPerCycle: 4,
-    rawBuyPriceGold: 95,
+    input1RequiredPerCycle: 6,
+    rawBuyPriceGold: 110,
     input2ResourceKey: 'alchemy_reagents',
     input2ResourceName: 'Алхимический реагент',
     input2ResourceIcon: '🧪',
     input2RequiredPerCycle: 1,
-    input2BuyPriceGold: 920,
+    input2BuyPriceGold: 900,
     outputResourceKey: 'hardened_steel',
     outputProductName: 'Закаленная сталь',
     outputProductIcon: '🔩',
     outputRatePerHour: 1,
-    productSellPriceGold: 1750,
+    productSellPriceGold: 2500,
     intermediateResourceName: 'Железная руда + Алхимический реагент',
     bonusType: 'max_hp',
     bonusValue: 10,
     bonusLabel: '+10% к макс. здоровью',
-    description: 'Этап 3 (Мануфактура): вход — Железная руда (4 по 95 🪙) + Реагент (1 по 920 🪙). Себестоимость: 1 550 🪙, продажа: 1 750 🪙/ед. (Прибыль: +200 🪙/ч).'
+    description: 'Этап 3 (Мануфактура): себестоимость 2 000 🪙, продажа: 2 500 🪙/ед. (Чистая прибыль владельца: +500 🪙/ед.).'
   },
   {
     id: 'tpl_field_food_plant',
     name: 'Полевой Продкомбинат',
-    categoryLabel: 'Этап 3 (Мануфактура): Паштет (2 по 820 🪙) + Реагент (1 по 920 🪙) → Боевой стимулятор (3 100 🪙)',
+    categoryLabel: 'Этап 3 (Мануфактура): Паштет (2 по 900 🪙) + Реагент (1 по 900 🪙) → Боевой стимулятор (3 700 🪙)',
     factoryType: 'field_food_plant',
     productionTier: 3,
     productionStage: 'dual_advanced',
@@ -6004,27 +6368,27 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceName: 'Рыбный паштет',
     input1ResourceIcon: '🥫',
     input1RequiredPerCycle: 2,
-    rawBuyPriceGold: 820,
+    rawBuyPriceGold: 900,
     input2ResourceKey: 'alchemy_reagents',
     input2ResourceName: 'Алхимический реагент',
     input2ResourceIcon: '🧪',
     input2RequiredPerCycle: 1,
-    input2BuyPriceGold: 920,
+    input2BuyPriceGold: 900,
     outputResourceKey: 'combat_ration',
     outputProductName: 'Боевой стимулятор',
     outputProductIcon: '💉',
     outputRatePerHour: 1,
-    productSellPriceGold: 3100,
+    productSellPriceGold: 3700,
     intermediateResourceName: 'Рыбный паштет + Алхимический реагент',
     bonusType: 'max_hp',
     bonusValue: 8,
     bonusLabel: '+8% к макс. здоровью',
-    description: 'Этап 3 (Мануфактура): вход — Рыбный паштет (2 по 820 🪙) + Реагент (1 по 920 🪙). Себестоимость: 2 810 🪙, продажа: 3 100 🪙/ед. (Прибыль: +290 🪙/ч).'
+    description: 'Этап 3 (Мануфактура): себестоимость 3 140 🪙, продажа: 3 700 🪙/ед. (Чистая прибыль владельца: +560 🪙/ед.).'
   },
   {
     id: 'tpl_elite_weapon_manufactory',
     name: 'Оружейная Мануфактура',
-    categoryLabel: 'Этап 3 (Мануфактура): Сталь (1 по 1 850 🪙) + Слитки (1 по 830 🪙) → Боевые модули (3 250 🪙)',
+    categoryLabel: 'Этап 3 (Мануфактура): Сталь (1 по 2 500 🪙) + Слитки (1 по 900 🪙) → Боевые модули (4 500 🪙)',
     factoryType: 'elite_weapon_manufactory',
     productionTier: 3,
     productionStage: 'dual_advanced',
@@ -6033,27 +6397,27 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceName: 'Закаленная сталь',
     input1ResourceIcon: '🔩',
     input1RequiredPerCycle: 1,
-    rawBuyPriceGold: 1850,
+    rawBuyPriceGold: 2500,
     input2ResourceKey: 'gold_ingots',
     input2ResourceName: 'Золотые слитки',
     input2ResourceIcon: '🪙',
     input2RequiredPerCycle: 1,
-    input2BuyPriceGold: 830,
+    input2BuyPriceGold: 900,
     outputResourceKey: 'combat_modules',
     outputProductName: 'Боевые модули',
     outputProductIcon: '⚙️',
     outputRatePerHour: 1,
-    productSellPriceGold: 3250,
+    productSellPriceGold: 4500,
     intermediateResourceName: 'Закаленная сталь + Золотые слитки',
     bonusType: 'combat_dmg',
     bonusValue: 10,
     bonusLabel: '+10% к боевому урону',
-    description: 'Этап 3 (Мануфактура): вход — Закаленная сталь (1 по 1 850 🪙) + Золотые слитки (1 по 830 🪙). Себестоимость: 2 930 🪙, продажа: 3 250 🪙/ед. (Прибыль: +320 🪙/ч).'
+    description: 'Этап 3 (Мануфактура): себестоимость 3 840 🪙, продажа: 4 500 🪙/ед. (Чистая прибыль владельца: +660 🪙/ед.).'
   },
   {
     id: 'tpl_relic_workshop',
     name: 'Мастерская Реликвий',
-    categoryLabel: 'Этап 3 (Мануфактура): Слитки (2) + Паштет (2) + Реагент (1) → Древняя Реликвия (5 000 🪙)',
+    categoryLabel: 'Этап 3 (Мануфактура): Слитки (2) + Паштет (1) + Реагент (1) → Древняя Реликвия (5 000 🪙)',
     factoryType: 'solar_relic_foundry',
     productionTier: 3,
     productionStage: 'dual_advanced',
@@ -6062,17 +6426,17 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     input1ResourceName: 'Золотые слитки',
     input1ResourceIcon: '🪙',
     input1RequiredPerCycle: 2,
-    rawBuyPriceGold: 830,
+    rawBuyPriceGold: 900,
     input2ResourceKey: 'fish_semifinished',
     input2ResourceName: 'Рыбный паштет',
     input2ResourceIcon: '🥫',
-    input2RequiredPerCycle: 2,
-    input2BuyPriceGold: 820,
+    input2RequiredPerCycle: 1,
+    input2BuyPriceGold: 900,
     input3ResourceKey: 'alchemy_reagents',
     input3ResourceName: 'Алхимический реагент',
     input3ResourceIcon: '🧪',
     input3RequiredPerCycle: 1,
-    input3BuyPriceGold: 920,
+    input3BuyPriceGold: 900,
     outputResourceKey: 'port_relics',
     outputProductName: 'Древняя Реликвия',
     outputProductIcon: '🏺',
@@ -6082,7 +6446,94 @@ export const PORT_ESTATE_TEMPLATES: PortEstateTemplate[] = [
     bonusType: 'slots_luck',
     bonusValue: 10,
     bonusLabel: '+10% к удаче в слотах',
-    description: 'Этап 3 (Мануфактура): вход — Слитки (2 по 830 🪙) + Паштет (2 по 820 🪙) + Реагент (1 по 920 🪙). Себестоимость: 4 470 🪙, продажа: 5 000 🪙/ед. (Прибыль: +530 🪙/ч).'
+    description: 'Этап 3 (Мануфактура): себестоимость ~4 200 🪙, продажа: 5 000 🪙/ед. (Чистая прибыль владельца: +800 🪙/ед.).'
+  },
+  {
+    id: 'tpl_special_armor_factory',
+    name: 'Фабрика Спецзащиты',
+    categoryLabel: 'Этап 3 (Объект №19): Броневая Ткань (2 по 900 🪙) + Закаленная сталь (1 по 2 000 🪙) → Титановая Бронепластина (4 800 🪙)',
+    factoryType: 'special_armor_factory',
+    productionTier: 3,
+    productionStage: 'dual_advanced',
+    requiresDualInput: true,
+    input1ResourceKey: 'armor_fabric',
+    input1ResourceName: 'Броневая Ткань',
+    input1ResourceIcon: '🧶',
+    input1RequiredPerCycle: 2,
+    rawBuyPriceGold: 900,
+    input2ResourceKey: 'hardened_steel',
+    input2ResourceName: 'Закаленная сталь',
+    input2ResourceIcon: '🔩',
+    input2RequiredPerCycle: 1,
+    input2BuyPriceGold: 2000,
+    outputResourceKey: 'titanium_plate',
+    outputProductName: 'Титановая Бронепластина',
+    outputProductIcon: '🛡️',
+    outputRatePerHour: 1,
+    productSellPriceGold: 4800,
+    intermediateResourceName: 'Броневая Ткань + Закаленная сталь',
+    bonusType: 'max_hp',
+    bonusValue: 12,
+    bonusLabel: '+12% к макс. здоровью',
+    description: 'Объект №19 (Военпром): себестоимость ~4 200 🪙, продажа: 4 800 🪙/ед. (Чистая прибыль владельца: +600 🪙/ед.).'
+  },
+  {
+    id: 'tpl_siege_ammo_plant',
+    name: 'Цех Осадных Боеприпасов',
+    categoryLabel: 'Этап 3 (Объект №20): Оружейный Порох (2 по 900 🪙) + Боевые модули (1 по 2 000 🪙) → Штурмовой Заряд (5 000 🪙)',
+    factoryType: 'siege_ammo_plant',
+    productionTier: 3,
+    productionStage: 'dual_advanced',
+    requiresDualInput: true,
+    input1ResourceKey: 'gunpowder',
+    input1ResourceName: 'Оружейный Порох',
+    input1ResourceIcon: '🧨',
+    input1RequiredPerCycle: 2,
+    rawBuyPriceGold: 900,
+    input2ResourceKey: 'combat_modules',
+    input2ResourceName: 'Боевые модули',
+    input2ResourceIcon: '⚙️',
+    input2RequiredPerCycle: 1,
+    input2BuyPriceGold: 2000,
+    outputResourceKey: 'assault_charge',
+    outputProductName: 'Штурмовой Заряд',
+    outputProductIcon: '💣',
+    outputRatePerHour: 1,
+    productSellPriceGold: 5000,
+    intermediateResourceName: 'Оружейный Порох + Боевые модули',
+    bonusType: 'combat_dmg',
+    bonusValue: 12,
+    bonusLabel: '+12% к боевому урону',
+    description: 'Объект №20 (Военпром): себестоимость ~4 200 🪙, продажа: 5 000 🪙/ед. (Чистая прибыль владельца: +800 🪙/ед.).'
+  },
+  {
+    id: 'tpl_pharaoh_jewelry',
+    name: 'Ювелирная Мастерская Фараона',
+    categoryLabel: 'Этап 3 (Сектор [9/3]): Золотой слиток (1) + Кварцевый песок (2) + 1 кВт → Церемониальный Амулет (2 500 🪙)',
+    factoryType: 'pharaoh_jewelry_workshop',
+    productionTier: 3,
+    productionStage: 'dual_advanced',
+    requiresDualInput: true,
+    input1ResourceKey: 'gold_ingots',
+    input1ResourceName: 'Золотые слитки',
+    input1ResourceIcon: '🪙',
+    input1RequiredPerCycle: 1,
+    rawBuyPriceGold: 900,
+    input2ResourceKey: 'quartz_sand',
+    input2ResourceName: 'Кварцевый песок',
+    input2ResourceIcon: '⏳',
+    input2RequiredPerCycle: 2,
+    input2BuyPriceGold: 95,
+    outputResourceKey: 'ceremonial_amulet',
+    outputProductName: 'Церемониальный Амулет',
+    outputProductIcon: '📿',
+    outputRatePerHour: 1,
+    productSellPriceGold: 2500,
+    intermediateResourceName: 'Золотые слитки + Кварцевый песок',
+    bonusType: 'pyramid_gold',
+    bonusValue: 12,
+    bonusLabel: '+12% к золоту в Пирамидах',
+    description: 'Ювелирная Мастерская Фараона (Сектор [9/3]): себестоимость ~2 000 🪙, продажа завода: 2 500 🪙 (Чистая прибыль владельца: +500 🪙/ед.).'
   },
 
   // ОБЪЕКТ №13: ЭЛЕКТРОСТАНЦИЯ (Энергосеть сектора)
@@ -6183,9 +6634,15 @@ const SPECIAL_PORT_SECTOR_NAMES: Record<string, { title: string; icon: string; b
   '7_7': { title: 'Южный Маяк и Песчаный Карьер', icon: '🧪', biome: 'harbor_dock' },
   '8_5': { title: 'Оружейный Бастион Александрии', icon: '⚙️', biome: 'industrial_hub' },
   '6_5': { title: 'Сталелитейный Квартал', icon: '🔩', biome: 'industrial_hub' },
-  '5_5': { title: 'Нефтяной Оазис Фараонов', icon: '🛢️', biome: 'oasis_palm' },
+  '5_5': { title: 'Центральный Оазис и Стадион Фароса', icon: '🏟️', biome: 'oasis_palm' },
   '5_6': { title: 'Храмовая Площадь Солнца', icon: '🏛️', biome: 'temple_citadel' },
-  '6_7': { title: 'Караванный Перекрёсток Нила', icon: '🐪', biome: 'oasis_palm' }
+  '6_7': { title: 'Караванный Перекрёсток Нила', icon: '🐪', biome: 'oasis_palm' },
+  '2_8': { title: 'Плантация Хлопка и Красителей Дельты', icon: '🧵', biome: 'oasis_palm' },
+  '9_3': { title: 'Ювелирный Квартал Фараона', icon: '📿', biome: 'temple_citadel' },
+  '1_5': { title: 'Причал контрабандистов (Западный рейд Outland)', icon: '🏝️', biome: 'coastal_reef' },
+  '10_5': { title: 'Причал контрабандистов (Восточный рейд Outland)', icon: '🏝️', biome: 'coastal_reef' },
+  '5_1': { title: 'Причал контрабандистов (Северный рейд Outland)', icon: '🏝️', biome: 'coastal_reef' },
+  '5_10': { title: 'Причал контрабандистов (Южный рейд Outland)', icon: '🏝️', biome: 'coastal_reef' }
 };
 
 export function getPortIslandCellMeta(x: number, y: number): PortIslandCellMeta {
@@ -6326,7 +6783,7 @@ export function calculatePortSectorTravelSeconds(
 }
 
 export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
-  // ================= ЭТАП 1: ДОБЫВАЮЩИЕ ПРЕДПРИЯТИЯ (5 объектов) =================
+  // ================= ЭТАП 1: ДОБЫВАЮЩИЕ ПРЕДПРИЯТИЯ (7 объектов) =================
   {
     id: 'sector_fish_pier',
     name: 'Рыбный причал',
@@ -6339,8 +6796,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'extraction',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'fishing_gold',
     bonusValue: 6,
@@ -6378,8 +6835,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'extraction',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_exp',
     bonusValue: 6,
@@ -6417,8 +6874,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'extraction',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_gold',
     bonusValue: 6,
@@ -6456,8 +6913,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'extraction',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_gold',
     bonusValue: 7,
@@ -6495,8 +6952,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'extraction',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_exp',
     bonusValue: 7,
@@ -6522,8 +6979,86 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
       }
     )
   },
+  {
+    id: 'sector_flax_plantation',
+    name: 'Плантация Льна и Папируса',
+    icon: '👑',
+    description: 'Объект №15 (Этап 1 — Добыча): выход — Волокно Льна (5 ед./ч). Себестоимость: 50 🪙, продажа: 65 🪙/ед. (Прибыль: +75 🪙/ч).',
+    zone: 'port',
+    mapX: 6,
+    mapY: 7,
+    sectorBiomeName: 'Караванный Перекрёсток Нила',
+    buildingCategory: 'extraction',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'fishing_gold',
+    bonusValue: 7,
+    bonusLabel: '+7% к золоту на рыбалке',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'flax_plantation_extraction',
+      'Этап 1 (Добыча, Объект №15): Волокно Льна (5 ед./ч)',
+      45,
+      30,
+      'extraction',
+      'sector_weaving_mill',
+      'Волокно Льна',
+      30,
+      {
+        productionTier: 1,
+        outputResourceKey: 'flax_fiber',
+        outputProductName: 'Волокно Льна',
+        outputProductIcon: '🌿',
+        outputRatePerHour: 5,
+        productSellPriceGold: 65
+      }
+    )
+  },
+  {
+    id: 'sector_saltpeter_quarry',
+    name: 'Селитровый Карьер',
+    icon: '👑',
+    description: 'Объект №16 (Этап 1 — Добыча): выход — Природная Селитра (4 ед./ч). Себестоимость: 62.5 🪙, продажа: 80 🪙/ед. (Прибыль: +70 🪙/ч).',
+    zone: 'port',
+    mapX: 6,
+    mapY: 6,
+    sectorBiomeName: 'Золотые Прииски Дельты',
+    buildingCategory: 'extraction',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'combat_dmg',
+    bonusValue: 6,
+    bonusLabel: '+6% к боевому урону',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'saltpeter_quarry_extraction',
+      'Этап 1 (Добыча, Объект №16): Природная Селитра (4 ед./ч)',
+      40,
+      26,
+      'extraction',
+      'sector_gunpowder_plant',
+      'Природная Селитра',
+      26,
+      {
+        productionTier: 1,
+        outputResourceKey: 'natural_saltpeter',
+        outputProductName: 'Природная Селитра',
+        outputProductIcon: '🧂',
+        outputRatePerHour: 4,
+        productSellPriceGold: 80
+      }
+    )
+  },
 
-  // ================= ЭТАП 2: ПЕРВИЧНЫЕ ЗАВОДЫ (3 объекта) =================
+  // ================= ЭТАП 2: ПЕРВИЧНЫЕ ЗАВОДЫ (5 объектов) =================
   {
     id: 'sector_nile_oasis',
     name: 'Рыбный комбинат',
@@ -6536,8 +7071,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'raw_processing',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'fishing_gold',
     bonusValue: 8,
@@ -6581,8 +7116,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'raw_processing',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_gold',
     bonusValue: 10,
@@ -6626,8 +7161,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'raw_processing',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_exp',
     bonusValue: 10,
@@ -6665,8 +7200,104 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
       }
     )
   },
+  {
+    id: 'sector_weaving_mill',
+    name: 'Ткацкая Мануфактура',
+    icon: '👑',
+    description: 'Объект №17 (Этап 2 — Первичная переработка): вход — Волокно Льна (5 по 80 🪙) + Мощность (1 кВт по 70 🪙) + Рабочий (250 🪙). Выход — «Броневая Ткань» (830 🪙).',
+    zone: 'port',
+    mapX: 6,
+    mapY: 7,
+    sectorBiomeName: 'Караванный Перекрёсток Нила',
+    buildingCategory: 'raw_processing',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'max_hp',
+    bonusValue: 8,
+    bonusLabel: '+8% к макс. здоровью',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'weaving_mill_factory',
+      'Этап 2 (Объект №17): Броневая Ткань (1 ед./ч)',
+      40,
+      16,
+      'raw_processing',
+      'sector_special_armor_factory',
+      'Броневая Ткань',
+      20,
+      {
+        productionTier: 2,
+        input1ResourceKey: 'flax_fiber',
+        input1ResourceName: 'Волокно Льна',
+        input1ResourceIcon: '🌿',
+        input1Stock: 40,
+        input1RequiredPerCycle: 5,
+        rawBuyPriceGold: 80,
+        outputResourceKey: 'armor_fabric',
+        outputProductName: 'Броневая Ткань',
+        outputProductIcon: '🧶',
+        outputRatePerHour: 1,
+        productSellPriceGold: 830
+      }
+    )
+  },
+  {
+    id: 'sector_gunpowder_plant',
+    name: 'Пороховой Завод',
+    icon: '👑',
+    description: 'Объект №18 (Этап 2 — Первичная переработка): вход — Природная Селитра (4 по 95 🪙) + Сырая нефть (1 по 130 🪙) + Мощность (1 кВт по 70 🪙) + Рабочий (250 🪙). Выход — «Оружейный Порох» (950 🪙).',
+    zone: 'port',
+    mapX: 5,
+    mapY: 6,
+    sectorBiomeName: 'Храмовая Площадь Солнца',
+    buildingCategory: 'raw_processing',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'combat_dmg',
+    bonusValue: 8,
+    bonusLabel: '+8% к боевому урону',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'gunpowder_plant_factory',
+      'Этап 2 (Объект №18): Оружейный Порох (1 ед./ч)',
+      40,
+      15,
+      'raw_processing',
+      'sector_siege_ammo_plant',
+      'Оружейный Порох',
+      20,
+      {
+        productionTier: 2,
+        input1ResourceKey: 'natural_saltpeter',
+        input1ResourceName: 'Природная Селитра',
+        input1ResourceIcon: '🧂',
+        input1Stock: 36,
+        input1RequiredPerCycle: 4,
+        rawBuyPriceGold: 95,
+        input2ResourceKey: 'crude_oil',
+        input2ResourceName: 'Сырая нефть',
+        input2ResourceIcon: '🛢️',
+        input2Stock: 24,
+        input2RequiredPerCycle: 1,
+        input2BuyPriceGold: 130,
+        outputResourceKey: 'gunpowder',
+        outputProductName: 'Оружейный Порох',
+        outputProductIcon: '🧨',
+        outputRatePerHour: 1,
+        productSellPriceGold: 950
+      }
+    )
+  },
 
-  // ================= ЭТАП 3: ВЫСОКОТЕХНОЛОГИЧНЫЕ МАНУФАКТУРЫ (4 объекта) =================
+  // ================= ЭТАП 3: ВЫСОКОТЕХНОЛОГИЧНЫЕ И ВОЕННО-ИНЖЕНЕРНЫЕ ЗАВОДЫ (6 объектов) =================
   {
     id: 'sector_steel_modules',
     name: 'Сталелитейный цех',
@@ -6680,8 +7311,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'dual_manufactory',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'max_hp',
     bonusValue: 10,
@@ -6732,8 +7363,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'dual_manufactory',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'max_hp',
     bonusValue: 8,
@@ -6784,8 +7415,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'dual_manufactory',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'combat_dmg',
     bonusValue: 10,
@@ -6836,8 +7467,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'dual_manufactory',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'slots_luck',
     bonusValue: 10,
@@ -6881,6 +7512,110 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
       }
     )
   },
+  {
+    id: 'sector_special_armor_factory',
+    name: 'Фабрика Спецзащиты',
+    icon: '👑',
+    description:
+      'Объект №19 (Этап 3 — Военно-инженерный завод): вход — Броневая Ткань (2 по 900 🪙) + Закаленная сталь (1 по 1 850 🪙) + Мощность (2 кВт по 70 🪙) + Рабочий (250 🪙). Выход — «Титановая Бронепластина» (4 500 🪙).',
+    zone: 'port',
+    mapX: 6,
+    mapY: 5,
+    sectorBiomeName: 'Сталелитейный Квартал',
+    buildingCategory: 'dual_manufactory',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'max_hp',
+    bonusValue: 12,
+    bonusLabel: '+12% к макс. здоровью',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'special_armor_factory',
+      'Этап 3 (Объект №19): Титановая Бронепластина (1 ед./ч)',
+      35,
+      10,
+      'dual_advanced',
+      'sector_weaving_mill',
+      'Броневая Ткань + Закаленная сталь',
+      18,
+      {
+        productionTier: 3,
+        input1ResourceKey: 'armor_fabric',
+        input1ResourceName: 'Броневая Ткань',
+        input1ResourceIcon: '🧶',
+        input1Stock: 24,
+        input1RequiredPerCycle: 2,
+        rawBuyPriceGold: 900,
+        input2ResourceKey: 'hardened_steel',
+        input2ResourceName: 'Закаленная сталь',
+        input2ResourceIcon: '🔩',
+        input2Stock: 18,
+        input2RequiredPerCycle: 1,
+        input2BuyPriceGold: 1850,
+        outputResourceKey: 'titanium_plate',
+        outputProductName: 'Титановая Бронепластина',
+        outputProductIcon: '🛡️',
+        outputRatePerHour: 1,
+        productSellPriceGold: 4500
+      }
+    )
+  },
+  {
+    id: 'sector_siege_ammo_plant',
+    name: 'Цех Осадных Боеприпасов',
+    icon: '👑',
+    description:
+      'Объект №20 (Этап 3 — Военно-инженерный завод): вход — Оружейный Порох (2 по 1 020 🪙) + Боевые модули (1 по 3 350 🪙) + Мощность (2 кВт по 70 🪙) + Рабочий (250 🪙). Выход — «Штурмовой Заряд» (6 400 🪙).',
+    zone: 'port',
+    mapX: 8,
+    mapY: 5,
+    sectorBiomeName: 'Оружейный Бастион Александрии',
+    buildingCategory: 'dual_manufactory',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'combat_dmg',
+    bonusValue: 12,
+    bonusLabel: '+12% к боевому урону',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'siege_ammo_plant',
+      'Этап 3 (Объект №20): Штурмовой Заряд (1 ед./ч)',
+      35,
+      8,
+      'dual_advanced',
+      'sector_gunpowder_plant',
+      'Оружейный Порох + Боевые модули',
+      16,
+      {
+        productionTier: 3,
+        input1ResourceKey: 'gunpowder',
+        input1ResourceName: 'Оружейный Порох',
+        input1ResourceIcon: '🧨',
+        input1Stock: 24,
+        input1RequiredPerCycle: 2,
+        rawBuyPriceGold: 1020,
+        input2ResourceKey: 'combat_modules',
+        input2ResourceName: 'Боевые модули',
+        input2ResourceIcon: '⚙️',
+        input2Stock: 16,
+        input2RequiredPerCycle: 1,
+        input2BuyPriceGold: 3350,
+        outputResourceKey: 'assault_charge',
+        outputProductName: 'Штурмовой Заряд',
+        outputProductIcon: '💣',
+        outputRatePerHour: 1,
+        productSellPriceGold: 6400
+      }
+    )
+  },
 
   // ================= ОБЪЕКТ №13: ЭЛЕКТРОСТАНЦИЯ И ОБЪЕКТ №14: ПОРТОВАЯ ТАВЕРНА =================
   {
@@ -6896,8 +7631,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'power_plant',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'pyramid_exp',
     bonusValue: 8,
@@ -6943,8 +7678,8 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
     buildingCategory: 'tavern',
     ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
     ownerClanId: null,
-    ownerClanName: 'Империя RedBlack',
-    ownerClanTag: 'RB',
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
     ownerClanEmblem: '👑',
     bonusType: 'max_hp',
     bonusValue: 6,
@@ -6974,6 +7709,104 @@ export const DEFAULT_CLAN_TERRITORIES: ClanTerritorySector[] = [
         outputRatePerHour: 4,
         productSellPriceGold: 300,
         powerRequiredPerCycle: 0
+      }
+    )
+  },
+  // ================= НОВЫЕ ОБЪЕКТЫ №21 И №22 (СЕКТОРА [2/8] И [9/3], ВЛАДЕЛЕЦ REDBLACK) =================
+  {
+    id: 'sector_cotton_plantation',
+    name: 'Плантация Хлопка и Красителей',
+    icon: '👑',
+    description:
+      'Сектор [2/8] (Этап 1 — Добыча): производит ресурс «Сырое Волокно» (вес 1 ед., 5 ед./ч). Себестоимость: 55 🪙, продажа завода: 70 🪙/ед.',
+    zone: 'port',
+    mapX: 2,
+    mapY: 8,
+    sectorBiomeName: 'Плантация Хлопка и Красителей Дельты',
+    buildingCategory: 'extraction',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'fishing_gold',
+    bonusValue: 8,
+    bonusLabel: '+8% к золоту на рыбалке',
+    warStatus: 'peace',
+    warScores: {},
+    production: {
+      ...createDefaultPortProduction(
+        'cotton_plantation_extraction',
+        'Этап 1 (Добыча): Сырое Волокно (5 ед./ч, с/с 55 🪙)',
+        50,
+        30,
+        'extraction',
+        'sector_weaving_mill',
+        'Сырое Волокно',
+        30,
+        {
+          productionTier: 1,
+          outputResourceKey: 'raw_cotton_fiber',
+          outputProductName: 'Сырое Волокно',
+          outputProductIcon: '🧵',
+          outputRatePerHour: 5,
+          productSellPriceGold: 70
+        }
+      ),
+      workerWageGold: 275
+    }
+  },
+  {
+    id: 'sector_pharaoh_jewelry',
+    name: 'Ювелирная Мастерская Фараона',
+    icon: '👑',
+    description:
+      'Сектор [9/3] (Этап 3 — Мануфактура): вход — Золотой слиток (1 ед.) + Кварцевый песок (1 ед.) + 1 кВт энергии + Рабочий. Выход — «Церемониальный Амулет» (вес 5 ед.). Себестоимость: 2 100 🪙, продажа завода: 2 400 🪙.',
+    zone: 'port',
+    mapX: 9,
+    mapY: 3,
+    sectorBiomeName: 'Ювелирный Квартал Фараона',
+    buildingCategory: 'dual_manufactory',
+    ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+    ownerClanId: null,
+    ownerClanName: 'Тест',
+    ownerClanTag: 'ТЕСТ',
+    ownerClanEmblem: '👑',
+    bonusType: 'pyramid_gold',
+    bonusValue: 12,
+    bonusLabel: '+12% к золоту в Пирамидах',
+    warStatus: 'peace',
+    warScores: {},
+    production: createDefaultPortProduction(
+      'pharaoh_jewelry_workshop',
+      'Этап 3 (Мануфактура): Церемониальный Амулет (1 ед./ч)',
+      35,
+      12,
+      'dual_advanced',
+      'sector_gold_smelter',
+      'Золотые слитки + Кварцевый песок',
+      18,
+      {
+        productionTier: 3,
+        input1ResourceKey: 'gold_ingots',
+        input1ResourceName: 'Золотые слитки',
+        input1ResourceIcon: '🪙',
+        input1Stock: 20,
+        input1RequiredPerCycle: 1,
+        rawBuyPriceGold: 1650,
+        input2ResourceKey: 'quartz_sand',
+        input2ResourceName: 'Кварцевый песок',
+        input2ResourceIcon: '⏳',
+        input2Stock: 25,
+        input2RequiredPerCycle: 1,
+        input2BuyPriceGold: 130,
+        outputResourceKey: 'ceremonial_amulet',
+        outputProductName: 'Церемониальный Амулет',
+        outputProductIcon: '📿',
+        outputRatePerHour: 1,
+        productSellPriceGold: 2400,
+        powerRequiredPerCycle: 1,
+        powerBuyPriceGold: 70
       }
     )
   }
@@ -7180,6 +8013,15 @@ function executeSingleCellAttack(
   if (actor.hasClanGear) mult *= 1.12;
   if (actor.hasClanTransport) mult *= 1.08;
 
+  // Эффект «Штурмового Заряда» (Цех Осадных Боеприпасов):
+  // Атакующая команда получает +25% к урону в 1-м раунде и пробивает 50% защиты Форпоста врага!
+  if (b.assaultChargeActive && actor.side === 'attacker') {
+    if (roundNum === 1) {
+      mult *= 1.25;
+    }
+    mult *= 1.1; // Компенсация отключенной половины защиты вражеского Форпоста
+  }
+
   const isCrit = Math.random() < (actor.role === 'dps' || actionKind === 'skill_power' ? 0.35 : 0.18);
   if (isCrit) mult *= 1.5;
 
@@ -7199,14 +8041,16 @@ function executeSingleCellAttack(
       ? '✨ Перевязка + Удар'
       : '⚔️ Удар';
 
+  const chargeBadge = b.assaultChargeActive && actor.side === 'attacker' && roundNum === 1 ? ' [💣 +25% Штурм-заряд]' : '';
+
   if (target.hp <= 0) {
     target.alive = false;
-    return `${isAutoTimeout ? '⏱ [Авто-ход 20с] ' : ''}💀 [${skillLabel}] Клетка #${actorCellNum} (${actor.nick}) ${
+    return `${isAutoTimeout ? '⏱ [Авто-ход 20с] ' : ''}💀 [${skillLabel}]${chargeBadge} Клетка #${actorCellNum} (${actor.nick}) ${
       isCrit ? '🔥 КРИТОМ ' : ''
     }наносит ${rawDmg} урона по Клетке #${targetCellNum} (${target.nick}) и ВЫБИВАЕТ противника с поля!`;
   }
 
-  return `${isAutoTimeout ? '⏱ [Авто-ход 20с] ' : ''}${actor.side === 'attacker' ? '⚔️' : '🛡️'} [${skillLabel}] Клетка #${actorCellNum} (${
+  return `${isAutoTimeout ? '⏱ [Авто-ход 20с] ' : ''}${actor.side === 'attacker' ? '⚔️' : '🛡️'} [${skillLabel}]${chargeBadge} Клетка #${actorCellNum} (${
     actor.nick
   }) ${isCrit ? '🔥 КРИТ ' : ''}бьёт Клетку #${targetCellNum} (${target.nick}) на ${rawDmg} урона${
     targetHasShield ? ' (-50% 🛡 Защита)' : ''
@@ -7537,9 +8381,205 @@ export function appendPortDealProtocol(
   }
 }
 
-export function calculatePortFacilityUnitSelfCost(prod: PortProductionState): number {
+// ============================================================================
+// МОДЕРНИЗАЦИЯ ЗАВОДОВ (УРОВНИ 1–5) И ДОМИНИРОВАНИЕ КЛАНА В СЕКТОРЕ 10x10
+// ============================================================================
+
+export interface PortFacilityLevelInfo {
+  level: number;
+  title: string;
+  maxWorkers: number;
+  maxStorage: number;
+  outputMultiplier: number;
+  upgradeCostGold: number;
+  upgradeResources: Array<{ key: PortTerminalResourceKey; name: string; icon: string; qty: number }>;
+}
+
+export const PORT_FACILITY_LEVELS_CONFIG: PortFacilityLevelInfo[] = [
+  {
+    level: 1,
+    title: 'Базовый цех (Ур. 1)',
+    maxWorkers: 3,
+    maxStorage: 100,
+    outputMultiplier: 1,
+    upgradeCostGold: 0,
+    upgradeResources: []
+  },
+  {
+    level: 2,
+    title: 'Расширенный цех (Ур. 2)',
+    maxWorkers: 5,
+    maxStorage: 200,
+    outputMultiplier: 1.5,
+    upgradeCostGold: 15000,
+    upgradeResources: [{ key: 'hardened_steel', name: 'Закаленная сталь', icon: '🔩', qty: 2 }]
+  },
+  {
+    level: 3,
+    title: 'Промышленный корпус (Ур. 3)',
+    maxWorkers: 8,
+    maxStorage: 350,
+    outputMultiplier: 2,
+    upgradeCostGold: 35000,
+    upgradeResources: [
+      { key: 'hardened_steel', name: 'Закаленная сталь', icon: '🔩', qty: 4 },
+      { key: 'combat_modules', name: 'Боевые модули', icon: '⚙️', qty: 1 }
+    ]
+  },
+  {
+    level: 4,
+    title: 'Тяжёлый завод (Ур. 4)',
+    maxWorkers: 12,
+    maxStorage: 500,
+    outputMultiplier: 3,
+    upgradeCostGold: 75000,
+    upgradeResources: [
+      { key: 'titanium_plate', name: 'Титановая Бронепластина', icon: '🛡️', qty: 3 },
+      { key: 'combat_modules', name: 'Боевые модули', icon: '⚙️', qty: 2 }
+    ]
+  },
+  {
+    level: 5,
+    title: 'Мега-комплекс (Ур. 5)',
+    maxWorkers: 15,
+    maxStorage: 1000,
+    outputMultiplier: 4,
+    upgradeCostGold: 150000,
+    upgradeResources: [
+      { key: 'titanium_plate', name: 'Титановая Бронепластина', icon: '🛡️', qty: 5 },
+      { key: 'port_relics', name: 'Древняя Реликвия', icon: '🏺', qty: 2 }
+    ]
+  }
+];
+
+export function getPortFacilityLevelConfig(rawLevel?: number | null): PortFacilityLevelInfo {
+  const lvl = Math.max(1, Math.min(5, Math.floor(Number(rawLevel) || 1)));
+  return PORT_FACILITY_LEVELS_CONFIG.find((c) => c.level === lvl) || PORT_FACILITY_LEVELS_CONFIG[0];
+}
+
+export interface PortSectorDominanceInfo {
+  mapX: number;
+  mapY: number;
+  totalBuildings: number;
+  dominantClanId: string | null;
+  dominantClanNumber: number;
+  dominantClanTag: string;
+  dominantClanName: string;
+  dominantClanEmblem: string;
+  controlledBuildings: number;
+  controlPct: number;
+  isSectorMaster: boolean; // > 50% построек
+  summaryLine: string;
+}
+
+export function getPortSectorDominanceInfo(
+  mapX: number,
+  mapY: number,
+  sectorsList?: ClanTerritorySector[]
+): PortSectorDominanceInfo {
+  const list = sectorsList || (Array.isArray(inMemoryTerritories) && inMemoryTerritories.length > 0 ? inMemoryTerritories : DEFAULT_CLAN_TERRITORIES);
+  const { x: cx, y: cy } = normalizePortIslandCoord(mapX, mapY);
+  const inCell = list.filter((s) => {
+    const pos = normalizePortIslandCoord(s.mapX, s.mapY);
+    return pos.x === cx && pos.y === cy;
+  });
+
+  if (inCell.length === 0) {
+    return {
+      mapX: cx,
+      mapY: cy,
+      totalBuildings: 0,
+      dominantClanId: null,
+      dominantClanNumber: 1,
+      dominantClanTag: 'ТЕСТ',
+      dominantClanName: 'Тест',
+      dominantClanEmblem: '👑',
+      controlledBuildings: 0,
+      controlPct: 0,
+      isSectorMaster: false,
+      summaryLine: `Контроль сектора [${cx}/${cy}]: нет построек`
+    };
+  }
+
+  const counts = new Map<
+    string,
+    {
+      clanId: string | null;
+      clanNumber: number;
+      tag: string;
+      name: string;
+      emblem: string;
+      count: number;
+    }
+  >();
+
+  inCell.forEach((b) => {
+    const rawTag = (b.ownerClanTag || 'ТЕСТ').trim();
+    const key = (b.ownerClanId || rawTag).toLowerCase();
+    const matchedClan =
+      (b.ownerClanId ? inMemoryClans.find((c) => c.id === b.ownerClanId) : undefined) ||
+      inMemoryClans.find((c) => c.tag.trim().toLowerCase() === rawTag.toLowerCase());
+    const clanNum = matchedClan?.clanNumber || (rawTag.toUpperCase() === 'ТЕСТ' || rawTag.toUpperCase() === 'RB' ? 1 : 2);
+    const displayTag = matchedClan?.tag || (rawTag.toUpperCase() === 'RB' ? 'ТЕСТ' : rawTag);
+    const displayName = matchedClan?.name || (rawTag.toUpperCase() === 'RB' ? 'Тест' : b.ownerClanName || 'Тест');
+    const displayEmblem = matchedClan?.emblem || b.ownerClanEmblem || '👑';
+
+    const prev = counts.get(key);
+    if (prev) {
+      prev.count += 1;
+    } else {
+      counts.set(key, {
+        clanId: matchedClan?.id || b.ownerClanId || null,
+        clanNumber: clanNum,
+        tag: displayTag,
+        name: displayName,
+        emblem: displayEmblem,
+        count: 1
+      });
+    }
+  });
+
+  const sorted = Array.from(counts.values()).sort((a, b) => b.count - a.count);
+  const top = sorted[0];
+  const pct = Math.round((top.count / inCell.length) * 100);
+  // Статус «Хозяин сектора»: клан контролирует БОЛЕЕ 50% недвижимости в секторе
+  const isSectorMaster = top.count / inCell.length > 0.5;
+
+  return {
+    mapX: cx,
+    mapY: cy,
+    totalBuildings: inCell.length,
+    dominantClanId: top.clanId,
+    dominantClanNumber: top.clanNumber,
+    dominantClanTag: top.tag,
+    dominantClanName: top.name,
+    dominantClanEmblem: top.emblem,
+    controlledBuildings: top.count,
+    controlPct: pct,
+    isSectorMaster,
+    summaryLine: `Контроль сектора [${cx}/${cy}]: #${top.clanNumber} [${top.tag}] (${pct}% построек)${
+      isSectorMaster ? ' — 🏆 Хозяин сектора (+15% скорость, -20% энергия, +25 PTS/ч)' : ''
+    }`
+  };
+}
+
+export function doesSectorBuildingHaveDominanceBonus(
+  sector: ClanTerritorySector,
+  sectorsList?: ClanTerritorySector[]
+): boolean {
+  const dom = getPortSectorDominanceInfo(sector.mapX ?? 7, sector.mapY ?? 6, sectorsList);
+  if (!dom.isSectorMaster) return false;
+  if (sector.ownerClanId && dom.dominantClanId && sector.ownerClanId === dom.dominantClanId) {
+    return true;
+  }
+  const sTag = (sector.ownerClanTag || 'ТЕСТ').trim().toLowerCase();
+  const dTag = (dom.dominantClanTag || 'ТЕСТ').trim().toLowerCase();
+  return sTag === dTag || (sTag === 'rb' && dTag === 'тест');
+}
+
+export function calculatePortFacilityUnitSelfCost(prod: PortProductionState, sector?: ClanTerritorySector): number {
   const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : prod.requiresDualInput ? 3 : 2);
-  const outRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+  const baseOutRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
   const wagePerHour = Math.max(50, Number(prod.workerWageGold || PORT_WORKER_GOLD_PER_HOUR));
   const hasIn1 = tier >= 2 && Boolean(prod.input1ResourceKey);
   const hasIn2 = Boolean(prod.input2ResourceKey);
@@ -7548,9 +8588,11 @@ export function calculatePortFacilityUnitSelfCost(prod: PortProductionState): nu
   const in2CostPerCycle = hasIn2 ? (prod.input2RequiredPerCycle || 1) * (prod.input2BuyPriceGold || 130) : 0;
   const in3CostPerCycle = hasIn3 ? (prod.input3RequiredPerCycle || 1) * (prod.input3BuyPriceGold || 820) : 0;
   const pwrReq = prod.powerRequiredPerCycle ?? 0;
-  const pwrCostPerCycle = pwrReq > 0 ? pwrReq * (prod.powerBuyPriceGold || 70) : 0;
+  const hasDom = sector ? doesSectorBuildingHaveDominanceBonus(sector) : false;
+  const effectivePwrReq = hasDom ? pwrReq * 0.8 : pwrReq;
+  const pwrCostPerCycle = effectivePwrReq > 0 ? Math.round(effectivePwrReq * (prod.powerBuyPriceGold || 70)) : 0;
   const totalHourCost = wagePerHour + in1CostPerCycle + in2CostPerCycle + in3CostPerCycle + pwrCostPerCycle;
-  return Math.max(1, Math.round(totalHourCost / outRate));
+  return Math.max(1, Math.round(totalHourCost / baseOutRate));
 }
 
 export function getBalancedDefaultPricesForSector(sector: ClanTerritorySector): {
@@ -7605,9 +8647,15 @@ function normalizeSectorProduction(
   const raw = sector.production || defProd;
   const balancedDefaults = getBalancedDefaultPricesForSector(sector.production ? sector : defSector);
   const isMerged = Boolean(raw.isMerged);
-  const maxFish = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
-  const maxProcessed = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
-  const maxRelic = isMerged ? PORT_MERGED_MAX_RELIC_STOCK : PORT_BASE_MAX_RELIC_STOCK;
+  const rawFacilityLvl = Math.max(
+    isMerged ? 2 : 1,
+    Math.min(5, Math.floor(Number(raw.facilityLevel || defProd.facilityLevel || 1)))
+  );
+  const lvlCfg = getPortFacilityLevelConfig(rawFacilityLvl);
+  const maxStorageByLevel = lvlCfg.maxStorage;
+
+  const maxFish = maxStorageByLevel;
+  const maxProcessed = maxStorageByLevel;
   const stage = raw.productionStage || defProd.productionStage || 'relic_foundry';
   const tier: 1 | 2 | 3 =
     raw.productionTier ||
@@ -7624,9 +8672,9 @@ function normalizeSectorProduction(
   const hasIn1 = tier === 2 || tier === 3 || isDual || Boolean(raw.input1ResourceKey || defProd.input1ResourceKey);
   const hasIn2 = isDual || Boolean(raw.input2ResourceKey || defProd.input2ResourceKey);
   const hasIn3 = Boolean(raw.input3ResourceKey || defProd.input3ResourceKey);
-  const maxIn1 = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
-  const maxIn2 = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
-  const maxIn3 = isMerged ? PORT_MERGED_MAX_FISH_STOCK : PORT_BASE_MAX_FISH_STOCK;
+  const maxIn1 = maxStorageByLevel;
+  const maxIn2 = maxStorageByLevel;
+  const maxIn3 = maxStorageByLevel;
 
   const in1Key = hasIn1
     ? raw.input1ResourceKey || defProd.input1ResourceKey || (tier === 2 ? 'raw_fish' : 'gold_ingots')
@@ -7642,7 +8690,7 @@ function normalizeSectorProduction(
         0,
         Math.min(
           maxIn1,
-          Math.floor(Number(raw.input1Stock ?? defProd.input1Stock ?? raw.fishStock ?? 20))
+          Math.floor(Number(raw.input1Stock ?? defProd.input1Stock ?? raw.fishStock ?? 24))
         )
       )
     : undefined;
@@ -7654,6 +8702,8 @@ function normalizeSectorProduction(
     raw.outputResourceKey ||
     defProd.outputResourceKey ||
     (tier === 1 ? 'raw_fish' : tier === 2 ? 'fish_semifinished' : 'port_relics');
+
+  const maxRelic = outResKey === 'power_kw' ? Math.max(250, maxStorageByLevel) : maxStorageByLevel;
 
   const isPowerPlantOrTavern =
     outResKey === 'power_kw' ||
@@ -7667,16 +8717,20 @@ function normalizeSectorProduction(
     0,
     Math.floor(Number(raw.powerRequiredPerCycle ?? defProd.powerRequiredPerCycle ?? defaultPowerReq))
   );
-  const maxPwr = isMerged ? 400 : 200;
+  const maxPwr = Math.max(200, maxStorageByLevel);
   const curPwr = Math.max(
     0,
-    Math.min(maxPwr, Math.floor(Number(raw.powerStock ?? defProd.powerStock ?? (powerReq > 0 ? 40 : 0))))
+    Math.min(maxPwr, Math.floor(Number(raw.powerStock ?? defProd.powerStock ?? (powerReq > 0 ? 45 : 0))))
   );
   const maxDurability = Math.max(10, Math.floor(Number(raw.maxBuildingDurability ?? 100)));
   const curDurability = Math.max(
     0,
     Math.min(maxDurability, Math.floor(Number(raw.buildingDurability ?? defProd.buildingDurability ?? 100)))
   );
+
+  // Миграция стартовой кассы 15 000 -> 25 000 для базовых объектов Redblack
+  const rawBal = Math.floor(Number(raw.facilityBalanceGold ?? defProd.facilityBalanceGold ?? 25000));
+  const normalizedBalance = rawBal === 15000 ? 25000 : Math.max(0, rawBal);
 
   return {
     factoryType: raw.factoryType || defProd.factoryType,
@@ -7698,7 +8752,7 @@ function normalizeSectorProduction(
       : undefined,
     input2ResourceIcon: hasIn2 ? raw.input2ResourceIcon || defProd.input2ResourceIcon || '🥫' : undefined,
     input2Stock: hasIn2
-      ? Math.max(0, Math.min(maxIn2, Math.floor(Number(raw.input2Stock ?? defProd.input2Stock ?? 18))))
+      ? Math.max(0, Math.min(maxIn2, Math.floor(Number(raw.input2Stock ?? defProd.input2Stock ?? 20))))
       : undefined,
     maxInput2Stock: hasIn2 ? maxIn2 : undefined,
     input2RequiredPerCycle: hasIn2
@@ -7738,12 +8792,12 @@ function normalizeSectorProduction(
     linkedSectorId: raw.linkedSectorId ?? defProd.linkedSectorId ?? null,
     intermediateResourceName:
       raw.intermediateResourceName || defProd.intermediateResourceName || 'Рыбный паштет',
-    facilityLevel: isMerged ? 2 : Math.max(1, Number(raw.facilityLevel || defProd.facilityLevel || 1)),
-    facilityBalanceGold: Math.max(
-      0,
-      Math.floor(Number(raw.facilityBalanceGold ?? defProd.facilityBalanceGold ?? 25000))
-    ),
-    workerWageGold: Math.max(50, Math.floor(Number(raw.workerWageGold || PORT_WORKER_GOLD_PER_HOUR))),
+    facilityLevel: rawFacilityLvl,
+    facilityBalanceGold: normalizedBalance,
+    workerWageGold:
+      Number(raw.workerWageGold) === 250 || Number(raw.workerWageGold) === 275 || !raw.workerWageGold
+        ? PORT_WORKER_GOLD_PER_HOUR
+        : Math.max(50, Math.floor(Number(raw.workerWageGold))),
     rawBuyPriceGold: clampOrMigratePriceWithin20Pct(raw.rawBuyPriceGold, balancedDefaults.rawBuyPriceGold),
     productSellPriceGold: clampOrMigratePriceWithin20Pct(
       raw.productSellPriceGold,
@@ -7829,20 +8883,24 @@ function tickPortProductionForSector(
 
     const hoursPassed = Math.min(24, Math.floor(elapsedMs / HOUR_MS));
     if (hoursPassed > 0) {
-      const craftsPerHour = (prod.isMerged ? 2 : 1) * Math.max(1, activeWorkers.length);
-      const totalCycles = hoursPassed * craftsPerHour;
+      const lvlCfg = getPortFacilityLevelConfig(prod.facilityLevel);
+      const hasDomBonus = doesSectorBuildingHaveDominanceBonus(sector);
+      const domSpeedMult = hasDomBonus ? 1.15 : 1;
+      const totalCycles = hoursPassed * Math.max(1, activeWorkers.length);
       let craftedCount = 0;
       const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : prod.requiresDualInput ? 3 : 2);
-      const outRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+      const baseOutRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+      const cycleOutQty = Math.max(1, Math.round(baseOutRate * lvlCfg.outputMultiplier * domSpeedMult));
       const hasIn2 = Boolean(prod.input2ResourceKey);
       const hasIn3 = Boolean(prod.input3ResourceKey);
-      const reqPwr = prod.powerRequiredPerCycle ?? 0;
+      const baseReqPwr = prod.powerRequiredPerCycle ?? 0;
+      const reqPwr = baseReqPwr > 0 && hasDomBonus ? Math.max(1, Math.floor(baseReqPwr * 0.8)) : baseReqPwr;
 
       for (let i = 0; i < totalCycles; i++) {
         if (tier === 1 || prod.productionStage === 'extraction') {
           // Уровень 1 (Добыча): не требует входящего сырья, только рабочих
           if (prod.relicStock < prod.maxRelicStock) {
-            const added = Math.min(outRate, prod.maxRelicStock - prod.relicStock);
+            const added = Math.min(cycleOutQty, prod.maxRelicStock - prod.relicStock);
             prod.relicStock += added;
             prod.totalRelicsCrafted = (prod.totalRelicsCrafted || 0) + added;
             craftedCount += added;
@@ -7878,7 +8936,7 @@ function tickPortProductionForSector(
             if (reqPwr > 0) {
               prod.powerStock = Math.max(0, curPwr - reqPwr);
             }
-            const added = Math.min(outRate, prod.maxRelicStock - prod.relicStock);
+            const added = Math.min(cycleOutQty, prod.maxRelicStock - prod.relicStock);
             prod.relicStock += added;
             prod.processedStock = prod.relicStock;
             prod.totalRelicsCrafted = (prod.totalRelicsCrafted || 0) + added;
@@ -7905,7 +8963,7 @@ function tickPortProductionForSector(
               ownerClan,
               ownerClan.leaderNick,
               'port_production',
-              `Производство в Порту «${sector.name}» (рабочих: ${activeWorkers.length}) выпустило +${craftedCount} ед. «${prod.outputProductName}» и принесло +${passiveGold} 🪙 прибыли!`,
+              `Производство в Порту «${sector.name}» (Ур. ${prod.facilityLevel || 1}, рабочих: ${activeWorkers.length}) выпустило +${craftedCount} ед. «${prod.outputProductName}» и принесло +${passiveGold} 🪙 прибыли!`,
               '🏭'
             );
           }
@@ -7918,17 +8976,34 @@ function tickPortProductionForSector(
 }
 
 function applyRedBlackOwnershipToSector(sector: ClanTerritorySector): void {
-  if (!sector.ownerNick) {
+  if (!sector.ownerNick || sector.ownerNick.trim().toLowerCase() === 'redblack') {
     sector.ownerNick = DEFAULT_PORT_ESTATE_OWNER_NICK;
   }
 
   const effectiveOwner = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
-  const ownerClan = inMemoryClans.find(
-    (c) =>
-      c.leaderNick.trim().toLowerCase() === effectiveOwner ||
-      c.members.some((m) => m.nick.trim().toLowerCase() === effectiveOwner)
-  );
-  if (!sector.ownerDelegatedClan) {
+  const redblackClan =
+    inMemoryClans.find((c) => c.clanNumber === 1) ||
+    inMemoryClans.find((c) => c.tag.trim().toLowerCase() === 'тест') ||
+    inMemoryClans.find((c) => c.leaderNick.trim().toLowerCase() === 'redblack');
+
+  const ownerClan =
+    effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase()
+      ? redblackClan
+      : inMemoryClans.find(
+          (c) =>
+            c.leaderNick.trim().toLowerCase() === effectiveOwner ||
+            c.members.some((m) => m.nick.trim().toLowerCase() === effectiveOwner)
+        );
+
+  if (
+    effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase() &&
+    (!sector.ownerClanTag || sector.ownerClanTag.toUpperCase() === 'RB' || sector.ownerClanName === 'Империя RedBlack')
+  ) {
+    sector.ownerClanId = redblackClan?.id || 'clan_redblack_1';
+    sector.ownerClanName = redblackClan?.name || 'Тест';
+    sector.ownerClanTag = redblackClan?.tag || 'ТЕСТ';
+    sector.ownerClanEmblem = redblackClan?.emblem || '👑';
+  } else if (!sector.ownerDelegatedClan) {
     if (ownerClan && !sector.ownerClanId) {
       sector.ownerClanId = ownerClan.id;
       sector.ownerClanName = ownerClan.name;
@@ -7937,11 +9012,11 @@ function applyRedBlackOwnershipToSector(sector: ClanTerritorySector): void {
     } else if (!sector.ownerClanName) {
       sector.ownerClanName =
         effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase()
-          ? 'Империя RedBlack'
+          ? 'Тест'
           : `Клан ${sector.ownerNick}`;
       sector.ownerClanTag =
         effectiveOwner === DEFAULT_PORT_ESTATE_OWNER_NICK.toLowerCase()
-          ? 'RB'
+          ? 'ТЕСТ'
           : (sector.ownerNick || 'CLAN').slice(0, 4).toUpperCase();
       sector.ownerClanEmblem = '👑';
     }
@@ -8125,8 +9200,15 @@ function ensureTerritoriesLoaded(): ClanTerritorySector[] {
     }
   });
 
-  // Удержание недвижимости: каждый завод или причал под контролем клана приносит +10 PTS в час в общий пул клана
+  // Удержание недвижимости: каждый завод или причал под контролем клана приносит +10 PTS в час в общий пул клана,
+  // а каждый сектор, где клан является «Хозяином сектора» (>50% построек), приносит дополнительно +25 PTS/час!
   const HOUR_MS = 60 * 60 * 1000;
+  const uniqueSectorCoords = new Set<string>();
+  inMemoryTerritories.forEach((s) => {
+    const pos = normalizePortIslandCoord(s.mapX, s.mapY);
+    uniqueSectorCoords.add(`${pos.x}_${pos.y}`);
+  });
+
   inMemoryClans.forEach((clan) => {
     const lastTick = Number(clan.lastEstatePtsTickAt || now);
     const elapsed = now - lastTick;
@@ -8137,8 +9219,22 @@ function ensureTerritoriesLoaded(): ClanTerritorySector[] {
           s.ownerClanId === clan.id ||
           (s.ownerClanTag && clan.tag && s.ownerClanTag.toLowerCase() === clan.tag.toLowerCase())
       ).length;
-      if (hours > 0 && controlledCount > 0) {
-        const addedPoolPts = hours * controlledCount * 10;
+
+      let dominatedSectorsCount = 0;
+      uniqueSectorCoords.forEach((coordKey) => {
+        const [sx, sy] = coordKey.split('_').map(Number);
+        const dom = getPortSectorDominanceInfo(sx, sy, inMemoryTerritories);
+        if (
+          dom.isSectorMaster &&
+          ((dom.dominantClanId && dom.dominantClanId === clan.id) ||
+            dom.dominantClanTag.toLowerCase() === clan.tag.toLowerCase())
+        ) {
+          dominatedSectorsCount += 1;
+        }
+      });
+
+      if (hours > 0 && (controlledCount > 0 || dominatedSectorsCount > 0)) {
+        const addedPoolPts = hours * (controlledCount * 10 + dominatedSectorsCount * 25);
         clan.unassignedPtsPool = Math.max(0, Number(clan.unassignedPtsPool || 0)) + addedPoolPts;
         changed = true;
       }
@@ -8400,11 +9496,12 @@ export function startPortFactoryWorkShift(
   // Очищаем уже забравших награду работников
   prod.workers = prod.workers.filter((w) => !w.claimed);
 
-  const maxWorkers = prod.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS;
+  const lvlCfg = getPortFacilityLevelConfig(prod.facilityLevel);
+  const maxWorkers = prod.isMerged ? Math.max(PORT_MERGED_MAX_WORKERS, lvlCfg.maxWorkers) : lvlCfg.maxWorkers;
   if (prod.workers.length >= maxWorkers) {
     return {
       ok: false,
-      error: `На объекте «${sector.name}» заняты все рабочие места (${prod.workers.length}/${maxWorkers} чел.)! Выберите другое производство или объедините парные объекты.`
+      error: `На объекте «${sector.name}» заняты все рабочие места (${prod.workers.length}/${maxWorkers} чел.)! Выберите другое производство или модернизируйте уровень завода.`
     };
   }
 
@@ -8497,10 +9594,15 @@ export function claimPortFactoryWorkShift(
   // За каждый час смены производство выпускает продукцию по своей схеме (если прочность > 0 и есть энергия)
   let relicsCraftedNow = 0;
   const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : 2);
-  const outRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+  const baseOutRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+  const lvlCfg = getPortFacilityLevelConfig(prod.facilityLevel);
+  const domBonus = doesSectorBuildingHaveDominanceBonus(sector);
+  const outMult = lvlCfg.outputMultiplier * (prod.isMerged ? 1.5 : 1) * (domBonus ? 1.15 : 1);
+  const outRate = Math.max(1, Math.round(baseOutRate * outMult));
   const hasIn2 = Boolean(prod.input2ResourceKey);
   const hasIn3 = Boolean(prod.input3ResourceKey);
-  const reqPwr = prod.powerRequiredPerCycle ?? 0;
+  const baseReqPwr = prod.powerRequiredPerCycle ?? 0;
+  const reqPwr = baseReqPwr > 0 && domBonus ? Math.max(1, Math.floor(baseReqPwr * 0.8)) : baseReqPwr;
 
   if ((prod.buildingDurability ?? 100) > 0) {
     for (let i = 0; i < hoursWorked; i++) {
@@ -8602,7 +9704,10 @@ export function sellFishToPortMarket(
   const qty = Math.max(1, Math.floor(Number(fishCount) || 0));
   const terminal = loadPortTradingTerminal();
   const market = loadPortFishMarket();
-  const unitPrice = 80; // Повышенная цена скупки Рыбного комбината в Порту: 80 золота за 1 ед. рыбы
+  // По ТЗ v1.1.97:
+  // Вся пойманная рыба из Садка поставляется на склады Рыбных комбинатов в Порту,
+  // выплачивая игроку по 50 🪙 за 1 рыбу из кассы завода (за 20 рыб = 1 000 🪙) и заполняя склад завода сырьем!
+  const unitPrice = 50;
   const goldEarned = qty * unitPrice;
   market.fishStock += qty;
   market.fishPriceGold = unitPrice;
@@ -8610,20 +9715,41 @@ export function sellFishToPortMarket(
   terminal.stocks.raw_fish = Math.max(0, (terminal.stocks.raw_fish || 0) + qty);
   terminal.totalSold = (terminal.totalSold || 0) + qty;
 
-  // Также пополняем склад сырья Рыбного комбината в Порту (если свободное место есть)
+  // Пополняем склад сырья Рыбных комбинатов в Порту и списываем выплату из кассы завода
   try {
     const sectors = ensureTerritoriesLoaded();
-    const cannery = sectors.find(
-      (s) => s.id === 'sector_fish_cannery' || s.production?.factoryType === 'fish_cannery'
+    const canneries = sectors.filter(
+      (s) =>
+        s.id === 'sector_fish_cannery' ||
+        s.id === 'sector_nile_oasis' ||
+        s.production?.factoryType === 'fish_cannery' ||
+        s.production?.input1ResourceKey === 'raw_fish'
     );
-    if (cannery && cannery.production) {
-      const prod = normalizeSectorProduction(cannery);
-      const maxCap = Math.max(100, Number(prod.maxFishStock || 500));
-      prod.fishStock = Math.min(maxCap, Math.max(0, Number(prod.fishStock || 0)) + qty);
-      prod.input1Stock = prod.fishStock;
-      cannery.production = prod;
-      saveClansToSupabase();
-    }
+    const targetCanneries = canneries.length > 0 ? canneries : sectors.slice(0, 1);
+    targetCanneries.forEach((cannery, idx) => {
+      if (cannery && cannery.production) {
+        const prod = normalizeSectorProduction(cannery);
+        const maxCap = Math.max(100, Number(prod.maxFishStock || 500));
+        if (idx === 0) {
+          prod.fishStock = Math.min(maxCap, Math.max(0, Number(prod.fishStock || 0)) + qty);
+          prod.input1Stock = prod.fishStock;
+          const curCash = Number(prod.facilityBalanceGold ?? 25000);
+          prod.facilityBalanceGold = Math.max(5000, curCash - goldEarned);
+          appendPortDealProtocol(prod, {
+            timestamp: Date.now(),
+            timeStr: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+            actorNick: playerNick || 'Рыбак',
+            actionType: 'sell_input',
+            resourceName: 'Сырая рыба (Садок)',
+            quantity: qty,
+            goldAmount: goldEarned,
+            text: `Рыбак ${playerNick || 'Игрок'} сдал ${qty} шт. рыбы на склад Рыбного комбината за ${goldEarned.toLocaleString('ru-RU')} 🪙 (по 50 🪙/шт. из кассы завода)`
+          });
+        }
+        cannery.production = prod;
+      }
+    });
+    saveClansToSupabase();
   } catch {}
 
   const skillHoursAdded = Math.max(1, Math.ceil(qty / 5));
@@ -8634,7 +9760,7 @@ export function sellFishToPortMarket(
     goldEarned,
     skillHoursAdded,
     market,
-    message: `🏭 Сдано ${qty} шт. «Сырой рыбы» на Рыбный комбинат в Порту по 80 🪙/шт.: +${goldEarned.toLocaleString('ru-RU')} 🪙 и +${skillHoursAdded} ед. к навыку «Производство»!`
+    message: `🏭 Улов (${qty} шт.) доставлен на склад Рыбного комбината в Порту! Выплачено из кассы завода: +${goldEarned.toLocaleString('ru-RU')} 🪙 (по 50 🪙/шт.) и +${skillHoursAdded} ед. к навыку «Производство»!`
   };
 }
 
@@ -8754,21 +9880,26 @@ export function craftRelicsAtPortFactoryNow(
 
   const now = Date.now();
   const activeWorkers = prod.workers.filter((w) => !w.claimed && w.endsAt > now);
+  const lvlCfg = getPortFacilityLevelConfig(prod.facilityLevel);
+  const domBonus = doesSectorBuildingHaveDominanceBonus(sector);
   if (activeWorkers.length === 0) {
     return {
       ok: false,
       error: `⏸ Цех «${sector.name}» остановлен! На объекте сейчас никто не работает (активных работников: 0/${
-        prod.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS
+        prod.isMerged ? Math.max(PORT_MERGED_MAX_WORKERS, lvlCfg.maxWorkers) : lvlCfg.maxWorkers
       }). Устройтесь на рабочую смену (2 ч.), чтобы запустить производство!`
     };
   }
 
   const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : 2);
-  const outRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+  const baseOutRate = Math.max(1, prod.outputRatePerHour || (tier === 1 ? 4 : 1));
+  const outMult = lvlCfg.outputMultiplier * (prod.isMerged ? 1.5 : 1) * (domBonus ? 1.15 : 1);
+  const outRate = Math.max(1, Math.round(baseOutRate * outMult));
   const outName = prod.outputProductName || 'Продукция';
   const hasIn2 = Boolean(prod.input2ResourceKey);
   const hasIn3 = Boolean(prod.input3ResourceKey);
-  const reqPwr = prod.powerRequiredPerCycle ?? 0;
+  const baseReqPwr = prod.powerRequiredPerCycle ?? 0;
+  const reqPwr = baseReqPwr > 0 && domBonus ? Math.max(1, Math.floor(baseReqPwr * 0.8)) : baseReqPwr;
 
   if (prod.relicStock >= prod.maxRelicStock) {
     return {
@@ -8778,7 +9909,7 @@ export function craftRelicsAtPortFactoryNow(
   }
 
   if (tier === 1 || prod.productionStage === 'extraction') {
-    const added = Math.min(outRate * (prod.isMerged ? 2 : 1), prod.maxRelicStock - prod.relicStock);
+    const added = Math.min(outRate, prod.maxRelicStock - prod.relicStock);
     prod.relicStock += added;
     prod.totalRelicsCrafted = (prod.totalRelicsCrafted || 0) + added;
     prod.lastCraftTickAt = now;
@@ -12677,5 +13808,1016 @@ export function autoSupplyFactoryFromTerminal(
   };
 }
 
+// ============================================================================
+// МОДЕРНИЗАЦИЯ ЗАВОДОВ (УР. 1–5), ШТУРМОВОЙ ЗАРЯД, REDBLACK, БИРЖА ТРУДА И ЗАКАЗЫ КЛАНА
+// ============================================================================
 
+export function upgradePortFactoryLevel(
+  sectorId: string,
+  actorNick: string,
+  availableHeroGold: number,
+  playerPortResources: Record<string, number>
+): {
+  ok: boolean;
+  sector?: ClanTerritorySector;
+  newLevel?: number;
+  paidFromCashbox?: number;
+  paidFromHeroGold?: number;
+  consumedResources?: Array<{ key: PortTerminalResourceKey; qty: number; name: string }>;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector) return { ok: false, error: 'Объект недвижимости не найден.' };
+
+  const cleanActor = actorNick.trim().toLowerCase();
+  const cleanOwner = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
+  if (cleanActor !== cleanOwner && cleanActor !== 'redblack' && cleanActor !== 'admin') {
+    return {
+      ok: false,
+      error: `Модернизировать производственные площади может только владелец объекта (${sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK})!`
+    };
+  }
+
+  const prod = normalizeSectorProduction(sector);
+  const curLevel = Math.max(1, Math.min(5, Math.floor(Number(prod.facilityLevel || 1))));
+  if (curLevel >= 5) {
+    return { ok: false, error: `Объект «${sector.name}» уже модернизирован до максимального Уровня 5!` };
+  }
+
+  const nextLevel = (curLevel + 1) as 2 | 3 | 4 | 5;
+  const nextCfg = getPortFacilityLevelConfig(nextLevel);
+
+  // Проверяем наличие ресурсов у игрока
+  for (const req of nextCfg.upgradeResources) {
+    const have = Math.max(0, Math.floor(Number(playerPortResources[req.key] || 0)));
+    if (have < req.qty) {
+      return {
+        ok: false,
+        error: `Недостаточно ресурса «${req.name}» для расширения до Ур. ${nextLevel}! Требуется: ${req.qty} ед. (в инвентаре: ${have} ед.).`
+      };
+    }
+  }
+
+  // Проверяем наличие золота (сначала списываем из кассы завода, оставив резерв 1000 🪙, остальное — с героя)
+  const goldCost = nextCfg.upgradeCostGold;
+  const availCashbox = Math.max(0, Math.floor(Number(prod.facilityBalanceGold || 0)) - 1000);
+  const availHero = Math.max(0, Math.floor(Number(availableHeroGold || 0)));
+  if (availCashbox + availHero < goldCost) {
+    return {
+      ok: false,
+      error: `Недостаточно золота для модернизации до Ур. ${nextLevel}! Требуется ${goldCost.toLocaleString('ru-RU')} 🪙 (доступно в кассе и кошельке: ${(availCashbox + availHero).toLocaleString('ru-RU')} 🪙).`
+    };
+  }
+
+  const paidFromCashbox = Math.min(availCashbox, goldCost);
+  const paidFromHeroGold = goldCost - paidFromCashbox;
+
+  prod.facilityBalanceGold = Math.max(0, Math.floor(Number(prod.facilityBalanceGold || 0)) - paidFromCashbox);
+  prod.facilityLevel = nextLevel;
+  prod.maxRelicStock = nextCfg.maxStorage;
+  prod.maxProcessedStock = nextCfg.maxStorage;
+  prod.maxInput1Stock = Math.max(nextCfg.maxStorage * 2, prod.maxInput1Stock || 200);
+  prod.maxFishStock = prod.maxInput1Stock;
+  if (prod.input2ResourceKey) {
+    prod.maxInput2Stock = Math.max(nextCfg.maxStorage * 2, prod.maxInput2Stock || 200);
+  }
+  if (prod.input3ResourceKey) {
+    prod.maxInput3Stock = Math.max(nextCfg.maxStorage * 2, prod.maxInput3Stock || 200);
+  }
+
+  sector.production = normalizeSectorProduction(sector);
+
+  appendPortDealProtocol(sector.production, {
+    timestamp: Date.now(),
+    actorNick,
+    actionType: 'owner_withdraw',
+    resourceName: `Модернизация завода (Ур. ${curLevel} → Ур. ${nextLevel})`,
+    quantity: 1,
+    goldDelta: -paidFromCashbox,
+    goldAmount: -goldCost,
+    note: `Площадь расширена до Ур. ${nextLevel} (${nextCfg.maxWorkers} раб. мест, склад ${nextCfg.maxStorage} ед., выпуск x${nextCfg.outputMultiplier})`
+  });
+
+  saveClansToSupabase();
+
+  const resSummary = nextCfg.upgradeResources.map((r) => `${r.name} x${r.qty}`).join(', ');
+  return {
+    ok: true,
+    sector,
+    newLevel: nextLevel,
+    paidFromCashbox,
+    paidFromHeroGold,
+    consumedResources: nextCfg.upgradeResources,
+    message: `⬆️ Завод «${sector.name}» расширен до Уровня ${nextLevel}! Мест: ${nextCfg.maxWorkers} | Склад: ${nextCfg.maxStorage} ед. | Выпуск: x${nextCfg.outputMultiplier} (потрачено: ${goldCost.toLocaleString('ru-RU')} 🪙${resSummary ? ` + ${resSummary}` : ''}).`
+  };
+}
+
+export function adminAssignAllEstatesToRedblack(): {
+  ok: boolean;
+  updatedCount: number;
+  message: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const rbClan =
+    inMemoryClans.find((c) => c.clanNumber === 1 || c.tag.toUpperCase() === 'ТЕСТ') ||
+    inMemoryClans[0];
+  let updatedCount = 0;
+
+  for (const s of sectors) {
+    s.ownerNick = DEFAULT_PORT_ESTATE_OWNER_NICK;
+    s.ownerClanId = rbClan?.id || 'clan_redblack_test';
+    s.ownerClanName = rbClan?.name || 'Тест';
+    s.ownerClanTag = rbClan?.tag || 'ТЕСТ';
+    s.ownerClanEmblem = rbClan?.emblem || '👑';
+    s.warStatus = 'peace';
+    s.battle7x7 = null;
+    s.protectionUntil = 0;
+
+    const prod = normalizeSectorProduction(s);
+    prod.buildingDurability = 100;
+    prod.maxBuildingDurability = 100;
+    if ((prod.facilityBalanceGold || 0) < 25000) {
+      prod.facilityBalanceGold = 25000;
+    }
+    s.production = prod;
+    updatedCount++;
+  }
+
+  saveClansToSupabase();
+  return {
+    ok: true,
+    updatedCount,
+    message: `👑 Все ${updatedCount} объектов недвижимости острова переданы под контроль владельца Redblack (Клан #1 [ТЕСТ] Тест), прочность восстановлена до 100/100, касса каждого завода пополнена до ≥25 000 🪙!`
+  };
+}
+
+export function activateAssaultChargeFor7x7Battle(
+  sectorId: string,
+  actorNick: string,
+  availableCharges: number
+): {
+  ok: boolean;
+  sector?: ClanTerritorySector;
+  message?: string;
+  error?: string;
+} {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector || !sector.battle7x7) {
+    return { ok: false, error: 'На этом объекте сейчас нет активного штурма 7х7.' };
+  }
+  const b = sector.battle7x7;
+  if (b.phase === 'finished') {
+    return { ok: false, error: 'Штурм уже завершен.' };
+  }
+  if (b.assaultChargeActive) {
+    return { ok: false, error: `Штурмовой Заряд уже заложен (${b.assaultChargeActivatedBy || 'штурмовиком'})!` };
+  }
+  if (availableCharges < 1) {
+    return {
+      ok: false,
+      error: 'У вас в инвентаре нет «Штурмового Заряда» (💣)! Произведите или купите его в Цехе Осадных Боеприпасов [8/5].'
+    };
+  }
+
+  b.assaultChargeActive = true;
+  b.assaultChargeActivatedBy = actorNick;
+  const chargeMsg = `💣 ОСАДНЫЙ ПОДРЫВ: ${actorNick} активировал «Штурмовой Заряд»! В 1-м раунде урон всех атакующих увеличен на +25%, а бонус защиты вражеского Форпоста снижен на 50%!`;
+  if (b.roundLogs.length > 0) {
+    b.roundLogs[0].events.unshift(chargeMsg);
+  } else {
+    b.summaryText = chargeMsg;
+  }
+  saveClansToSupabase();
+
+  return {
+    ok: true,
+    sector,
+    message: `💣 Вы активировали «Штурмовой Заряд» при штурме «${sector.name}»! (+25% урона атакующим в 1-м раунде и -50% защиты Форпоста врага)`
+  };
+}
+
+function canMemberManageClanOrders(clan: Clan, actorNick: string): boolean {
+  const clean = actorNick.trim().toLowerCase();
+  if (clean === 'redblack' || clean === 'admin') return true;
+  if (clan.leaderNick.trim().toLowerCase() === clean) return true;
+  const m = clan.members.find((x) => x.nick.trim().toLowerCase() === clean);
+  return Boolean(m && (m.role === 'leader' || m.role === 'officer' || m.permissions?.canManageBaseAndDiplomacy));
+}
+
+export function createClanSupplyOrder(
+  clanId: string,
+  actorNick: string,
+  resourceKey: PortTerminalResourceKey,
+  totalQuantity: number,
+  unitPriceGold: number
+): {
+  ok: boolean;
+  clan?: Clan;
+  order?: ClanSupplyOrderEntry;
+  message?: string;
+  error?: string;
+} {
+  const clan = inMemoryClans.find((c) => c.id === clanId);
+  if (!clan) return { ok: false, error: 'Клан не найден.' };
+
+  if (!canMemberManageClanOrders(clan, actorNick)) {
+    return { ok: false, error: 'Создавать клановые заказы на снабжение могут только Глава и Заместители клана!' };
+  }
+
+  const resMeta =
+    DEFAULT_PORT_ALL_RESOURCES_CATALOG.find((m) => m.key === resourceKey) ||
+    PORT_TERMINAL_CATALOG.find((m) => m.key === resourceKey);
+  if (!resMeta) return { ok: false, error: 'Ресурс не найден в каталоге Порта.' };
+
+  const qty = Math.max(1, Math.min(500, Math.floor(Number(totalQuantity) || 5)));
+  const price = Math.max(10, Math.min(50000, Math.floor(Number(unitPriceGold) || resMeta.buyPriceGold || 500)));
+  const maxTotalCost = qty * price;
+
+  if ((clan.treasuryGold || 0) < maxTotalCost) {
+    return {
+      ok: false,
+      error: `В казне клана недостаточно золота для обеспечения заказа (${maxTotalCost.toLocaleString('ru-RU')} 🪙, в казне: ${(clan.treasuryGold || 0).toLocaleString('ru-RU')} 🪙)!`
+    };
+  }
+
+  if (!Array.isArray(clan.supplyOrders)) {
+    clan.supplyOrders = [];
+  }
+
+  const w = getPortResourceWeight(resourceKey);
+  const ptsPerUnit = w >= 5 ? 5 : w >= 2 ? 2 : 1;
+
+  const order: ClanSupplyOrderEntry = {
+    id: `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    resourceKey,
+    resourceName: resMeta.name,
+    resourceIcon: resMeta.icon,
+    requestedQty: qty,
+    deliveredQty: 0,
+    pricePerUnitGold: price,
+    ptsPerUnit,
+    createdByNick: actorNick,
+    createdAt: Date.now()
+  };
+
+  clan.supplyOrders.unshift(order);
+  addClanLogEntry(
+    clan,
+    actorNick,
+    'port_production',
+    `Создан клановый заказ на снабжение: ${resMeta.icon} «${resMeta.name}» x${qty} шт. по цене ${price.toLocaleString('ru-RU')} 🪙/шт. (+${ptsPerUnit} PTS/шт.).`,
+    '📦'
+  );
+
+  saveClansToSupabase();
+  return {
+    ok: true,
+    clan,
+    order,
+    message: `📦 Создан клановый заказ: ${resMeta.icon} «${resMeta.name}» (${qty} шт. по ${price.toLocaleString('ru-RU')} 🪙/шт.)!`
+  };
+}
+
+export function deleteClanSupplyOrder(
+  clanId: string,
+  actorNick: string,
+  orderId: string
+): {
+  ok: boolean;
+  clan?: Clan;
+  message?: string;
+  error?: string;
+} {
+  const clan = inMemoryClans.find((c) => c.id === clanId);
+  if (!clan) return { ok: false, error: 'Клан не найден.' };
+  if (!canMemberManageClanOrders(clan, actorNick)) {
+    return { ok: false, error: 'Удалять заказы могут только Глава и Заместители клана!' };
+  }
+  clan.supplyOrders = (clan.supplyOrders || []).filter((o) => o.id !== orderId);
+  saveClansToSupabase();
+  return { ok: true, clan, message: 'Заказ на снабжение закрыт.' };
+}
+
+export function fulfillClanSupplyOrder(
+  clanId: string,
+  actorNick: string,
+  orderId: string,
+  deliverQty: number,
+  availablePlayerQty: number
+): {
+  ok: boolean;
+  clan?: Clan;
+  deliveredQty?: number;
+  goldEarned?: number;
+  ptsAwarded?: number;
+  resourceKey?: PortTerminalResourceKey;
+  message?: string;
+  error?: string;
+} {
+  const clan = inMemoryClans.find((c) => c.id === clanId);
+  if (!clan) return { ok: false, error: 'Клан не найден.' };
+
+  const order = (clan.supplyOrders || []).find((o) => o.id === orderId);
+  if (!order) return { ok: false, error: 'Клановый заказ не найден или уже закрыт.' };
+
+  const remaining = Math.max(0, order.requestedQty - order.deliveredQty);
+  if (remaining <= 0) {
+    return { ok: false, error: 'Этот заказ уже полностью выполнен!' };
+  }
+
+  const qty = Math.max(1, Math.min(remaining, Math.floor(Number(deliverQty) || 1)));
+  if (availablePlayerQty < qty) {
+    return {
+      ok: false,
+      error: `У вас в инвентаре недостаточно «${order.resourceName}» (в наличии: ${availablePlayerQty} шт., хотите сдать: ${qty} шт.)!`
+    };
+  }
+
+  const totalGold = qty * order.pricePerUnitGold;
+  if ((clan.treasuryGold || 0) < totalGold) {
+    return {
+      ok: false,
+      error: `В казне клана недостаточно золота для оплаты поставки (${totalGold.toLocaleString('ru-RU')} 🪙)!`
+    };
+  }
+
+  clan.treasuryGold = Math.max(0, (clan.treasuryGold || 0) - totalGold);
+  order.deliveredQty += qty;
+
+  // За каждую единицу ресурса 3-го этапа начисляем +5 личных PTS (2-го этапа +2 PTS, 1-го этапа +1 PTS)
+  const ptsPerUnit = order.ptsPerUnit || (getPortResourceWeight(order.resourceKey) >= 5 ? 5 : 2);
+  const ptsAwarded = qty * ptsPerUnit;
+  const cleanActor = actorNick.trim().toLowerCase();
+  const memberObj = clan.members.find((m) => m.nick.trim().toLowerCase() === cleanActor);
+  if (memberObj) {
+    memberObj.clanPts = (memberObj.clanPts || 0) + ptsAwarded;
+  }
+
+  if (order.deliveredQty >= order.requestedQty) {
+    clan.supplyOrders = (clan.supplyOrders || []).filter((o) => o.id !== order.id);
+  }
+
+  addClanLogEntry(
+    clan,
+    actorNick,
+    'port_production',
+    `${actorNick} сдал по заказу клана ${order.resourceIcon} «${order.resourceName}» x${qty} шт. Выплачено из казны: ${totalGold.toLocaleString('ru-RU')} 🪙 (+${ptsAwarded} PTS).`,
+    order.resourceIcon
+  );
+
+  saveClansToSupabase();
+  return {
+    ok: true,
+    clan,
+    deliveredQty: qty,
+    goldEarned: totalGold,
+    ptsAwarded,
+    resourceKey: order.resourceKey,
+    message: `✅ Вы сдали ${qty} шт. «${order.resourceName}» в клан [${clan.tag}] и получили +${totalGold.toLocaleString('ru-RU')} 🪙 из Казны и +${ptsAwarded} личных PTS!`
+  };
+}
+
+export interface PortLaborExchangeRow {
+  sectorId: string;
+  sectorName: string;
+  sectorIcon: string;
+  mapX: number;
+  mapY: number;
+  ownerNick: string;
+  ownerClanTag: string;
+  facilityLevel: number;
+  activeWorkersCount: number;
+  maxWorkers: number;
+  freePlaces: number;
+  wagePerHourGold: number;
+  facilityBalanceGold: number;
+  canWorkNow: boolean;
+  statusNote: string;
+}
+
+export function getPortLaborExchangeList(): PortLaborExchangeRow[] {
+  const sectors = ensureTerritoriesLoaded();
+  const now = Date.now();
+  const rows: PortLaborExchangeRow[] = [];
+
+  for (const s of sectors) {
+    const prod = normalizeSectorProduction(s);
+    const coords = normalizePortIslandCoord(s.mapX, s.mapY);
+    const lvlCfg = getPortFacilityLevelConfig(prod.facilityLevel);
+    const maxWorkers = prod.isMerged ? Math.max(PORT_MERGED_MAX_WORKERS, lvlCfg.maxWorkers) : lvlCfg.maxWorkers;
+    const activeCount = (prod.workers || []).filter((w) => !w.claimed && w.endsAt > now).length;
+    const freePlaces = Math.max(0, maxWorkers - activeCount);
+    const wage = Math.max(50, Math.floor(Number(prod.workerWageGold || PORT_WORKER_GOLD_PER_HOUR)));
+    const cash = Math.max(0, Math.floor(Number(prod.facilityBalanceGold || 0)));
+
+    const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : 2);
+    const hasIn2 = Boolean(prod.input2ResourceKey);
+    const hasIn3 = Boolean(prod.input3ResourceKey);
+    const req1 = prod.input1RequiredPerCycle ?? 2;
+    const req2 = hasIn2 ? (prod.input2RequiredPerCycle ?? 2) : 0;
+    const req3 = hasIn3 ? (prod.input3RequiredPerCycle ?? 1) : 0;
+    const reqPwr = prod.powerRequiredPerCycle ?? 0;
+
+    const cur1 = prod.input1Stock ?? prod.fishStock ?? 0;
+    const cur2 = hasIn2 ? (prod.input2Stock ?? 0) : 0;
+    const cur3 = hasIn3 ? (prod.input3Stock ?? 0) : 0;
+    const curPwr = prod.powerStock ?? 0;
+
+    const hasInputs =
+      tier === 1 ||
+      prod.productionStage === 'extraction' ||
+      (cur1 >= req1 && (!hasIn2 || cur2 >= req2) && (!hasIn3 || cur3 >= req3) && (reqPwr <= 0 || curPwr >= reqPwr));
+    const hasOutputSpace = prod.relicStock < prod.maxRelicStock;
+    const hasCash = cash >= wage * 2;
+    const notBroken = (prod.buildingDurability ?? 100) > 0;
+
+    const canWorkNow = freePlaces > 0 && hasCash && hasInputs && hasOutputSpace && notBroken;
+    let statusNote = 'Готов к смене';
+    if (!notBroken) statusNote = 'Здание сломано';
+    else if (freePlaces <= 0) statusNote = 'Мест нет';
+    else if (!hasCash) statusNote = 'Мало золота в кассе';
+    else if (!hasOutputSpace) statusNote = 'Склад продукции полон';
+    else if (!hasInputs) statusNote = 'Ждет подвоза сырья';
+
+    rows.push({
+      sectorId: s.id,
+      sectorName: s.name,
+      sectorIcon: s.icon,
+      mapX: coords.x,
+      mapY: coords.y,
+      ownerNick: s.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK,
+      ownerClanTag: s.ownerClanTag || 'ТЕСТ',
+      facilityLevel: prod.facilityLevel || 1,
+      activeWorkersCount: activeCount,
+      maxWorkers,
+      freePlaces,
+      wagePerHourGold: wage,
+      facilityBalanceGold: cash,
+      canWorkNow,
+      statusNote
+    });
+  }
+
+  return rows.sort((a, b) => {
+    if (a.canWorkNow !== b.canWorkNow) return a.canWorkNow ? -1 : 1;
+    return b.wagePerHourGold - a.wagePerHourGold;
+  });
+}
+
+export interface PortTradeSummaryRow {
+  sectorId: string;
+  sectorName: string;
+  sectorIcon: string;
+  mapX: number;
+  mapY: number;
+  ownerNick: string;
+  facilityLevel: number;
+  outputName: string;
+  outputIcon: string;
+  outputStock: number;
+  maxOutputStock: number;
+  sellPriceGold: number;
+  buyingNeeds: Array<{
+    resourceName: string;
+    currentStock: number;
+    maxStock: number;
+    buyPriceGold: number;
+  }>;
+}
+
+export function getPortTradeSummaryList(): PortTradeSummaryRow[] {
+  const sectors = ensureTerritoriesLoaded();
+  return sectors.map((s) => {
+    const prod = normalizeSectorProduction(s);
+    const coords = normalizePortIslandCoord(s.mapX, s.mapY);
+    const tier = prod.productionTier || (prod.productionStage === 'extraction' ? 1 : 2);
+    const buyingNeeds: PortTradeSummaryRow['buyingNeeds'] = [];
+
+    if (tier >= 2 && prod.input1ResourceKey) {
+      buyingNeeds.push({
+        resourceName: prod.input1ResourceName || 'Сырье #1',
+        currentStock: prod.input1Stock ?? prod.fishStock ?? 0,
+        maxStock: prod.maxInput1Stock ?? prod.maxFishStock ?? 100,
+        buyPriceGold: prod.rawBuyPriceGold || 80
+      });
+    }
+    if (prod.input2ResourceKey) {
+      buyingNeeds.push({
+        resourceName: prod.input2ResourceName || 'Сырье #2',
+        currentStock: prod.input2Stock ?? 0,
+        maxStock: prod.maxInput2Stock ?? 100,
+        buyPriceGold: prod.input2BuyPriceGold || 120
+      });
+    }
+    if (prod.input3ResourceKey) {
+      buyingNeeds.push({
+        resourceName: prod.input3ResourceName || 'Сырье #3',
+        currentStock: prod.input3Stock ?? 0,
+        maxStock: prod.maxInput3Stock ?? 100,
+        buyPriceGold: prod.input3BuyPriceGold || 900
+      });
+    }
+    if ((prod.powerRequiredPerCycle ?? 0) > 0) {
+      buyingNeeds.push({
+        resourceName: '⚡ Мощность (кВт)',
+        currentStock: prod.powerStock ?? 0,
+        maxStock: prod.maxPowerStock ?? 200,
+        buyPriceGold: prod.powerBuyPriceGold || 70
+      });
+    }
+
+    return {
+      sectorId: s.id,
+      sectorName: s.name,
+      sectorIcon: s.icon,
+      mapX: coords.x,
+      mapY: coords.y,
+      ownerNick: s.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK,
+      facilityLevel: prod.facilityLevel || 1,
+      outputName: prod.outputProductName || 'Продукция',
+      outputIcon: prod.outputProductIcon || '📦',
+      outputStock: prod.relicStock || 0,
+      maxOutputStock: prod.maxRelicStock || 100,
+      sellPriceGold: prod.productSellPriceGold || 100,
+      buyingNeeds
+    };
+  });
+}
+
+// ============================================================================
+// ПЕРЕДАЧА НЕДВИЖИМОСТИ ИГРОКАМ, ПРИБРЕЖНАЯ ЗОНА (OUTLAND) И СТАДИОН ФАРОСА [5/5]
+// ============================================================================
+
+export function transferPortEstateOwnership(
+  sectorId: string,
+  actorNick: string,
+  targetNickOrId: string,
+  isAdmin = false
+): { ok: boolean; sector?: ClanTerritorySector; message?: string; error?: string } {
+  const sectors = ensureTerritoriesLoaded();
+  const sector = sectors.find((s) => s.id === sectorId);
+  if (!sector) {
+    return { ok: false, error: 'Объект недвижимости не найден!' };
+  }
+
+  const currentOwner = (sector.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim();
+  const cleanActor = (actorNick || '').trim();
+  const cleanTarget = (targetNickOrId || '').trim().replace(/^@/, '');
+
+  if (!cleanTarget) {
+    return { ok: false, error: 'Введите никнейм или ID персонажа-получателя!' };
+  }
+
+  if (!isAdmin && currentOwner.toLowerCase() !== cleanActor.toLowerCase()) {
+    return { ok: false, error: 'Передать объект недвижимости может только его действующий владелец или Администратор!' };
+  }
+
+  if (currentOwner.toLowerCase() === cleanTarget.toLowerCase()) {
+    return { ok: false, error: `Игрок ${cleanTarget} уже является владельцем этого объекта!` };
+  }
+
+  const oldOwner = currentOwner;
+  sector.ownerNick = cleanTarget;
+
+  // Проверяем, состоит ли новый владелец в каком-либо клане, чтобы обновить клановую принадлежность при необходимости
+  const targetClan = getPlayerClan(cleanTarget);
+  if (targetClan) {
+    sector.ownerClanId = targetClan.id;
+    sector.ownerClanName = targetClan.name;
+    sector.ownerClanTag = targetClan.tag;
+    sector.ownerClanEmblem = targetClan.emblem;
+  }
+
+  const prod = normalizeSectorProduction(sector);
+  const cashSaved = Math.max(0, Math.floor(Number(prod.facilityBalanceGold || 0)));
+
+  appendPortDealProtocol(prod, {
+    timestamp: Date.now(),
+    timeStr: new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+    actorNick: cleanActor || oldOwner,
+    actionType: 'owner_transfer',
+    text: `🤝 Передача прав собственности: ${oldOwner} → ${cleanTarget} (сохранена касса завода: ${cashSaved.toLocaleString('ru-RU')} 🪙)`,
+    goldDelta: 0
+  });
+  sector.production = prod;
+
+  saveClansToSupabase();
+  return {
+    ok: true,
+    sector,
+    message: `🤝 Объект «${sector.name}» [${sector.mapX}/${sector.mapY}] официально передан в собственность игрока ${cleanTarget}! Вся накопленная касса (${cashSaved.toLocaleString('ru-RU')} 🪙) осталась на счету завода.`
+  };
+}
+
+export const OUTLAND_SMUGGLER_PIERS: Array<{ x: number; y: number; title: string }> = [
+  { x: 1, y: 5, title: 'Причал контрабандистов [1/5] (Западный берег)' },
+  { x: 10, y: 5, title: 'Причал контрабандистов [10/5] (Восточный берег)' },
+  { x: 5, y: 1, title: 'Причал контрабандистов [5/1] (Северный берег)' },
+  { x: 5, y: 10, title: 'Причал контрабандистов [5/10] (Южный берег)' }
+];
+
+export function isOutlandSmugglerPierCell(x?: number | null, y?: number | null): boolean {
+  const cx = Math.floor(Number(x) || 0);
+  const cy = Math.floor(Number(y) || 0);
+  return OUTLAND_SMUGGLER_PIERS.some((p) => p.x === cx && p.y === cy);
+}
+
+export interface PharosStadiumMatch {
+  id: string;
+  matchType: 'gladiator' | 'clan_7x7';
+  title: string;
+  teamAName: string;
+  teamATag: string;
+  teamAOdds: number;
+  teamBName: string;
+  teamBTag: string;
+  teamBOdds: number;
+  startsAt: number;
+  poolTeamAGold: number;
+  poolTeamBGold: number;
+  poolTeamACrystals: number;
+  poolTeamBCrystals: number;
+  status: 'betting' | 'finished';
+  winnerSide?: 'A' | 'B';
+  resultSummary?: string;
+}
+
+export interface PharosStadiumBetEntry {
+  id: string;
+  matchId: string;
+  matchTitle: string;
+  playerNick: string;
+  side: 'A' | 'B';
+  teamName: string;
+  currency: 'gold' | 'crystals';
+  amount: number;
+  odds: number;
+  placedAt: number;
+  status: 'active' | 'won' | 'lost';
+  payout?: number;
+}
+
+export interface PharosStadiumState {
+  ownerNick: string;
+  ownerClanTag: string;
+  mapX: number;
+  mapY: number;
+  commissionPct: number;
+  commissionBoxGold: number;
+  commissionBoxCrystals: number;
+  totalCollectedGold: number;
+  totalCollectedCrystals: number;
+  matches: PharosStadiumMatch[];
+  bets: PharosStadiumBetEntry[];
+  updatedAt: number;
+}
+
+const PHAROS_STADIUM_STORAGE_KEY = 'egypt_game_pharos_stadium_v1';
+
+function createDefaultStadiumMatches(now = Date.now()): PharosStadiumMatch[] {
+  return [
+    {
+      id: `match_glad_${now}_1`,
+      matchType: 'gladiator',
+      title: 'Гладиаторский бой: Колизей Фароса [5/5]',
+      teamAName: 'Центурион Анубиса',
+      teamATag: 'ANUB',
+      teamAOdds: 1.8,
+      teamBName: 'Чемпион Солнечной Гвардии',
+      teamBTag: 'RA',
+      teamBOdds: 1.8,
+      startsAt: now + 4 * 60 * 1000,
+      poolTeamAGold: 12500,
+      poolTeamBGold: 11800,
+      poolTeamACrystals: 40,
+      poolTeamBCrystals: 35,
+      status: 'betting'
+    },
+    {
+      id: `match_7x7_${now}_2`,
+      matchType: 'clan_7x7',
+      title: 'Турнирный матч 7х7: Битва Синдикатов',
+      teamAName: '#1 [ТЕСТ] Гвардия Тест',
+      teamATag: 'ТЕСТ',
+      teamAOdds: 1.75,
+      teamBName: '#312 [SETH] Братство Сета',
+      teamBTag: 'SETH',
+      teamBOdds: 1.9,
+      startsAt: now + 6 * 60 * 1000,
+      poolTeamAGold: 25000,
+      poolTeamBGold: 19500,
+      poolTeamACrystals: 85,
+      poolTeamBCrystals: 60,
+      status: 'betting'
+    },
+    {
+      id: `match_7x7_${now}_3`,
+      matchType: 'clan_7x7',
+      title: 'Вечерний финал 7х7 за Кубок Острова',
+      teamAName: '#777 [PHAR] Гвардия Фараона',
+      teamATag: 'PHAR',
+      teamAOdds: 1.85,
+      teamBName: '#501 [NILE] Торговый Дом Нила',
+      teamBTag: 'NILE',
+      teamBOdds: 1.85,
+      startsAt: now + 9 * 60 * 1000,
+      poolTeamAGold: 18000,
+      poolTeamBGold: 17500,
+      poolTeamACrystals: 50,
+      poolTeamBCrystals: 50,
+      status: 'betting'
+    }
+  ];
+}
+
+let inMemoryPharosStadium: PharosStadiumState = {
+  ownerNick: DEFAULT_PORT_ESTATE_OWNER_NICK,
+  ownerClanTag: 'ТЕСТ',
+  mapX: 5,
+  mapY: 5,
+  commissionPct: 10,
+  commissionBoxGold: 8450,
+  commissionBoxCrystals: 24,
+  totalCollectedGold: 0,
+  totalCollectedCrystals: 0,
+  matches: createDefaultStadiumMatches(),
+  bets: [],
+  updatedAt: Date.now()
+};
+
+function savePharosStadiumState(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    inMemoryPharosStadium.updatedAt = Date.now();
+    localStorage.setItem(PHAROS_STADIUM_STORAGE_KEY, JSON.stringify(inMemoryPharosStadium));
+  } catch {}
+}
+
+export function getPharosStadiumState(): PharosStadiumState {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(PHAROS_STADIUM_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          inMemoryPharosStadium = {
+            ...inMemoryPharosStadium,
+            ...parsed,
+            ownerNick: parsed.ownerNick || DEFAULT_PORT_ESTATE_OWNER_NICK,
+            ownerClanTag: parsed.ownerClanTag || 'ТЕСТ',
+            mapX: 5,
+            mapY: 5,
+            commissionPct: 10,
+            matches:
+              Array.isArray(parsed.matches) && parsed.matches.length > 0
+                ? parsed.matches
+                : createDefaultStadiumMatches(),
+            bets: Array.isArray(parsed.bets) ? parsed.bets : []
+          };
+        }
+      } else {
+        savePharosStadiumState();
+      }
+    } catch {}
+  }
+
+  // Ensure there are always active betting matches
+  const activeCount = inMemoryPharosStadium.matches.filter((m) => m.status === 'betting').length;
+  if (activeCount === 0) {
+    const fresh = createDefaultStadiumMatches();
+    inMemoryPharosStadium.matches = [...fresh, ...inMemoryPharosStadium.matches.slice(0, 4)];
+    savePharosStadiumState();
+  }
+
+  return inMemoryPharosStadium;
+}
+
+export function placePharosStadiumBet(
+  playerNick: string,
+  matchId: string,
+  side: 'A' | 'B',
+  currency: 'gold' | 'crystals',
+  amount: number,
+  availableGold: number,
+  availableCrystals: number
+): {
+  ok: boolean;
+  state?: PharosStadiumState;
+  bet?: PharosStadiumBetEntry;
+  goldSpent?: number;
+  crystalsSpent?: number;
+  message?: string;
+  error?: string;
+} {
+  const st = getPharosStadiumState();
+  const match = st.matches.find((m) => m.id === matchId && m.status === 'betting');
+  if (!match) {
+    return { ok: false, error: 'Прием ставок на этот матч уже закрыт!' };
+  }
+
+  const cleanAmount = Math.max(1, Math.floor(Number(amount) || 0));
+  if (currency === 'gold' && cleanAmount < 100) {
+    return { ok: false, error: 'Минимальная ставка в золоте — 100 🪙.' };
+  }
+  if (currency === 'gold' && availableGold < cleanAmount) {
+    return { ok: false, error: `Недостаточно золота для ставки! Требуется: ${cleanAmount.toLocaleString('ru-RU')} 🪙.` };
+  }
+  if (currency === 'crystals' && availableCrystals < cleanAmount) {
+    return { ok: false, error: `Недостаточно кристаллов для ставки! Требуется: ${cleanAmount.toLocaleString('ru-RU')} 💎.` };
+  }
+
+  // 10% комиссия тотализатора идет в кассу владельца Стадиона (Redblack)
+  const commission = Math.max(1, Math.floor(cleanAmount * 0.1));
+  if (currency === 'gold') {
+    st.commissionBoxGold = Math.max(0, (st.commissionBoxGold || 0) + commission);
+    if (side === 'A') match.poolTeamAGold += cleanAmount;
+    else match.poolTeamBGold += cleanAmount;
+  } else {
+    st.commissionBoxCrystals = Math.max(0, (st.commissionBoxCrystals || 0) + commission);
+    if (side === 'A') match.poolTeamACrystals += cleanAmount;
+    else match.poolTeamBCrystals += cleanAmount;
+  }
+
+  const teamName = side === 'A' ? match.teamAName : match.teamBName;
+  const odds = side === 'A' ? match.teamAOdds : match.teamBOdds;
+
+  const newBet: PharosStadiumBetEntry = {
+    id: `bet_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    matchId: match.id,
+    matchTitle: match.title,
+    playerNick: playerNick || DEFAULT_PORT_ESTATE_OWNER_NICK,
+    side,
+    teamName,
+    currency,
+    amount: cleanAmount,
+    odds,
+    placedAt: Date.now(),
+    status: 'active'
+  };
+
+  st.bets.unshift(newBet);
+  if (st.bets.length > 40) st.bets = st.bets.slice(0, 40);
+  savePharosStadiumState();
+
+  return {
+    ok: true,
+    state: st,
+    bet: newBet,
+    goldSpent: currency === 'gold' ? cleanAmount : 0,
+    crystalsSpent: currency === 'crystals' ? cleanAmount : 0,
+    message: `🎟️ Ставка принята: ${cleanAmount.toLocaleString('ru-RU')} ${
+      currency === 'gold' ? '🪙' : '💎'
+    } на «${teamName}» (коэф. x${odds}). Комиссия Стадиона 10% (+${commission} ${
+      currency === 'gold' ? '🪙' : '💎'
+    }) зачислена в кассу владельца ${st.ownerNick}.`
+  };
+}
+
+export function resolvePharosStadiumMatchNow(
+  matchId: string,
+  playerNick: string
+): {
+  ok: boolean;
+  state?: PharosStadiumState;
+  wonGold: number;
+  wonCrystals: number;
+  message?: string;
+  error?: string;
+} {
+  const st = getPharosStadiumState();
+  const match = st.matches.find((m) => m.id === matchId);
+  if (!match || match.status === 'finished') {
+    return { ok: false, wonGold: 0, wonCrystals: 0, error: 'Этот матч уже завершен!' };
+  }
+
+  const winnerSide: 'A' | 'B' = Math.random() < 0.52 ? 'A' : 'B';
+  const winTeamName = winnerSide === 'A' ? match.teamAName : match.teamBName;
+  match.status = 'finished';
+  match.winnerSide = winnerSide;
+  match.resultSummary = `🏆 Победитель: «${winTeamName}»!`;
+
+  let wonGold = 0;
+  let wonCrystals = 0;
+  const cleanPlayer = (playerNick || DEFAULT_PORT_ESTATE_OWNER_NICK).trim().toLowerCase();
+
+  st.bets.forEach((b) => {
+    if (b.matchId === match.id && b.status === 'active') {
+      if (b.side === winnerSide) {
+        const payout = Math.round(b.amount * b.odds);
+        b.status = 'won';
+        b.payout = payout;
+        if (b.playerNick.trim().toLowerCase() === cleanPlayer) {
+          if (b.currency === 'gold') wonGold += payout;
+          else wonCrystals += payout;
+        }
+      } else {
+        b.status = 'lost';
+        b.payout = 0;
+      }
+    }
+  });
+
+  // Add a new replacement match so schedule stays full
+  const freshMatches = createDefaultStadiumMatches(Date.now());
+  const replacement = freshMatches[Math.floor(Math.random() * freshMatches.length)];
+  replacement.id = `match_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`;
+  st.matches.push(replacement);
+  if (st.matches.length > 6) {
+    st.matches = st.matches.slice(-6);
+  }
+
+  savePharosStadiumState();
+
+  return {
+    ok: true,
+    state: st,
+    wonGold,
+    wonCrystals,
+    message:
+      wonGold > 0 || wonCrystals > 0
+        ? `🏟️ Матч завершен! Победила команда «${winTeamName}»! Ваш выигрыш по ставкам: ${
+            wonGold > 0 ? `+${wonGold.toLocaleString('ru-RU')} 🪙 ` : ''
+          }${wonCrystals > 0 ? `+${wonCrystals.toLocaleString('ru-RU')} 💎` : ''}!`
+        : `🏟️ Матч завершен! Победила команда «${winTeamName}».`
+  };
+}
+
+export function collectPharosStadiumCommission(
+  actorNick: string,
+  isAdmin = false
+): {
+  ok: boolean;
+  collectedGold: number;
+  collectedCrystals: number;
+  state?: PharosStadiumState;
+  message?: string;
+  error?: string;
+} {
+  const st = getPharosStadiumState();
+  const cleanActor = (actorNick || '').trim().toLowerCase();
+  if (!isAdmin && st.ownerNick.trim().toLowerCase() !== cleanActor) {
+    return {
+      ok: false,
+      collectedGold: 0,
+      collectedCrystals: 0,
+      error: `Собрать 10% комиссию из кассы Стадиона может только владелец (${st.ownerNick})!`
+    };
+  }
+
+  const gold = Math.max(0, Math.floor(Number(st.commissionBoxGold || 0)));
+  const crystals = Math.max(0, Math.floor(Number(st.commissionBoxCrystals || 0)));
+  if (gold <= 0 && crystals <= 0) {
+    return {
+      ok: false,
+      collectedGold: 0,
+      collectedCrystals: 0,
+      error: 'В кассе комиссии Стадиона сейчас 0 золота и 0 кристаллов.'
+    };
+  }
+
+  st.commissionBoxGold = 0;
+  st.commissionBoxCrystals = 0;
+  st.totalCollectedGold = (st.totalCollectedGold || 0) + gold;
+  st.totalCollectedCrystals = (st.totalCollectedCrystals || 0) + crystals;
+  savePharosStadiumState();
+
+  return {
+    ok: true,
+    collectedGold: gold,
+    collectedCrystals: crystals,
+    state: st,
+    message: `💰 Вы собрали 10% комиссию Тотализатора из кассы Стадиона Фароса: +${gold.toLocaleString('ru-RU')} 🪙 и +${crystals.toLocaleString('ru-RU')} 💎!`
+  };
+}
+
+export function transferPharosStadiumOwnership(
+  actorNick: string,
+  newOwnerNick: string,
+  isAdmin = false
+): { ok: boolean; state?: PharosStadiumState; message?: string; error?: string } {
+  const st = getPharosStadiumState();
+  const cleanActor = (actorNick || '').trim().toLowerCase();
+  const cleanTarget = (newOwnerNick || '').trim().replace(/^@/, '');
+  if (!cleanTarget) {
+    return { ok: false, error: 'Введите никнейм нового владельца Стадиона!' };
+  }
+  if (!isAdmin && st.ownerNick.trim().toLowerCase() !== cleanActor) {
+    return { ok: false, error: 'Передать Стадион может только его владелец или Администратор!' };
+  }
+  const oldOwner = st.ownerNick;
+  st.ownerNick = cleanTarget;
+  const targetClan = getPlayerClan(cleanTarget);
+  if (targetClan) {
+    st.ownerClanTag = targetClan.tag;
+  }
+  savePharosStadiumState();
+  return {
+    ok: true,
+    state: st,
+    message: `🤝 Стадион Фароса и Тотализатор [5/5] передан от ${oldOwner} игроку ${cleanTarget}! Накопленная касса комиссии осталась на счету Стадиона.`
+  };
+}
 

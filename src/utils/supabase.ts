@@ -45,11 +45,19 @@ export interface PyramidTierState {
   updatedBy?: string;
 }
 
+export interface WorldWeatherState {
+  forcedTimeOfDay?: 'morning' | 'day' | 'sunset' | 'night' | null;
+  sandstormEndAt?: number;
+  updatedAt?: number;
+  updatedBy?: string;
+}
+
 export interface GlobalMailAndChatState {
   messages: PrivateMessage[];
   chatMessages: ChatMessage[];
   wheelWinners?: WheelWinnerEntry[];
   crystalOrders?: CrystalOrder[];
+  worldWeather?: WorldWeatherState;
   updatedAt: number;
 }
 
@@ -2029,7 +2037,7 @@ export function recordPlayerToProgressLedger(nick: string, state: any): void {
     });
     const payloadStr = JSON.stringify({
       is_system_ledger: true,
-      version: '1.1.94',
+      version: '1.1.97',
       updatedAt: Date.now(),
       players: playersObj
     });
@@ -2070,7 +2078,48 @@ export function unpackSystemMailRow(rawRow: any): (GlobalMailAndChatState & { _i
     : Array.isArray(parsed.crystal_orders)
       ? parsed.crystal_orders
       : [];
+  const worldWeather: WorldWeatherState | undefined =
+    parsed.worldWeather && typeof parsed.worldWeather === 'object'
+      ? parsed.worldWeather
+      : undefined;
   const updatedAt = Number(parsed.updated_at ?? parsed.updatedAt ?? Date.now());
+
+  if (worldWeather && typeof window !== 'undefined') {
+    try {
+      const localWeatherTs = Number(window.localStorage.getItem('bigwar_weather_updated_at') || 0);
+      const remoteWeatherTs = Number(worldWeather.updatedAt || 0);
+      if (remoteWeatherTs >= localWeatherTs && remoteWeatherTs > 0) {
+        window.localStorage.setItem('bigwar_weather_updated_at', String(remoteWeatherTs));
+        const prevForced = window.localStorage.getItem('bigwar_force_time_of_day') || null;
+        const nextForced =
+          worldWeather.forcedTimeOfDay === 'morning' ||
+          worldWeather.forcedTimeOfDay === 'day' ||
+          worldWeather.forcedTimeOfDay === 'sunset' ||
+          worldWeather.forcedTimeOfDay === 'night'
+            ? worldWeather.forcedTimeOfDay
+            : null;
+        if (nextForced) {
+          window.localStorage.setItem('bigwar_force_time_of_day', nextForced);
+        } else {
+          window.localStorage.removeItem('bigwar_force_time_of_day');
+        }
+
+        const prevStorm = Number(window.localStorage.getItem('bigwar_sandstorm_end') || 0);
+        const nextStorm = Math.max(0, Number(worldWeather.sandstormEndAt || 0));
+        if (nextStorm > Date.now()) {
+          window.localStorage.setItem('bigwar_sandstorm_end', String(nextStorm));
+        } else {
+          window.localStorage.removeItem('bigwar_sandstorm_end');
+        }
+
+        if (prevForced !== nextForced || Math.abs(prevStorm - nextStorm) > 1000) {
+          window.dispatchEvent(new Event('bigwar_weather_updated'));
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   const hasRecentLocalWrite =
     globalMailCache?._localWriteAt &&
@@ -2084,6 +2133,7 @@ export function unpackSystemMailRow(rawRow: any): (GlobalMailAndChatState & { _i
         chatMessages,
         wheelWinners,
         crystalOrders,
+        worldWeather: worldWeather || globalMailCache?.worldWeather,
         updatedAt,
         _id: rawRow.id !== undefined ? Number(rawRow.id) : globalMailCache?._id,
         _localWriteAt: globalMailCache?._localWriteAt
@@ -5803,6 +5853,15 @@ export async function saveGlobalMailAndChatToSupabase(
                 if (!ordMap.has(o.id)) ordMap.set(o.id, o);
               });
 
+              const latestWeather = latest.worldWeather;
+              const currentWeather = current.worldWeather;
+              const mergedWeather =
+                latestWeather && currentWeather
+                  ? (latestWeather.updatedAt || 0) >= (currentWeather.updatedAt || 0)
+                    ? latestWeather
+                    : currentWeather
+                  : latestWeather || currentWeather;
+
               current = {
                 messages: Array.from(msgMap.values()).slice(-200),
                 chatMessages: Array.from(chatMap.values()).slice(-80),
@@ -5810,6 +5869,7 @@ export async function saveGlobalMailAndChatToSupabase(
                   .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
                   .slice(0, 35),
                 crystalOrders: Array.from(ordMap.values()).slice(0, 150),
+                worldWeather: mergedWeather,
                 updatedAt: Date.now()
               };
             }
@@ -5826,6 +5886,7 @@ export async function saveGlobalMailAndChatToSupabase(
         chatMessages: updated.chatMessages.slice(-80),
         wheelWinners: (updated.wheelWinners || []).slice(0, 35),
         crystalOrders: (updated.crystalOrders || []).slice(0, 150),
+        worldWeather: updated.worldWeather || current.worldWeather,
         updatedAt: now,
         _id: rowId,
         _localWriteAt: now
@@ -5840,6 +5901,7 @@ export async function saveGlobalMailAndChatToSupabase(
         chatMessages: finalState.chatMessages,
         wheelWinners: finalState.wheelWinners,
         crystalOrders: finalState.crystalOrders,
+        worldWeather: finalState.worldWeather,
         updated_at: now,
         is_online: false,
         location: 'city'
@@ -5901,6 +5963,53 @@ export async function saveGlobalMailAndChatToSupabase(
 
   mailUpdateQueue = nextTask;
   return nextTask;
+}
+
+export async function saveWorldWeatherToSupabase(
+  patch: Partial<WorldWeatherState>
+): Promise<WorldWeatherState> {
+  const now = Date.now();
+  if (typeof window !== 'undefined') {
+    try {
+      window.localStorage.setItem('bigwar_weather_updated_at', String(now));
+      if (patch.forcedTimeOfDay !== undefined) {
+        if (patch.forcedTimeOfDay) {
+          window.localStorage.setItem('bigwar_force_time_of_day', patch.forcedTimeOfDay);
+        } else {
+          window.localStorage.removeItem('bigwar_force_time_of_day');
+        }
+      }
+      if (patch.sandstormEndAt !== undefined) {
+        if (patch.sandstormEndAt > now) {
+          window.localStorage.setItem('bigwar_sandstorm_end', String(patch.sandstormEndAt));
+        } else {
+          window.localStorage.removeItem('bigwar_sandstorm_end');
+        }
+      }
+      window.dispatchEvent(new Event('bigwar_weather_updated'));
+    } catch {
+      // ignore
+    }
+  }
+
+  const res = await saveGlobalMailAndChatToSupabase((cur) => {
+    const prev = cur.worldWeather || {};
+    const nextWeather: WorldWeatherState = {
+      forcedTimeOfDay:
+        patch.forcedTimeOfDay !== undefined ? patch.forcedTimeOfDay : prev.forcedTimeOfDay ?? null,
+      sandstormEndAt:
+        patch.sandstormEndAt !== undefined ? patch.sandstormEndAt : prev.sandstormEndAt ?? 0,
+      updatedBy: patch.updatedBy || prev.updatedBy || 'Redblack',
+      updatedAt: now
+    };
+    return {
+      ...cur,
+      worldWeather: nextWeather,
+      updatedAt: now
+    };
+  });
+
+  return res.worldWeather || { updatedAt: now };
 }
 
 /**

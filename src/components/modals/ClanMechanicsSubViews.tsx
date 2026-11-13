@@ -77,13 +77,21 @@ import {
   getPortFactoryWorkStatus,
   calculatePortFactoryDetailedEconomics,
   fulfillPharaohStateOrder,
-  autoSupplyFactoryFromTerminal
+  autoSupplyFactoryFromTerminal,
+  getPortFacilityLevelConfig,
+  getPortSectorDominanceInfo,
+  doesSectorBuildingHaveDominanceBonus,
+  upgradePortFactoryLevel,
+  activateAssaultChargeFor7x7Battle,
+  transferPortEstateOwnership,
+  isOutlandSmugglerPierCell
 } from '../../utils/clanStorage';
 import { getProductionSkillInfo, STAT_POINTS_PER_PRODUCTION_LEVEL } from '../../utils/gameData';
 import { createRelicItem, isTransportItem } from '../../utils/shopConfig';
 import { ItemIcon } from '../ItemIcon';
 import CharacterAvatar from '../CharacterAvatar';
 import { ClanRankEpaulette, ClanBadgeMini } from '../ClanRankEpaulette';
+import { OutlandRaidView, PharosStadiumView } from '../OutlandAndStadiumViews';
 
 interface ClanSubViewsCommonProps {
   clan?: Clan;
@@ -237,6 +245,8 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
   const [buildingCategoryFilter, setBuildingCategoryFilter] = useState<
     'all' | 'extraction' | 'raw_processing' | 'dual_manufactory' | 'power_plant' | 'tavern' | 'warehouses' | 'broken'
   >('all');
+  const [showTransferFormForSector, setShowTransferFormForSector] = useState<string | null>(null);
+  const [transferEstateNickBySector, setTransferEstateNickBySector] = useState<Record<string, string>>({});
 
   const effectiveMyNick = (myNick || hero.nick || 'Игрок').trim();
   const cargoInfo = calculatePlayerPortCargo(hero, inventory, equipped);
@@ -1351,6 +1361,17 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                   <polygon points="2,12 4,1 8,1 10,12" fill="#e2e8f0" stroke="#0f172a" strokeWidth="0.8" />
                   <circle cx="6" cy="1" r="2.2" fill="#fde047" />
                 </g>
+                {/* [2/8] Плантация Хлопка и Красителей (x:45, y:225) */}
+                <g transform="translate(38,218)">
+                  <rect x="0" y="3" width="12" height="8" fill="#065f46" stroke="#6ee7b7" strokeWidth="0.9" />
+                  <circle cx="4" cy="6" r="2" fill="#ffffff" />
+                  <circle cx="8" cy="6" r="2" fill="#ffffff" />
+                </g>
+                {/* [9/3] Ювелирная Мастерская Фараона (x:255, y:75) */}
+                <g transform="translate(248,68)">
+                  <polygon points="6,0 12,5 9,11 3,11 0,5" fill="#7e22ce" stroke="#fde047" strokeWidth="1" />
+                  <circle cx="6" cy="6" r="2" fill="#fde047" />
+                </g>
               </svg>
 
               {/* Тонкая полупрозрачная пунктирная сетка 10x10 поверх картинки без отступов (gap: 0px) */}
@@ -1374,6 +1395,8 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                     const cellSectors = territories.filter(
                       (t) => (t.mapX ?? 7) === colX && (t.mapY ?? 6) === rowY
                     );
+                    const isSmugglerPier = isOutlandSmugglerPierCell(colX, rowY);
+                    const isStadiumCell = colX === 5 && rowY === 5;
                     const cellMeta = getPortIslandCellMeta(colX, rowY);
 
                     return (
@@ -1381,9 +1404,15 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         key={`gw_cell_${colX}_${rowY}`}
                         type="button"
                         onClick={() => handleSelectCellForPreview(colX, rowY)}
-                        title={`[${colX}/${rowY}] ${cellMeta.sectorTitle}${
-                          cellSectors.length > 0 ? ` (Объектов: ${cellSectors.length})` : ''
-                        } — Кликните для осмотра сектора`}
+                        title={
+                          isSmugglerPier
+                            ? `[${colX}/${rowY}] 🏝️ Причал контрабандистов — Кликните для отправки в Прибрежную зону (Outland 12x12)`
+                            : isStadiumCell
+                            ? `[5/5] 🏟️ Стадион Фароса и Тотализатор + ${cellMeta.sectorTitle} (Объектов: ${cellSectors.length})`
+                            : `[${colX}/${rowY}] ${cellMeta.sectorTitle}${
+                                cellSectors.length > 0 ? ` (Объектов: ${cellSectors.length})` : ''
+                              } — Кликните для осмотра сектора`
+                        }
                         style={{
                           border: isPreviewSelected
                             ? '2px solid #fbbf24'
@@ -1397,8 +1426,22 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                             : 'hover:bg-white/15'
                         }`}
                       >
+                        {/* Причал контрабандистов на морских клетках [1/5], [10/5], [5/1], [5/10] */}
+                        {!isHere && isSmugglerPier && (
+                          <span className="flex h-4 w-4 items-center justify-center rounded-sm border border-cyan-300/90 bg-slate-950/85 text-[9px] shadow">
+                            🏝️
+                          </span>
+                        )}
+
+                        {/* Стадион Фароса в центральном секторе [5/5] */}
+                        {!isHere && isStadiumCell && (
+                          <span className="flex h-4 px-0.5 items-center justify-center rounded-sm border border-amber-300 bg-amber-950/90 text-[8px] font-black text-amber-200 shadow">
+                            🏟️{cellSectors.length}
+                          </span>
+                        )}
+
                         {/* Индикатор наличия построек в секторе */}
-                        {!isHere && cellSectors.length > 0 && (
+                        {!isHere && !isSmugglerPier && !isStadiumCell && cellSectors.length > 0 && (
                           <span className="flex h-3.5 w-3.5 items-center justify-center rounded-sm border border-amber-200/90 bg-slate-950/80 text-[8px] font-black text-amber-300 shadow">
                             {cellSectors.length}
                           </span>
@@ -1786,6 +1829,27 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
         );
       })()}
 
+      {/* ПРИБРЕЖНАЯ ЗОНА (OUTLAND — ДИКИЕ РЕЙДЫ) ПРИ КЛИКЕ НА [1/5], [10/5], [5/1], [5/10] */}
+      {isOutlandSmugglerPierCell(viewedIslandX, viewedIslandY) && (
+        <OutlandRaidView
+          hero={hero}
+          pierCoord={{ x: viewedIslandX, y: viewedIslandY }}
+          onUpdateHero={onUpdateHero}
+          onNotify={showToast}
+          onBackToMap={() => setPreviewCell(null)}
+        />
+      )}
+
+      {/* СТАДИОН ФАРОСА И ТОТАЛИЗАТОР В ЦЕНТРАЛЬНОМ СЕКТОРЕ [5/5] */}
+      {viewedIslandX === 5 && viewedIslandY === 5 && (
+        <PharosStadiumView
+          hero={hero}
+          isAdmin={hero.role === 'admin' || hero.is_admin === 1}
+          onUpdateHero={onUpdateHero}
+          onNotify={showToast}
+        />
+      )}
+
       {/* ===================================================================== */}
       {/* ВНУТРЕННЕЕ ОКНО ОБЪЕКТА НЕДВИЖИМОСТИ (ТОЧНАЯ КОПИЯ GWARS object.php)  */}
       {/* ===================================================================== */}
@@ -1797,7 +1861,10 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
         const tier: 1 | 2 | 3 =
           p.productionTier ||
           (p.productionStage === 'extraction' ? 1 : p.requiresDualInput ? 3 : 2);
-        const maxW = p.isMerged ? PORT_MERGED_MAX_WORKERS : PORT_BASE_MAX_WORKERS;
+        const lvlCfg = getPortFacilityLevelConfig(p.facilityLevel);
+        const nextLvlCfg = lvlCfg.level < 5 ? getPortFacilityLevelConfig(lvlCfg.level + 1) : null;
+        const hasDomBonus = doesSectorBuildingHaveDominanceBonus(s);
+        const maxW = p.isMerged ? Math.max(PORT_MERGED_MAX_WORKERS, lvlCfg.maxWorkers) : lvlCfg.maxWorkers;
         const activeW = (p.workers || []).filter((w) => !w.claimed && w.endsAt > nowMs);
         const allUnclaimedW = (p.workers || []).filter((w) => !w.claimed);
         const myW = allUnclaimedW.find(
@@ -1977,6 +2044,9 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-amber-400 font-bold">»</span>
                   <strong className="text-amber-300 font-bold">{s.name}</strong>
+                  <span className="border border-amber-400/60 bg-amber-950/50 px-1.5 py-0.2 font-mono text-[10px] font-bold text-amber-200">
+                    Ур. {lvlCfg.level}/5 (выпуск x{lvlCfg.outputMultiplier})
+                  </span>
                   <span className="text-slate-400 font-mono">[{secMapX}/{secMapY}]</span>
                   <span className="text-slate-600">|</span>
                   <span className="text-slate-400">Владелец:</span>
@@ -1992,9 +2062,14 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                     />
                   </span>
                   <strong className="text-amber-200">
-                    #{controllingClanNum} [{s.ownerClanTag || 'RB'}] {s.ownerClanName || 'Империя RedBlack'}
+                    #{controllingClanNum} [{s.ownerClanTag || 'ТЕСТ'}] {s.ownerClanName || 'Тест'}
                   </strong>
                   <span className="text-slate-500 text-[10px]">(щит {controlRemainStr}, налог 10%)</span>
+                  {hasDomBonus && (
+                    <span className="border border-emerald-500/60 bg-emerald-950/50 px-1.5 py-0.2 text-[9.5px] font-bold text-emerald-300">
+                      👑 Хозяин сектора (+15% выпуск, -20% энергия)
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -2407,6 +2482,66 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         )}
                       </div>
 
+                      {/* МОДЕРНИЗАЦИЯ (УЛУЧШЕНИЕ ПЛОЩАДИ) ЗАВОДА (УРОВНИ 1–5) */}
+                      <div className="border border-amber-500/40 bg-slate-950 p-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="font-bold text-amber-300">
+                            ⬆️ Модернизация площади: Уровень {lvlCfg.level}/5 ({lvlCfg.title}) — {lvlCfg.maxWorkers} раб. мест | Склад: {lvlCfg.maxStorage} ед. | Выпуск: x{lvlCfg.outputMultiplier}
+                          </div>
+                          {nextLvlCfg ? (
+                            <div className="text-[10px] text-slate-300">
+                              Следующий <strong className="text-white">Ур. {nextLvlCfg.level} ({nextLvlCfg.title})</strong>: {nextLvlCfg.maxWorkers} мест, склад {nextLvlCfg.maxStorage} ед., выпуск <strong className="text-emerald-300">x{nextLvlCfg.outputMultiplier}</strong> | Цена:{' '}
+                              <strong className="text-amber-300 font-mono">
+                                {nextLvlCfg.upgradeCostGold.toLocaleString('ru-RU')} 🪙
+                              </strong>
+                              {nextLvlCfg.upgradeResources.map((r) => {
+                                const have = getPlayerBagResourceCount(r.key);
+                                return (
+                                  <span key={r.key} className="ml-1.5">
+                                    + <strong className={have >= r.qty ? 'text-emerald-300' : 'text-rose-400'}>{r.qty} ед. «{r.name}»</strong> (у вас: {have})
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-emerald-400 font-bold">
+                              ✅ Достигнут максимальный 5-й уровень модернизации («Мега-корпорация»)!
+                            </div>
+                          )}
+                        </div>
+                        {nextLvlCfg && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const bagMap: Record<string, number> = { ...(hero.portResources || {}) };
+                              const upRes = upgradePortFactoryLevel(
+                                s.id,
+                                effectiveMyNick,
+                                hero.gold || 0,
+                                bagMap
+                              );
+                              if (!upRes.ok) {
+                                showToast(`⚠️ ${upRes.error}`);
+                                return;
+                              }
+                              const nextPortRes = { ...(hero.portResources || {}) };
+                              for (const req of upRes.consumedResources || []) {
+                                nextPortRes[req.key] = Math.max(0, Number(nextPortRes[req.key] || 0) - req.qty);
+                              }
+                              onUpdateHero({
+                                gold: Math.max(0, (hero.gold || 0) - (upRes.paidFromHeroGold || 0)),
+                                portResources: nextPortRes
+                              });
+                              showToast(upRes.message || '⬆️ Завод модернизирован!');
+                              forceRefreshAll();
+                            }}
+                            className="border border-amber-400 bg-amber-500 hover:bg-amber-400 px-3 py-1 font-bold text-slate-950 cursor-pointer shrink-0"
+                          >
+                            [ ⬆️ Расширить производство (Ур. {lvlCfg.level} → {nextLvlCfg.level}) ]
+                          </button>
+                        )}
+                      </div>
+
                       {/* Поля цен покупки/продажи и зарплаты */}
                       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
                         <div>
@@ -2526,6 +2661,75 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         >
                           [ Сохранить цены ]
                         </button>
+                      </div>
+
+                      {/* ПЕРЕДАЧА ОБЪЕКТА НЕДВИЖИМОСТИ ДРУГОМУ ИГРОКУ (Пункт 2А ТЗ) */}
+                      <div className="mt-2 pt-2 border-t border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <span className="text-[10.5px] font-bold text-amber-200">
+                            🤝 Передача прав собственности на завод (касса {facilityCash.toLocaleString('ru-RU')} 🪙 остается на объекте):
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowTransferFormForSector((prev) => (prev === s.id ? null : s.id))
+                            }
+                            className="border border-amber-400/80 bg-amber-950/60 hover:bg-amber-900/70 px-2.5 py-0.5 text-[10.5px] font-bold text-amber-200 cursor-pointer"
+                          >
+                            [ 🤝 Передать объект игроку ]
+                          </button>
+                        </div>
+
+                        {showTransferFormForSector === s.id && (
+                          <div className="flex flex-wrap items-center gap-1.5 bg-slate-950 border border-amber-500/40 p-2">
+                            <input
+                              type="text"
+                              value={transferEstateNickBySector[s.id] ?? ''}
+                              onChange={(e) =>
+                                setTransferEstateNickBySector((prev) => ({
+                                  ...prev,
+                                  [s.id]: e.target.value
+                                }))
+                              }
+                              placeholder="Введите никнейм или ID получателя..."
+                              className="flex-1 min-w-[180px] border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] text-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const recipient = (transferEstateNickBySector[s.id] || '').trim();
+                                if (!recipient) {
+                                  showToast('Введите никнейм или ID игрока-получателя!');
+                                  return;
+                                }
+                                requestConfirm(
+                                  'Передача недвижимости',
+                                  `Вы уверены, что хотите передать объект «${s.name}» [${secMapX}/${secMapY}] в собственность игрока ${recipient}? Вся накопленная касса (${facilityCash.toLocaleString('ru-RU')} 🪙) останется на счету завода.`,
+                                  () => {
+                                    const res = transferPortEstateOwnership(
+                                      s.id,
+                                      effectiveMyNick,
+                                      recipient,
+                                      hero.role === 'admin' || hero.is_admin === 1
+                                    );
+                                    if (!res.ok) {
+                                      showToast(res.error || 'Ошибка передачи объекта');
+                                      return;
+                                    }
+                                    setTransferEstateNickBySector((prev) => ({ ...prev, [s.id]: '' }));
+                                    setShowTransferFormForSector(null);
+                                    showToast(res.message || 'Объект передан новому владельцу!');
+                                    forceRefreshAll();
+                                  },
+                                  { confirmText: 'Передать объект', danger: true }
+                                );
+                              }}
+                              className="border border-emerald-400 bg-emerald-600 hover:bg-emerald-500 px-3 py-1 text-[11px] font-bold text-white cursor-pointer"
+                            >
+                              [ Подтвердить передачу ]
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -2959,6 +3163,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                   const wageGold = sector.production?.workerWageGold || PORT_WORKER_GOLD_PER_HOUR;
                   const workSt = getPortFactoryWorkStatus(sector);
                   const isSelected = inspectingSectorId === sector.id;
+                  const facLvl = sector.production?.facilityLevel || 1;
 
                   return (
                     <tr
@@ -2982,7 +3187,7 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                         <div className="flex items-center gap-1.5 min-w-0 truncate">
                           <span
                             className="inline-flex h-[18px] w-[18px] min-w-[18px] min-h-[18px] max-w-[18px] max-h-[18px] shrink-0 items-center justify-center overflow-hidden border border-slate-700 bg-slate-900"
-                            title={`[${sector.ownerClanTag || 'RB'}] ${sector.ownerClanName || 'Империя RedBlack'}`}
+                            title={`[${sector.ownerClanTag || 'ТЕСТ'}] ${sector.ownerClanName || 'Тест'}`}
                           >
                             <ItemIcon
                               icon={sector.ownerClanEmblem || '👑'}
@@ -2994,6 +3199,10 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
 
                           <span className="font-bold text-amber-300 hover:underline truncate">
                             {sector.name}
+                          </span>
+
+                          <span className="text-cyan-300 font-mono text-[9.5px]">
+                            [Ур.{facLvl}]
                           </span>
 
                           <span className="text-slate-400 truncate text-[10px]">
@@ -3030,6 +3239,21 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                 })}
               </tbody>
             </table>
+          );
+        })()}
+
+        {/* СТРОКА ДОМИНИРОВАНИЯ КЛАНА В СЕКТОРЕ (ПОД СПИСКОМ ОБЪЕКТОВ КАЖДОГО СЕКТОРА) */}
+        {(() => {
+          const domInfo = getPortSectorDominanceInfo(viewedIslandX, viewedIslandY);
+          return (
+            <div className="border-t border-slate-700 bg-slate-900/90 px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
+              <div className="font-bold text-amber-200">{domInfo.summaryLine}</div>
+              {domInfo.isSectorMaster && (
+                <div className="text-[10px] text-emerald-300 font-mono">
+                  👑 Статус «Хозяин сектора»: +15% скорость производства • -20% расход энергии • +25 PTS/час в пул клана
+                </div>
+              )}
+            </div>
           );
         })()}
       </div>
@@ -3089,7 +3313,38 @@ export const ClanTerritoryWarsView: React.FC<ClanSubViewsCommonProps> = ({
                       Атака [{sec.attackerClanTag}] ({atkAliveCount}/{b.attackers.length}) vs Защита [{sec.ownerClanTag || 'RB'}] ({defAliveCount}/{b.defenders.length})
                     </div>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {b.assaultChargeActive ? (
+                      <span className="border border-amber-400 bg-amber-950/70 px-2 py-1 text-[10px] font-bold text-amber-200">
+                        💣 Штурмовой Заряд активен (+25% урон в 1 раунде, -50% Форпост)
+                      </span>
+                    ) : (
+                      isAttackerClan && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const myCharges = getPlayerBagResourceCount('assault_charge');
+                            const res = activateAssaultChargeFor7x7Battle(
+                              sec.id,
+                              effectiveMyNick,
+                              myCharges
+                            );
+                            if (!res.ok) {
+                              showToast(`⚠️ ${res.error}`);
+                              return;
+                            }
+                            const nextPortRes = { ...(hero.portResources || {}) };
+                            nextPortRes.assault_charge = Math.max(0, Number(nextPortRes.assault_charge || 0) - 1);
+                            onUpdateHero({ portResources: nextPortRes });
+                            showToast(res.message || '💣 Штурмовой Заряд активирован!');
+                            forceRefreshAll();
+                          }}
+                          className="border border-amber-400 bg-amber-950/70 hover:bg-amber-900 px-2 py-1 text-[10px] font-bold text-amber-200 cursor-pointer"
+                        >
+                          [ 💣 Штурмовой Заряд (у вас: {getPlayerBagResourceCount('assault_charge')}) ]
+                        </button>
+                      )
+                    )}
                     {clan && isParticipantClan && b.phase === 'gathering' && (
                       <button
                         type="button"

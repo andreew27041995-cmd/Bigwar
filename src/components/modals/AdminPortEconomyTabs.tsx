@@ -34,7 +34,10 @@ import {
   adminUpdateClanFullParams,
   adminAdjustClanPtsPool,
   adminCreateCustomClan,
-  findClanByNumberOrId
+  findClanByNumberOrId,
+  adminAssignAllEstatesToRedblack,
+  transferClanLeadership,
+  transferPortEstateOwnership
 } from '../../utils/clanStorage';
 import { findPlayerInSupabase, updatePlayerInDatabase } from '../../utils/supabase';
 import { ItemIcon } from '../ItemIcon';
@@ -118,6 +121,9 @@ export const AdminPortEconomyTabs: React.FC<AdminPortEconomyTabsProps> = ({
   const [newClanLevelInput, setNewClanLevelInput] = useState<string>('5');
   const [newClanGoldInput, setNewClanGoldInput] = useState<string>('250000');
   const [newClanPtsInput, setNewClanPtsInput] = useState<string>('15000');
+  const [adminNewLeaderNickInput, setAdminNewLeaderNickInput] = useState<string>('');
+  const [adminTransferEstateId, setAdminTransferEstateId] = useState<string>('');
+  const [adminTransferEstateNick, setAdminTransferEstateNick] = useState<string>('');
 
   const transportsList = useMemo(
     () => getTransportsCatalog(featureFlags),
@@ -485,6 +491,64 @@ export const AdminPortEconomyTabs: React.FC<AdminPortEconomyTabsProps> = ({
                     className="w-full rounded border border-purple-400 bg-purple-600 py-1 text-[10px] font-black text-white hover:bg-purple-500 cursor-pointer"
                   >
                     💾 Сохранить
+                  </button>
+                </div>
+              </div>
+
+              {/* Смена Главы выбранного клана в 1 клик */}
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] bg-slate-950/90 p-2.5 rounded border border-amber-500/50">
+                <div>
+                  <span className="font-black text-amber-300">
+                    👑 Текущий Глава клана #{targetClanForBase.clanNumber || 1} [{targetClanForBase.tag}]:
+                  </span>{' '}
+                  <span className="font-bold text-white">{targetClanForBase.leaderNick}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <input
+                    type="text"
+                    value={adminNewLeaderNickInput}
+                    onChange={(e) => setAdminNewLeaderNickInput(e.target.value)}
+                    placeholder="Ник нового Главы клана..."
+                    className="w-44 rounded border border-amber-500/60 bg-slate-900 px-2 py-1 font-bold text-white"
+                  />
+                  <select
+                    value={adminNewLeaderNickInput}
+                    onChange={(e) => setAdminNewLeaderNickInput(e.target.value)}
+                    className="rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-amber-200"
+                  >
+                    <option value="">-- Из списка --</option>
+                    <option value="Redblack">Redblack</option>
+                    {combinedPlayersList.map((p) => (
+                      <option key={`adm_ldr_${p.nick}`} value={p.nick}>
+                        {p.nick} (Ур. {p.lvl})
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const targetNick = adminNewLeaderNickInput.trim();
+                      if (!targetNick) {
+                        showToast('⚠️ Введите или выберите ник нового Главы клана!');
+                        return;
+                      }
+                      const res = transferClanLeadership(
+                        targetClanForBase.id,
+                        hero.nick || 'Redblack',
+                        targetNick,
+                        true
+                      );
+                      if (!res.ok) {
+                        showToast(`⚠️ ${res.error}`);
+                        return;
+                      }
+                      setAdminNewLeaderNickInput('');
+                      setRefreshTick((v) => v + 1);
+                      showToast(res.message || `👑 Новый Глава клана назначен: ${targetNick}!`);
+                    }}
+                    className="rounded border border-amber-400 bg-amber-500 hover:bg-amber-400 px-2.5 py-1 font-black text-slate-950 cursor-pointer"
+                  >
+                    [ 👑 Сменить Главу клана в 1 клик ]
                   </button>
                 </div>
               </div>
@@ -1547,9 +1611,12 @@ export const AdminPortEconomyTabs: React.FC<AdminPortEconomyTabsProps> = ({
                 const curStock = Math.max(0, Number(terminalState.stocks[item.key] ?? 0));
                 const isOnTerm = ![
                   'hardened_steel',
+                  'synthetic_fuel',
                   'combat_ration',
                   'combat_modules',
                   'port_relics',
+                  'titanium_plate',
+                  'assault_charge',
                   'power_kw',
                   'tavern_meal'
                 ].includes(item.key);
@@ -1648,13 +1715,75 @@ export const AdminPortEconomyTabs: React.FC<AdminPortEconomyTabsProps> = ({
               Редактируйте владельца, контролирующий клан, кассу завода (🪙), прочность здания (0..100), координаты [X/Y], зарплату, запасы энергии (кВт) и нормы расхода/выхода ресурсов.
             </p>
           </div>
-          <input
-            type="text"
-            value={estateFilterText}
-            onChange={(e) => setEstateFilterText(e.target.value)}
-            placeholder="🔍 Поиск по названию, сектору [X/Y] или владельцу..."
-            className="w-64 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-white outline-none"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const res = adminAssignAllEstatesToRedblack();
+                showToast(res.message);
+                setRefreshTick((v) => v + 1);
+              }}
+              className="rounded-lg border border-amber-300 bg-gradient-to-r from-amber-500 to-yellow-400 px-3 py-1.5 text-[10.5px] font-black text-slate-950 shadow hover:brightness-110 cursor-pointer"
+            >
+              [ 👑 Назначить Redblack владельцем всей недвижимости острова ]
+            </button>
+            <input
+              type="text"
+              value={estateFilterText}
+              onChange={(e) => setEstateFilterText(e.target.value)}
+              placeholder="🔍 Поиск по названию, сектору [X/Y] или владельцу..."
+              className="w-64 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1 text-xs text-white outline-none"
+            />
+          </div>
+        </div>
+
+        {/* Быстрая передача любого завода другому игроку в 1 клик */}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/50 bg-slate-950 p-2.5 text-[10.5px]">
+          <div className="font-black text-amber-300">
+            🤝 Сменить владельца любого объекта недвижимости в 1 клик (касса остается на заводе):
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              value={adminTransferEstateId || territoriesList[0]?.id || ''}
+              onChange={(e) => setAdminTransferEstateId(e.target.value)}
+              className="rounded border border-slate-700 bg-slate-900 px-2 py-1 font-bold text-amber-200 max-w-xs"
+            >
+              {territoriesList.map((s) => (
+                <option key={`tr_est_${s.id}`} value={s.id}>
+                  [{s.mapX}/{s.mapY}] {s.name} (Владелец: {s.ownerNick || 'Redblack'})
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              value={adminTransferEstateNick}
+              onChange={(e) => setAdminTransferEstateNick(e.target.value)}
+              placeholder="Ник нового владельца..."
+              className="w-40 rounded border border-amber-500/60 bg-slate-900 px-2 py-1 font-bold text-white"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const targetId = adminTransferEstateId || territoriesList[0]?.id;
+                const targetNick = adminTransferEstateNick.trim();
+                if (!targetId || !targetNick) {
+                  showToast('⚠️ Выберите объект и введите ник нового владельца!');
+                  return;
+                }
+                const res = transferPortEstateOwnership(targetId, hero.nick || 'Redblack', targetNick, true);
+                if (!res.ok) {
+                  showToast(`⚠️ ${res.error}`);
+                  return;
+                }
+                setAdminTransferEstateNick('');
+                setRefreshTick((v) => v + 1);
+                showToast(res.message || '🤝 Владелец завода успешно изменен!');
+              }}
+              className="rounded border border-emerald-400 bg-emerald-600 hover:bg-emerald-500 px-2.5 py-1 font-black text-slate-950 cursor-pointer"
+            >
+              [ 🤝 Передать объект в 1 клик ]
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-slate-800 bg-slate-950">

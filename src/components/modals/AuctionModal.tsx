@@ -9,6 +9,7 @@ interface AuctionModalProps {
   hero: HeroState;
   market: MarketLot[];
   inventory: GameItem[];
+  embedded?: boolean;
   onClose: () => void;
   onBuyoutLot: (lot: MarketLot) => void;
   onBidLot: (lot: MarketLot) => void;
@@ -28,6 +29,7 @@ export const AuctionModal: React.FC<AuctionModalProps> = ({
   currentUser,
   hero,
   market,
+  embedded = false,
   onClose,
   onBuyoutLot,
   onBidLot,
@@ -85,18 +87,23 @@ export const AuctionModal: React.FC<AuctionModalProps> = ({
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white overflow-hidden">
+    <div
+      className={
+        embedded
+          ? 'relative flex flex-1 min-h-0 flex-col bg-[#12161f] p-2 text-white overflow-hidden'
+          : 'absolute inset-0 z-50 flex flex-col bg-slate-950/95 p-3 text-white overflow-hidden'
+      }
+    >
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-700 pb-2 shrink-0">
+      <div className="flex items-center justify-between border-b border-slate-700 pb-1.5 shrink-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold text-amber-400">🏛️ Торговый Рынок и Аукцион</span>
-          <span className="text-[9.5px] font-semibold text-amber-300">
-            🪙 {heroGold} золота · <span className="text-cyan-300">💎 {heroCrystals} кр.</span>
-          </span>
         </div>
-        <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
-          ✕
-        </button>
+        {!embedded && (
+          <button onClick={onClose} className="text-base font-bold text-red-400 hover:text-red-300">
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Scrollable Body */}

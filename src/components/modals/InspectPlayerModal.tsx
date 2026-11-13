@@ -32,7 +32,7 @@ import {
 import { ActiveVipBonusesBlock } from '../ActiveVipBonusesBlock';
 import CharacterAvatar from '../CharacterAvatar';
 import { ItemIcon } from '../ItemIcon';
-import { FishingRankMedal, FishingMedalRank } from '../FishingRankMedal';
+import { FishingRankMedal, FishingMedalRank, TournamentShowcaseBlock, TournamentShowcaseModal } from '../FishingRankMedal';
 
 interface InspectPlayerModalProps {
   nick: string | null;
@@ -120,6 +120,7 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
   isTargetInPyramid = false
 }) => {
   const [tab, setTab] = useState<'protocol' | 'gear' | 'collection' | 'info' | 'sms' | 'about'>(initialTab);
+  const [showTrophyShowcase, setShowTrophyShowcase] = useState(false);
   const [smsText, setSmsText] = useState('');
   const [friendAdded, setFriendAdded] = useState(isFriend);
   const [livePlayer, setLivePlayer] = useState<RealtimePlayer | null>(targetPlayer || null);
@@ -401,21 +402,31 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                 fishingMedalRank === 1 || fishingMedalRank === 2 || fishingMedalRank === 3
                   ? fishingMedalRank
                   : storedRank;
-              if (effectiveRank !== 1 && effectiveRank !== 2 && effectiveRank !== 3) {
-                return null;
-              }
+              const hasFishingMedal =
+                effectiveRank === 1 || effectiveRank === 2 || effectiveRank === 3;
+              const playerMedals = (p as any)?.tournamentMedals || (p as any)?.tournament_medals;
+              const hasAnyShowcase = hasFishingMedal || (Array.isArray(playerMedals) && playerMedals.length > 0);
+              if (!hasAnyShowcase) return null;
               const fishCaughtCount = Math.max(
                 Number(pFishing?.weeklyFishCaught ?? 0),
                 Number(pFishing?.totalFishCaught ?? 0)
               );
               return (
-                <div className="mt-1.5">
-                  <FishingRankMedal
-                    rank={effectiveRank}
-                    fishCaught={fishCaughtCount}
-                    size="sm"
-                    showDetails={true}
-                    className="w-full"
+                <div className="mt-1.5 space-y-1">
+                  {hasFishingMedal && (
+                    <FishingRankMedal
+                      rank={effectiveRank}
+                      fishCaught={fishCaughtCount}
+                      size="sm"
+                      showDetails={true}
+                      className="w-full"
+                    />
+                  )}
+                  <TournamentShowcaseBlock
+                    medals={playerMedals}
+                    legacyFishingRank={effectiveRank}
+                    legacyFishCaught={fishCaughtCount}
+                    onOpenShowcase={() => setShowTrophyShowcase(true)}
                   />
                 </div>
               );
@@ -621,31 +632,25 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
                             {item && (
                               <div className="flex items-center gap-0.5 shrink-0">
                                 {Number(item.modificationClass || 0) > 0 && (
-                                  <span className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[6.5px] font-black text-fuchsia-300 border border-fuchsia-400/60 flex items-center gap-0.5">
-                                    <span className="text-amber-400">{'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}</span>
-                                    <span>М{item.modificationClass}</span>
+                                  <span
+                                    className="rounded bg-fuchsia-950 px-1 py-[0.5px] text-[6.5px] font-black text-amber-300 border border-fuchsia-400/60"
+                                    title={`Модификация: М${item.modificationClass}/10 (+${Number(item.modificationClass) * 5}%)`}
+                                  >
+                                    ⭐М{item.modificationClass}
                                   </span>
                                 )}
                                 <span className="rounded bg-slate-950/90 px-1 py-[0.5px] text-[7px] font-black text-amber-300 border border-amber-500/30">
-                                  {item.lvl} ур.
+                                  {item.lvl}ур
                                 </span>
                               </div>
                             )}
                           </div>
                           {item ? (
                             <div
-                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5 flex items-center gap-1"
+                              className="truncate text-[8.5px] font-extrabold leading-tight mt-0.5"
                               style={{ color: q?.color }}
                             >
-                              <span className="truncate">{item.name}</span>
-                              {Number(item.modificationClass || 0) > 0 && (
-                                <span
-                                  className="text-amber-400 font-black text-[7.5px] leading-none shrink-0"
-                                  title={`Модификация: ${item.modificationClass}/10 звёзд (+${Number(item.modificationClass) * 5}%)`}
-                                >
-                                  {'⭐'.repeat(Math.min(10, Number(item.modificationClass)))}
-                                </span>
-                              )}
+                              {item.name}
                             </div>
                           ) : (
                             <div className="text-[8px] italic text-slate-500 mt-0.5">Пусто</div>
@@ -1433,6 +1438,22 @@ export const InspectPlayerModal: React.FC<InspectPlayerModalProps> = ({
           )}
         </div>
       </div>
+      {showTrophyShowcase && (
+        <TournamentShowcaseModal
+          playerNick={nick}
+          medals={(p as any)?.tournamentMedals || (p as any)?.tournament_medals}
+          legacyFishingRank={
+            fishingMedalRank === 1 || fishingMedalRank === 2 || fishingMedalRank === 3
+              ? fishingMedalRank
+              : ((p as any)?.fishingState || (p as any)?.fishing_state)?.fishingMedalRank
+          }
+          legacyFishCaught={Math.max(
+            Number(((p as any)?.fishingState || (p as any)?.fishing_state)?.weeklyFishCaught ?? 0),
+            Number(((p as any)?.fishingState || (p as any)?.fishing_state)?.totalFishCaught ?? 0)
+          )}
+          onClose={() => setShowTrophyShowcase(false)}
+        />
+      )}
     </div>
   );
 };
